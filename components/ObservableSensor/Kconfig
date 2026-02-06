@@ -1,0 +1,21 @@
+menu "Observable Sensor Configuration"
+
+    config OBSERVABLE_SENSOR_TASK_STACK_SIZE
+        int "Sensor task stack size"
+        default 4096
+        help
+            Stack size for the sensor reading task.
+
+    config OBSERVABLE_SENSOR_TASK_PRIORITY
+        int "Sensor task priority"
+        default 5
+        help
+            Priority for the sensor reading task.
+
+    config OBSERVABLE_SENSOR_DEFAULT_INTERVAL_MS
+        int "Default reading interval (ms)"
+        default 1000
+        help
+            Default interval between sensor readings in milliseconds.
+
+endmenu

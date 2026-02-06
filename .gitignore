@@ -1,0 +1,30 @@
+# Build output
+build/
+sdkconfig.old
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ESP-IDF
+managed_components/
+dependencies.lock
+
+# macOS
+.DS_Store
+
+# Compilation database (generated)
+compile_commands.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Temporary
+*.tmp
+*.log
