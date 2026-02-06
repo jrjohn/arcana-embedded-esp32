@@ -4,10 +4,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <stdio.h>
-#include <stdint.h>
-#include <stddef.h>
-#include <string.h>
+#include <cstdio>
+#include <cstdint>
+#include <cstddef>
+#include <cstring>
 #include "esp_system.h"
 #include "nvs_flash.h"
 #include "esp_event.h"
@@ -15,6 +15,9 @@
 #include "protocol_examples_common.h"
 #include "esp_log.h"
 #include "mqtt_client.h"
+
+#include "BleService.hpp"
+#include "ObservableSensor.hpp"
 
 static const char *TAG = "mqtt5_example";
 
@@ -33,47 +36,47 @@ static esp_mqtt5_user_property_item_t user_property_arr[] = {
 
 #define USE_PROPERTY_ARR_SIZE   sizeof(user_property_arr)/sizeof(esp_mqtt5_user_property_item_t)
 
-static esp_mqtt5_publish_property_config_t publish_property = {
-    .payload_format_indicator = 1,
-    .message_expiry_interval = 1000,
-    .topic_alias = 0,
-    .response_topic = "/topic/test/response",
-    .correlation_data = "123456",
-    .correlation_data_len = 6,
-};
+static esp_mqtt5_publish_property_config_t publish_property = {};
+static esp_mqtt5_subscribe_property_config_t subscribe_property = {};
+static esp_mqtt5_subscribe_property_config_t subscribe1_property = {};
+static esp_mqtt5_unsubscribe_property_config_t unsubscribe_property = {};
+static esp_mqtt5_disconnect_property_config_t disconnect_property = {};
 
-static esp_mqtt5_subscribe_property_config_t subscribe_property = {
-    .subscribe_id = 25555,
-    .no_local_flag = false,
-    .retain_as_published_flag = false,
-    .retain_handle = 0,
-    .is_share_subscribe = true,
-    .share_name = "group1",
-};
+static void init_mqtt5_properties(void)
+{
+    publish_property.payload_format_indicator = 1;
+    publish_property.message_expiry_interval = 1000;
+    publish_property.topic_alias = 0;
+    publish_property.response_topic = "/topic/test/response";
+    publish_property.correlation_data = "123456";
+    publish_property.correlation_data_len = 6;
 
-static esp_mqtt5_subscribe_property_config_t subscribe1_property = {
-    .subscribe_id = 25555,
-    .no_local_flag = true,
-    .retain_as_published_flag = false,
-    .retain_handle = 0,
-};
+    subscribe_property.subscribe_id = 25555;
+    subscribe_property.no_local_flag = false;
+    subscribe_property.retain_as_published_flag = false;
+    subscribe_property.retain_handle = 0;
+    subscribe_property.is_share_subscribe = true;
+    subscribe_property.share_name = "group1";
 
-static esp_mqtt5_unsubscribe_property_config_t unsubscribe_property = {
-    .is_share_subscribe = true,
-    .share_name = "group1",
-};
+    subscribe1_property.subscribe_id = 25555;
+    subscribe1_property.no_local_flag = true;
+    subscribe1_property.retain_as_published_flag = false;
+    subscribe1_property.retain_handle = 0;
 
-static esp_mqtt5_disconnect_property_config_t disconnect_property = {
-    .session_expiry_interval = 60,
-    .disconnect_reason = 0,
-};
+    unsubscribe_property.is_share_subscribe = true;
+    unsubscribe_property.share_name = "group1";
+
+    disconnect_property.session_expiry_interval = 60;
+    disconnect_property.disconnect_reason = 0;
+}
 
 static void print_user_property(mqtt5_user_property_handle_t user_property)
 {
     if (user_property) {
         uint8_t count = esp_mqtt5_client_get_user_property_count(user_property);
         if (count) {
-            esp_mqtt5_user_property_item_t *item = malloc(count * sizeof(esp_mqtt5_user_property_item_t));
+            auto *item = static_cast<esp_mqtt5_user_property_item_t*>(
+                malloc(count * sizeof(esp_mqtt5_user_property_item_t)));
             if (esp_mqtt5_client_get_user_property(user_property, item, &count) == ESP_OK) {
                 for (int i = 0; i < count; i ++) {
                     esp_mqtt5_user_property_item_t *t = &item[i];
@@ -89,18 +92,11 @@ static void print_user_property(mqtt5_user_property_handle_t user_property)
 
 /*
  * @brief Event handler registered to receive MQTT events
- *
- *  This function is called by the MQTT client event loop.
- *
- * @param handler_args user data registered to the event.
- * @param base Event base for the handler(always MQTT Base in this example).
- * @param event_id The id for the received event.
- * @param event_data The data for the event, esp_mqtt_event_handle_t.
  */
 static void mqtt5_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
 {
     ESP_LOGD(TAG, "Event dispatched from event loop base=%s, event_id=%" PRIi32, base, event_id);
-    esp_mqtt_event_handle_t event = event_data;
+    auto *event = static_cast<esp_mqtt_event_handle_t>(event_data);
     esp_mqtt_client_handle_t client = event->client;
     int msg_id;
 
@@ -190,38 +186,38 @@ static void mqtt5_event_handler(void *handler_args, esp_event_base_t base, int32
 
 static void mqtt5_app_start(void)
 {
-    esp_mqtt5_connection_property_config_t connect_property = {
-        .session_expiry_interval = 10,
-        .maximum_packet_size = 1024,
-        .receive_maximum = 65535,
-        .topic_alias_maximum = 2,
-        .request_resp_info = true,
-        .request_problem_info = true,
-        .will_delay_interval = 10,
-        .payload_format_indicator = true,
-        .message_expiry_interval = 10,
-        .response_topic = "/test/response",
-        .correlation_data = "123456",
-        .correlation_data_len = 6,
-    };
+    init_mqtt5_properties();
 
-    esp_mqtt_client_config_t mqtt5_cfg = {
-        .broker.address.uri = CONFIG_BROKER_URL,
-        .session.protocol_ver = MQTT_PROTOCOL_V_5,
-        .network.disable_auto_reconnect = true,
-        .credentials.username = "123",
-        .credentials.authentication.password = "456",
-        .session.last_will.topic = "/topic/will",
-        .session.last_will.msg = "i will leave",
-        .session.last_will.msg_len = 12,
-        .session.last_will.qos = 1,
-        .session.last_will.retain = true,
-    };
+    esp_mqtt5_connection_property_config_t connect_property = {};
+    connect_property.session_expiry_interval = 10;
+    connect_property.maximum_packet_size = 1024;
+    connect_property.receive_maximum = 65535;
+    connect_property.topic_alias_maximum = 2;
+    connect_property.request_resp_info = true;
+    connect_property.request_problem_info = true;
+    connect_property.will_delay_interval = 10;
+    connect_property.payload_format_indicator = true;
+    connect_property.message_expiry_interval = 10;
+    connect_property.response_topic = "/test/response";
+    connect_property.correlation_data = "123456";
+    connect_property.correlation_data_len = 6;
+
+    esp_mqtt_client_config_t mqtt5_cfg = {};
+    mqtt5_cfg.broker.address.uri = CONFIG_BROKER_URL;
+    mqtt5_cfg.session.protocol_ver = MQTT_PROTOCOL_V_5;
+    mqtt5_cfg.network.disable_auto_reconnect = true;
+    mqtt5_cfg.credentials.username = "123";
+    mqtt5_cfg.credentials.authentication.password = "456";
+    mqtt5_cfg.session.last_will.topic = "/topic/will";
+    mqtt5_cfg.session.last_will.msg = "i will leave";
+    mqtt5_cfg.session.last_will.msg_len = 12;
+    mqtt5_cfg.session.last_will.qos = 1;
+    mqtt5_cfg.session.last_will.retain = true;
 
 #if CONFIG_BROKER_URL_FROM_STDIN
     char line[128];
 
-    if (strcmp(mqtt5_cfg.uri, "FROM_STDIN") == 0) {
+    if (strcmp(mqtt5_cfg.broker.address.uri, "FROM_STDIN") == 0) {
         int count = 0;
         printf("Please enter url of mqtt broker\n");
         while (count < 128) {
@@ -250,20 +246,59 @@ static void mqtt5_app_start(void)
     esp_mqtt5_client_set_user_property(&connect_property.will_user_property, user_property_arr, USE_PROPERTY_ARR_SIZE);
     esp_mqtt5_client_set_connect_property(client, &connect_property);
 
-    /* If you call esp_mqtt5_client_set_user_property to set user properties, DO NOT forget to delete them.
-     * esp_mqtt5_client_set_connect_property will malloc buffer to store the user_property and you can delete it after
-     */
     esp_mqtt5_client_delete_user_property(connect_property.user_property);
     esp_mqtt5_client_delete_user_property(connect_property.will_user_property);
 
-    /* The last argument may be used to pass data to the event handler, in this example mqtt_event_handler */
-    esp_mqtt_client_register_event(client, ESP_EVENT_ANY_ID, mqtt5_event_handler, NULL);
+    esp_mqtt_client_register_event(client, static_cast<esp_mqtt_event_id_t>(ESP_EVENT_ANY_ID), mqtt5_event_handler, NULL);
     esp_mqtt_client_start(client);
 }
 
-void app_main(void)
-{
+/*******************************************************************************
+ * BLE ← ObservableSensor Bridge
+ ******************************************************************************/
 
+static Arcana::Sensor::ObservableSensor* sSensor = nullptr;
+
+static void ble_sensor_bridge_init(void)
+{
+    using namespace Arcana::Sensor;
+    using namespace Arcana::Ble;
+
+    // Create a simulated sensor (replace ReadHardware() for real hardware)
+    static ObservableSensor sensor(SensorConfig().WithId(1).WithInterval(
+#ifdef CONFIG_BLE_NOTIFY_INTERVAL_MS
+        CONFIG_BLE_NOTIFY_INTERVAL_MS
+#else
+        1000
+#endif
+    ));
+    sSensor = &sensor;
+
+    // Bridge: ObservableSensor data → BLE GATT Server notifications
+    sensor.OnData([](const SensorData& data) {
+        auto& server = BleGattServer::Instance();
+
+        // SensorData.Temperature is float in Celsius → BLE uses int16 (Celsius * 100)
+        int16_t tempCenti = static_cast<int16_t>(data.Temperature * 100.0f);
+        server.UpdateTemperature(tempCenti);
+
+        // SensorData.Humidity is float in % → BLE uses uint16 (% * 100)
+        uint16_t humidCenti = static_cast<uint16_t>(data.Humidity * 100.0f);
+        server.UpdateHumidity(humidCenti);
+
+        ESP_LOGD(TAG, "BLE notify: temp=%d humid=%u", tempCenti, humidCenti);
+    });
+
+    sensor.Start();
+    ESP_LOGI(TAG, "Sensor→BLE bridge started");
+}
+
+/*******************************************************************************
+ * app_main
+ ******************************************************************************/
+
+extern "C" void app_main(void)
+{
     ESP_LOGI(TAG, "[APP] Startup..");
     ESP_LOGI(TAG, "[APP] Free memory: %" PRIu32 " bytes", esp_get_free_heap_size());
     ESP_LOGI(TAG, "[APP] IDF version: %s", esp_get_idf_version());
@@ -280,11 +315,14 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
-    /* This helper function configures Wi-Fi or Ethernet, as selected in menuconfig.
-     * Read "Establishing Wi-Fi or Ethernet Connection" section in
-     * examples/protocols/README.md for more information about this function.
-     */
-    ESP_ERROR_CHECK(example_connect());
+    /* Initialize BLE */
+    ESP_ERROR_CHECK(Arcana::Ble::BleService::Instance().Init());
+    ESP_ERROR_CHECK(Arcana::Ble::BleService::Instance().Start());
 
+    /* Bridge ObservableSensor → BLE GATT Server */
+    ble_sensor_bridge_init();
+
+    /* Wi-Fi + MQTT5 */
+    ESP_ERROR_CHECK(example_connect());
     mqtt5_app_start();
 }
