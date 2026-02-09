@@ -20,17 +20,17 @@ menu "Command Service Configuration"
             MQTT topic for publishing command responses.
 
     config CMD_ENCRYPTION_ENABLED
-        bool "Enable command encryption (AES-128-CCM)"
+        bool "Enable command encryption (AES-256-CCM)"
         default n
         help
-            Enable AES-128-CCM encryption for command protocol.
+            Enable AES-256-CCM encryption for command protocol.
             Both BLE and MQTT channels use the same encryption.
 
     config CMD_ENCRYPTION_PSK
-        string "Pre-shared key (32 hex chars = 128-bit)"
-        default "00112233445566778899AABBCCDDEEFF"
+        string "Pre-shared key (64 hex chars = 256-bit)"
+        default "00112233445566778899AABBCCDDEEFF00112233445566778899AABBCCDDEEFF"
         depends on CMD_ENCRYPTION_ENABLED
         help
-            128-bit AES key as hex string (32 characters).
+            256-bit AES key as hex string (64 characters).
 
 endmenu

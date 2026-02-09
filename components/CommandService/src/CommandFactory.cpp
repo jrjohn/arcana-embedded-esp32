@@ -8,6 +8,7 @@
 #include "commands/SetDeviceNameCommand.hpp"
 #include "commands/BleScanCommand.hpp"
 #include "commands/GetMqttStatusCommand.hpp"
+#include "commands/KeyExchangeCommand.hpp"
 
 namespace Arcana {
 namespace Command {
@@ -40,6 +41,9 @@ std::unique_ptr<ICommand> CommandFactory::Create(FuncCode code) {
         mMqttStatusCmd = cmd.get();
         return cmd;
     }
+
+    case FuncCode::KeyExchange:
+        return std::make_unique<KeyExchangeCommand>(mDeps.KeyExchangeMgr);
 
     default:
         return nullptr;

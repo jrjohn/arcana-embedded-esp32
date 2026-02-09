@@ -3,6 +3,7 @@
 #include "CommandTypes.hpp"
 #include "CommandFactory.hpp"
 #include "CommandDispatcher.hpp"
+#include "KeyExchangeManager.hpp"
 #include "Observable.hpp"
 #include "ObservableSensor.hpp"
 #include "esp_err.h"
@@ -25,6 +26,9 @@ public:
     // Access to factory for updating stateful command state
     CommandFactory* Factory() { return mFactory.get(); }
 
+    // Access to key exchange manager (nullptr if encryption disabled)
+    KeyExchangeManager* KeyExchangeMgr() { return mKeyExchangeMgr.get(); }
+
 private:
     CommandService() = default;
     ~CommandService() = default;
@@ -33,6 +37,7 @@ private:
 
     std::unique_ptr<CommandFactory> mFactory;
     std::unique_ptr<CommandDispatcher> mDispatcher;
+    std::unique_ptr<KeyExchangeManager> mKeyExchangeMgr;
 };
 
 } // namespace Command

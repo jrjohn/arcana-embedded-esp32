@@ -14,22 +14,26 @@ CryptoEngine::~CryptoEngine() {
     }
 }
 
-esp_err_t CryptoEngine::Init(const uint8_t key[16]) {
+esp_err_t CryptoEngine::Init(const uint8_t key[kKeyLen]) {
+    if (mInitialized) {
+        mbedtls_ccm_free(&mCtx);
+        mInitialized = false;
+    }
     mbedtls_ccm_init(&mCtx);
 
-    int ret = mbedtls_ccm_setkey(&mCtx, MBEDTLS_CIPHER_ID_AES, key, 128);
+    int ret = mbedtls_ccm_setkey(&mCtx, MBEDTLS_CIPHER_ID_AES, key, 256);
     if (ret != 0) {
         ESP_LOGE(TAG, "mbedtls_ccm_setkey failed: -0x%04x", (unsigned)-ret);
         mbedtls_ccm_free(&mCtx);
         return ESP_FAIL;
     }
 
-    // Derive nonce prefix: SHA256(PSK || "ARCANA")[0..8]
+    // Derive nonce prefix: SHA256(key || "ARCANA")[0..8]
     uint8_t hash[32];
     mbedtls_sha256_context sha;
     mbedtls_sha256_init(&sha);
     mbedtls_sha256_starts(&sha, 0);          // 0 = SHA-256
-    mbedtls_sha256_update(&sha, key, 16);
+    mbedtls_sha256_update(&sha, key, kKeyLen);
     const uint8_t salt[] = "ARCANA";
     mbedtls_sha256_update(&sha, salt, 6);    // exclude null terminator
     mbedtls_sha256_finish(&sha, hash);
@@ -135,6 +139,25 @@ bool CryptoEngine::Decrypt(const uint8_t* in, size_t inLen,
     }
 
     plainLen = ciphertextLen;
+    return true;
+}
+
+bool CryptoEngine::HexToKey(const char* hex, uint8_t key[kKeyLen]) {
+    if (!hex || strlen(hex) != kKeyLen * 2) {
+        return false;
+    }
+    for (size_t i = 0; i < kKeyLen; ++i) {
+        char hi = hex[i * 2];
+        char lo = hex[i * 2 + 1];
+        int hiVal = (hi >= '0' && hi <= '9') ? hi - '0' :
+                    (hi >= 'A' && hi <= 'F') ? hi - 'A' + 10 :
+                    (hi >= 'a' && hi <= 'f') ? hi - 'a' + 10 : -1;
+        int loVal = (lo >= '0' && lo <= '9') ? lo - '0' :
+                    (lo >= 'A' && lo <= 'F') ? lo - 'A' + 10 :
+                    (lo >= 'a' && lo <= 'f') ? lo - 'a' + 10 : -1;
+        if (hiVal < 0 || loVal < 0) return false;
+        key[i] = static_cast<uint8_t>((hiVal << 4) | loVal);
+    }
     return true;
 }
 

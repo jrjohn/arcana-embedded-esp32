@@ -16,7 +16,9 @@ public:
     CryptoEngine(const CryptoEngine&) = delete;
     CryptoEngine& operator=(const CryptoEngine&) = delete;
 
-    esp_err_t Init(const uint8_t key[16]);
+    static constexpr size_t kKeyLen = 32;      // AES-256
+
+    esp_err_t Init(const uint8_t key[kKeyLen]);
 
     // Encrypt: plaintext -> [counter:4 LE][ciphertext:N][tag:8]
     bool Encrypt(const uint8_t* plain, size_t plainLen,
@@ -29,6 +31,9 @@ public:
     static constexpr size_t kTagLen = 8;
     static constexpr size_t kCounterLen = 4;
     static constexpr size_t kOverhead = kCounterLen + kTagLen; // 12 bytes
+
+    // Parse 64-char hex string into 32-byte key
+    static bool HexToKey(const char* hex, uint8_t key[kKeyLen]);
 
 private:
     static constexpr size_t kNoncePrefixLen = 9;

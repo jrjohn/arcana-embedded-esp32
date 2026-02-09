@@ -1,4 +1,5 @@
 #include "CommandCodec.hpp"
+#include "KeyExchangeManager.hpp"
 #include "arcana_cmd.pb.h"
 #include "esp_log.h"
 #include <pb_encode.h>
@@ -10,35 +11,13 @@ static const char* TAG = "CommandCodec";
 namespace Arcana {
 namespace Command {
 
-#ifdef CONFIG_CMD_ENCRYPTION_ENABLED
-static int HexCharToNibble(char c) {
-    if (c >= '0' && c <= '9') return c - '0';
-    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-    return -1;
-}
-
-static bool HexToKey(const char* hex, uint8_t key[16]) {
-    if (strlen(hex) != 32) {
-        return false;
-    }
-    for (int i = 0; i < 16; ++i) {
-        int hi = HexCharToNibble(hex[i * 2]);
-        int lo = HexCharToNibble(hex[i * 2 + 1]);
-        if (hi < 0 || lo < 0) return false;
-        key[i] = static_cast<uint8_t>((hi << 4) | lo);
-    }
-    return true;
-}
-#endif
-
 esp_err_t CommandCodec::Init() {
 #ifdef CONFIG_CMD_ENCRYPTION_ENABLED
     mEncryptionEnabled = true;
     ESP_LOGI(TAG, "Encryption enabled");
 
-    uint8_t key[16];
-    if (!HexToKey(CONFIG_CMD_ENCRYPTION_PSK, key)) {
+    uint8_t key[CryptoEngine::kKeyLen];
+    if (!CryptoEngine::HexToKey(CONFIG_CMD_ENCRYPTION_PSK, key)) {
         ESP_LOGE(TAG, "Invalid PSK hex string");
         return ESP_ERR_INVALID_ARG;
     }
@@ -53,8 +32,16 @@ esp_err_t CommandCodec::Init() {
 #endif
 
     ESP_LOGI(TAG, "Initialized (protobuf + %s)",
-             mEncryptionEnabled ? "AES-128-CCM" : "plaintext");
+             mEncryptionEnabled ? "AES-256-CCM" : "plaintext");
     return ESP_OK;
+}
+
+CryptoEngine* CommandCodec::SelectEngine(CommandSource source, uint16_t connId) {
+    if (mKeyExchangeMgr) {
+        CryptoEngine* session = mKeyExchangeMgr->GetSession(source, connId);
+        if (session) return session;
+    }
+    return nullptr; // caller should fall back to PSK
 }
 
 bool CommandCodec::DecodeRequest(CommandSource source, uint16_t connId,
@@ -67,10 +54,22 @@ bool CommandCodec::DecodeRequest(CommandSource source, uint16_t connId,
     // Decrypt if encryption is enabled
     if (mEncryptionEnabled) {
         size_t plainLen = 0;
-        if (!mCrypto.Decrypt(data, len, plainBuf, sizeof(plainBuf), plainLen)) {
-            ESP_LOGW(TAG, "Decryption failed");
-            return false;
+        bool decrypted = false;
+
+        // Try session key first
+        CryptoEngine* session = SelectEngine(source, connId);
+        if (session) {
+            decrypted = session->Decrypt(data, len, plainBuf, sizeof(plainBuf), plainLen);
         }
+
+        // Fallback to PSK
+        if (!decrypted) {
+            if (!mCrypto.Decrypt(data, len, plainBuf, sizeof(plainBuf), plainLen)) {
+                ESP_LOGW(TAG, "Decryption failed (session + PSK)");
+                return false;
+            }
+        }
+
         pbData = plainBuf;
         pbLen = plainLen;
     }
@@ -122,9 +121,26 @@ bool CommandCodec::EncodeResponse(const CommandResponse& rsp,
 
     // Encrypt if enabled
     if (mEncryptionEnabled) {
-        if (!mCrypto.Encrypt(pbBuf, pbLen, buf, bufSize, outLen)) {
+        bool isKeyExchangeOk = (rsp.Function == FuncCode::KeyExchange &&
+                                rsp.Status == kStatusOk);
+
+        // KeyExchange response ALWAYS uses PSK (session not yet installed)
+        CryptoEngine* engine = nullptr;
+        if (!isKeyExchangeOk) {
+            engine = SelectEngine(rsp.Source, rsp.ConnectionId);
+        }
+        if (!engine) {
+            engine = &mCrypto; // PSK fallback
+        }
+
+        if (!engine->Encrypt(pbBuf, pbLen, buf, bufSize, outLen)) {
             ESP_LOGW(TAG, "Encryption failed");
             return false;
+        }
+
+        // After encrypting a successful KeyExchange response, install the session
+        if (isKeyExchangeOk && mKeyExchangeMgr) {
+            mKeyExchangeMgr->InstallPendingSession(rsp.Source, rsp.ConnectionId);
         }
     } else {
         if (bufSize < pbLen) {

@@ -20,6 +20,7 @@
 #include "ObservableSensor.hpp"
 #include "CommandService.hpp"
 #include "CommandCodec.hpp"
+#include "KeyExchangeManager.hpp"
 #include "commands/GetMqttStatusCommand.hpp"
 
 static const char *TAG = "mqtt5_example";
@@ -364,6 +365,19 @@ static void command_service_init(void)
     auto& cmdSvc = CommandService::Instance();
     ESP_ERROR_CHECK(cmdSvc.Init(sSensor));
     ESP_ERROR_CHECK(cmdSvc.Start());
+
+    // Wire KeyExchangeManager to codec for session-aware encrypt/decrypt
+    sCodec.SetKeyExchangeManager(cmdSvc.KeyExchangeMgr());
+
+    // BLE disconnect → remove ECDH session
+    BleGattServer::Instance().ConnectionEvents().Subscribe(
+        [](const BleConnectionEvent& evt) {
+            if (evt.State == ConnectionState::Disconnected) {
+                auto* mgr = CommandService::Instance().KeyExchangeMgr();
+                if (mgr) mgr->RemoveSession(CommandSource::BLE, evt.ConnId);
+            }
+        }
+    );
 
     // Wire BLE Command writes → decode → CommandService
     BleGattServer::Instance().CommandWriteEvents().Subscribe(

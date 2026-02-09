@@ -8,11 +8,13 @@ namespace Arcana {
 namespace Command {
 
 class GetMqttStatusCommand;
+class KeyExchangeManager;
 
 class CommandFactory {
 public:
     struct Dependencies {
         Sensor::ObservableSensor* Sensor = nullptr;
+        KeyExchangeManager* KeyExchangeMgr = nullptr;
     };
 
     explicit CommandFactory(const Dependencies& deps) : mDeps(deps) {}

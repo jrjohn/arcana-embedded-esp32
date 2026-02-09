@@ -21,6 +21,7 @@ enum class FuncCode : uint8_t {
     SetDeviceName     = 0x06,
     BleScan           = 0x07,
     GetMqttStatus     = 0x08,
+    KeyExchange       = 0x09,
 };
 
 static constexpr uint16_t kMaxRequestPayload  = 128;

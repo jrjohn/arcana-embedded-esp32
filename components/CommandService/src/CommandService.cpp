@@ -1,4 +1,5 @@
 #include "CommandService.hpp"
+#include "CryptoEngine.hpp"
 #include "esp_log.h"
 
 static const char* TAG = "CommandService";
@@ -12,8 +13,24 @@ CommandService& CommandService::Instance() {
 }
 
 esp_err_t CommandService::Init(Sensor::ObservableSensor* sensor) {
+#ifdef CONFIG_CMD_ENCRYPTION_ENABLED
+    // Init KeyExchangeManager with PSK
+    uint8_t psk[CryptoEngine::kKeyLen];
+    if (CryptoEngine::HexToKey(CONFIG_CMD_ENCRYPTION_PSK, psk)) {
+        mKeyExchangeMgr = std::make_unique<KeyExchangeManager>();
+        esp_err_t err = mKeyExchangeMgr->Init(psk);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "KeyExchangeManager init failed");
+            mKeyExchangeMgr.reset();
+        } else {
+            ESP_LOGI(TAG, "KeyExchangeManager initialized");
+        }
+    }
+#endif
+
     CommandFactory::Dependencies deps;
     deps.Sensor = sensor;
+    deps.KeyExchangeMgr = mKeyExchangeMgr.get();
 
     mFactory = std::make_unique<CommandFactory>(deps);
     mDispatcher = std::make_unique<CommandDispatcher>(*mFactory);

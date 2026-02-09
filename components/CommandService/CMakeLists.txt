@@ -4,6 +4,7 @@ idf_component_register(
          "src/CommandDispatcher.cpp"
          "src/CommandCodec.cpp"
          "src/CryptoEngine.cpp"
+         "src/KeyExchangeManager.cpp"
          "src/arcana_cmd.pb.c"
     INCLUDE_DIRS "include"
     REQUIRES mbedtls BleService ObservableSensor
