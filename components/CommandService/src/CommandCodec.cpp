@@ -51,7 +51,9 @@ bool CommandCodec::DecodeRequest(CommandSource source, uint16_t connId,
     // Deframe: strip header + verify CRC
     const uint8_t* framePayload = nullptr;
     size_t framePayloadLen = 0;
-    if (!FrameCodec::Deframe(data, len, framePayload, framePayloadLen)) {
+    uint8_t flags = 0;
+    uint8_t streamId = 0;
+    if (!FrameCodec::Deframe(data, len, framePayload, framePayloadLen, flags, streamId)) {
         return false;
     }
 
@@ -98,6 +100,8 @@ bool CommandCodec::DecodeRequest(CommandSource source, uint16_t connId,
     out.ClusterId = static_cast<Cluster>(msg.cluster);
     out.Command = static_cast<uint8_t>(msg.command);
     out.PayloadLen = static_cast<uint16_t>(msg.payload.size);
+    out.StreamId = streamId;
+    out.Fin = (flags & FrameCodec::kFlagFin) != 0;
     if (msg.payload.size > 0 && msg.payload.size <= kMaxRequestPayload) {
         memcpy(out.Payload, msg.payload.bytes, msg.payload.size);
     } else if (msg.payload.size > kMaxRequestPayload) {
@@ -166,7 +170,8 @@ bool CommandCodec::EncodeResponse(const CommandResponse& rsp,
     }
 
     // Frame: wrap inner payload with header + CRC
-    if (!FrameCodec::Frame(innerBuf, innerLen, buf, bufSize, outLen)) {
+    uint8_t flags = rsp.Fin ? FrameCodec::kFlagFin : 0;
+    if (!FrameCodec::Frame(innerBuf, innerLen, buf, bufSize, outLen, flags, rsp.StreamId)) {
         return false;
     }
 

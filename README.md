@@ -41,7 +41,7 @@
 | **Connectivity** | 9.5/10 | WiFi + BLE coexistence, MQTT5, unified BLE+MQTT command pipeline |
 | **Code Quality** | 9.0/10 | RAII patterns, SOLID principles, singleton facades, header-only commands |
 | **Extensibility** | 9.5/10 | ICommand + CommandFactory switch-case, Observable subscriptions, Kconfig |
-| **Protocol Design** | 9.5/10 | Frame layer (magic/ver/len/CRC) + nanopb protobuf + session-aware codec |
+| **Protocol Design** | 9.5/10 | Frame layer (magic/ver/flags/SID/len/CRC) + nanopb protobuf + session-aware codec |
 | **Memory Efficiency** | 9.0/10 | Static/dynamic Observable variants, ~17 KB custom code footprint |
 | **Overall** | **9.2/10** | Production-ready encrypted IoT command platform |
 
@@ -61,7 +61,7 @@
 | Manual HKDF | ~50 lines of code | `MBEDTLS_HKDF_C` not enabled in ESP-IDF default sdkconfig |
 | nanopb (not full protobuf) | Manual `.options` file | 10x smaller than protobuf-c, fits embedded constraints |
 | Singleton pattern | Global state | Natural fit for hardware peripherals (BLE, sensor); single instance enforced |
-| Custom Frame (not COBS/SLIP) | 7 bytes overhead | Simpler, includes version + magic for protocol detection; CRC covers entire frame |
+| Custom Frame (not COBS/SLIP) | 9 bytes overhead | Simpler, includes version + flags + stream ID + magic for protocol detection; CRC covers entire frame |
 
 ### Transport Compatibility
 
@@ -109,7 +109,7 @@
 |       |                                                                |
 |  Encryption      AES-256-CCM [counter:4][cipher][tag:8] (optional)    |
 |       |                                                                |
-|  Framing         [magic:2][ver:1][len:2][payload:N][crc:2]            |
+|  Framing         [magic:2][ver:1][flags:1][sid:1][len:2][payload][crc:2]|
 |       |                                                                |
 |  Transport       BLE / MQTT / UART / TCP                              |
 |                                                                        |
@@ -161,34 +161,67 @@ Every Arcana packet — whether plaintext or encrypted — is wrapped in a Frame
 ### Wire Layout
 
 ```
-Offset:  0     1     2     3     4     5              5+N   5+N+1
-       +-----+-----+-----+-----+-----+--------------+-----+-----+
-       | 0xAC| 0xDA| Ver |  Length LE |   Payload    |  CRC-16 LE|
-       +-----+-----+-----+-----+-----+--------------+-----+-----+
-       |<-- Magic-->|     |<-- 2B --> |<-- N bytes-->|<-- 2B  -->|
-       |                                             |
-       |<-------------- CRC-16 covers -------------->|
+Offset:  0     1     2     3     4     5     6     7        7+N   7+N+1
+       +-----+-----+-----+-----+-----+-----+-----+--------+-----+-----+
+       | 0xAC| 0xDA| 0x01| Flg | SID |  Length LE | Payload|  CRC-16 LE|
+       +-----+-----+-----+-----+-----+-----+-----+--------+-----+-----+
+       |<- Magic ->| Ver |     |     |<-- 2B  -->|<- N B ->|<-- 2B  -->|
+       |                                                    |
+       |<----------------- CRC-16 covers ------------------>|
 ```
 
 | Field | Offset | Size | Value | Description |
 |-------|--------|------|-------|-------------|
 | **Magic** | 0 | 2 | `0xAC 0xDA` | "Arcana Data" identifier |
 | **Version** | 2 | 1 | `0x01` | Protocol version (v1) |
-| **Length** | 3 | 2 | LE uint16 | Payload length (excludes header and CRC) |
-| **Payload** | 5 | N | — | Encrypted: `[counter:4][cipher][tag:8]`; Plaintext: raw protobuf |
-| **CRC-16** | 5+N | 2 | LE uint16 | `esp_crc16_le(0, magic..payload)` (hardware-accelerated on ESP32-S3) |
+| **Flags** | 3 | 1 | bitfield | Bit 0: FIN (last frame in stream); bits 1-7 reserved (must be 0) |
+| **Stream ID** | 4 | 1 | `0x00-0xFF` | Stream identifier for request-response correlation |
+| **Length** | 5 | 2 | LE uint16 | Payload length (excludes header and CRC) |
+| **Payload** | 7 | N | — | Encrypted: `[counter:4][cipher][tag:8]`; Plaintext: raw protobuf |
+| **CRC-16** | 7+N | 2 | LE uint16 | `esp_crc16_le(0, magic..payload)` (hardware-accelerated on ESP32-S3) |
 
-- **Header**: 5 bytes (Magic + Version + Length)
+- **Header**: 7 bytes (Magic + Version + Flags + Stream ID + Length)
 - **Trailer**: 2 bytes (CRC-16)
-- **Total overhead**: 7 bytes
+- **Total overhead**: 9 bytes
 - **CRC scope**: Magic through end of Payload (excludes the CRC itself)
+
+### Stream ID Ranges
+
+| Range | Usage |
+|-------|-------|
+| `0x00` | One-shot (no stream, default) |
+| `0x01-0x7F` | Client-initiated (client assigns, server echoes) |
+| `0x80-0xFE` | Server-initiated push |
+| `0xFF` | Reserved |
+
+### Stream Lifecycle
+
+**Sync (Ping)**:
+```
+Client → [FIN, SID=0x01] Request
+Server → [FIN, SID=0x01] Response    ← stream complete
+```
+
+**Async multi-response (BleScan, future)**:
+```
+Client → [FIN, SID=0x02] Scan Request
+Server → [    SID=0x02] ACK           ← Fin=0, more to come
+Server → [    SID=0x02] Scan Result 1
+Server → [    SID=0x02] Scan Result 2
+Server → [FIN, SID=0x02] Scan Done    ← stream complete
+```
+
+**Server push (future)**:
+```
+Server → [FIN, SID=0x80] Notification  ← single push, immediately done
+```
 
 ### Max Wire Sizes
 
-| Direction | Protobuf Max | + Crypto (12B) | + Frame (7B) | Total |
+| Direction | Protobuf Max | + Crypto (12B) | + Frame (9B) | Total |
 |-----------|-------------|----------------|--------------|-------|
-| Request   | 143 B       | 155 B          | **162 B**    | 162 B |
-| Response  | 277 B       | 289 B          | **296 B**    | 296 B |
+| Request   | 143 B       | 155 B          | **164 B**    | 164 B |
+| Response  | 277 B       | 289 B          | **298 B**    | 298 B |
 
 ### FrameCodec API
 
@@ -199,15 +232,19 @@ class FrameCodec {
 public:
     static constexpr uint8_t  kMagic[2] = {0xAC, 0xDA};
     static constexpr uint8_t  kVersion  = 0x01;
-    static constexpr size_t   kOverhead = 7;  // 5 header + 2 CRC
+    static constexpr size_t   kOverhead = 9;   // 7 header + 2 CRC
+    static constexpr uint8_t  kFlagFin  = 0x01;
+    static constexpr uint8_t  kSidNone  = 0x00;
 
-    // Wrap payload into frame
+    // Wrap payload into frame (flags defaults to FIN, streamId defaults to 0)
     static bool Frame(const uint8_t* payload, size_t payloadLen,
-                      uint8_t* out, size_t outBufSize, size_t& outLen);
+                      uint8_t* out, size_t outBufSize, size_t& outLen,
+                      uint8_t flags = kFlagFin, uint8_t streamId = kSidNone);
 
-    // Unwrap frame, verify magic + version + CRC, return payload pointer
+    // Unwrap frame, verify magic + version + CRC, return payload + flags + streamId
     static bool Deframe(const uint8_t* frame, size_t frameLen,
-                        const uint8_t*& payload, size_t& payloadLen);
+                        const uint8_t*& payload, size_t& payloadLen,
+                        uint8_t& flags, uint8_t& streamId);
 };
 
 }
@@ -333,15 +370,17 @@ System::Ping — cluster=0x00, command=0x01, no payload.
              <- field 3 (payload) omitted (empty)
 ```
 
-**Framed wire** (11 bytes):
+**Framed wire** (13 bytes):
 ```
 Offset  Hex                          Description
 ------  ---------------------------  -----------
  0-1    AC DA                        Magic "Arcana Data"
  2      01                           Version 1
- 3-4    04 00                        Length = 4 (LE)
- 5-8    08 00 10 01                  Payload (protobuf)
- 9-10   xx xx                        CRC-16 (LE, computed over bytes 0..8)
+ 3      01                           Flags (FIN=1)
+ 4      00                           Stream ID (0 = one-shot)
+ 5-6    04 00                        Length = 4 (LE)
+ 7-10   08 00 10 01                  Payload (protobuf)
+ 11-12  xx xx                        CRC-16 (LE, computed over bytes 0..10)
 ```
 
 ### Sample 2: Plaintext Ping Response
@@ -359,15 +398,17 @@ Assume timestamp = 1234567 (0x12D687) encoded as string `"1234567"` (7 bytes):
 34 35 36 37
 ```
 
-**Framed wire** (20 bytes):
+**Framed wire** (22 bytes):
 ```
 Offset  Hex                                      Description
 ------  -----------------------------------------  -----------
  0-1    AC DA                                      Magic
  2      01                                         Version 1
- 3-4    0D 00                                      Length = 13 (LE)
- 5-17   08 00 10 01 18 00 22 07 31 32 33 34 35    Payload (protobuf)
- 18-19  xx xx                                      CRC-16 (LE)
+ 3      01                                         Flags (FIN=1)
+ 4      00                                         Stream ID (0 = one-shot)
+ 5-6    0D 00                                      Length = 13 (LE)
+ 7-19   08 00 10 01 18 00 22 07 31 32 33 34 35    Payload (protobuf)
+ 20-21  xx xx                                      CRC-16 (LE)
 ```
 
 ### Sample 3: Encrypted Ping Request
@@ -384,27 +425,31 @@ xx xx xx xx        <- Authentication tag (8 bytes)
 xx xx xx xx
 ```
 
-**Framed wire** (23 bytes):
+**Framed wire** (25 bytes):
 ```
 Offset  Hex                                            Description
 ------  ---------------------------------------------  -----------
  0-1    AC DA                                          Magic
  2      01                                             Version 1
- 3-4    10 00                                          Length = 16 (LE)
- 5-8    01 00 00 00                                    Counter (LE)
- 9-12   xx xx xx xx                                    Ciphertext
- 13-20  xx xx xx xx xx xx xx xx                        Auth tag (8B)
- 21-22  xx xx                                          CRC-16 (LE)
+ 3      01                                             Flags (FIN=1)
+ 4      00                                             Stream ID (0 = one-shot)
+ 5-6    10 00                                          Length = 16 (LE)
+ 7-10   01 00 00 00                                    Counter (LE)
+ 11-14  xx xx xx xx                                    Ciphertext
+ 15-22  xx xx xx xx xx xx xx xx                        Auth tag (8B)
+ 23-24  xx xx                                          CRC-16 (LE)
 ```
 
 ### Sample 4: Sensor::GetData Response (Plaintext)
 
 Sensor::GetData — cluster=0x01, command=0x01, status=0, payload=JSON `{"t":25.5,"h":60.2}` (20 bytes):
 
-**Framed wire** (35 bytes):
+**Framed wire** (37 bytes):
 ```
 AC DA              Magic
 01                 Version 1
+01                 Flags (FIN=1)
+00                 Stream ID (0 = one-shot)
 1C 00              Length = 28 (LE)
                    Payload (protobuf):
   08 01              cluster = 0x01 (Sensor)
@@ -430,11 +475,11 @@ The KeyExchange request carries a 64-byte P-256 public key, encrypted with PSK.
 [counter:4][encrypted_protobuf:~69][tag:8]
 ```
 
-**Framed wire** (~88 bytes):
+**Framed wire** (~90 bytes):
 ```
-AC DA 01 51 00     Magic + Version + Length=81 (LE)
+AC DA 01 01 00 51 00  Magic + Version + Flags(FIN) + SID(0) + Length=81 (LE)
 [encrypted_payload: 81 bytes]
-xx xx              CRC-16 (LE)
+xx xx                 CRC-16 (LE)
 ```
 
 ### Decode/Encode Flow Summary
@@ -447,9 +492,10 @@ Raw bytes from BLE/MQTT/UART
 FrameCodec::Deframe()
   - Check magic: 0xAC 0xDA
   - Check version: 0x01
+  - Read flags + stream ID
   - Read length (LE uint16)
   - Verify CRC-16 over [magic..payload]
-  - Return payload pointer + length
+  - Return payload pointer + length + flags + streamId
   |
   v
 CommandCodec::DecodeRequest()
@@ -468,7 +514,7 @@ CommandCodec::EncodeResponse()
   |
   v
 FrameCodec::Frame()
-  - Write header: [0xAC 0xDA][0x01][length LE]
+  - Write header: [0xAC 0xDA][0x01][flags][SID][length LE]
   - Copy payload
   - Compute & append CRC-16 (LE)
   |
@@ -675,8 +721,8 @@ BLE Write (0xFF10)          MQTT Data (arcana/cmd)
     3. Else -> session encrypt (if available) or PSK
         |
         v
-  FrameCodec::Frame(innerPayload, innerLen)
-    1. Write [magic:2][ver:1][len:2 LE]
+  FrameCodec::Frame(innerPayload, innerLen, flags, streamId)
+    1. Write [magic:2][ver:1][flags:1][sid:1][len:2 LE]
     2. Copy payload
     3. Compute + append CRC-16
         |
@@ -1120,7 +1166,7 @@ case Cluster::Sensor:
 - [x] **AES-256-CCM encryption**
 - [x] **ECDH P-256 key exchange (Perfect Forward Secrecy)**
 - [x] **Per-connection session keys (4 slots)**
-- [x] **Frame Protocol (magic + version + CRC-16)**
+- [x] **Frame Protocol (magic + version + flags + stream ID + CRC-16)**
 - [ ] UART transport (frame layer ready)
 - [ ] BLE bonding & SMP pairing
 - [ ] OTA firmware update

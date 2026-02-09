@@ -58,13 +58,17 @@ struct CommandRequest {
     uint8_t Command;
     uint8_t Payload[kMaxRequestPayload];
     uint16_t PayloadLen;
+    uint8_t StreamId;            // Frame stream ID (0 = one-shot)
+    bool Fin;                    // Frame FIN flag (true = last frame in stream)
 
     CommandRequest()
         : Source(CommandSource::Internal)
         , ConnectionId(0)
         , ClusterId(Cluster::System)
         , Command(0)
-        , PayloadLen(0) {
+        , PayloadLen(0)
+        , StreamId(0)
+        , Fin(true) {
         memset(Payload, 0, sizeof(Payload));
     }
 };
@@ -77,6 +81,8 @@ struct CommandResponse {
     uint8_t Status;              // 0=OK, non-zero=error code
     uint8_t Payload[kMaxResponsePayload];
     uint16_t PayloadLen;
+    uint8_t StreamId;            // Frame stream ID (0 = one-shot)
+    bool Fin;                    // Frame FIN flag (true = last frame in stream)
 
     CommandResponse()
         : Source(CommandSource::Internal)
@@ -84,7 +90,9 @@ struct CommandResponse {
         , ClusterId(Cluster::System)
         , Command(0)
         , Status(0)
-        , PayloadLen(0) {
+        , PayloadLen(0)
+        , StreamId(0)
+        , Fin(true) {
         memset(Payload, 0, sizeof(Payload));
     }
 };

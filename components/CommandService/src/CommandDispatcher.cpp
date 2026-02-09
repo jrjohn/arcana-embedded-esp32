@@ -47,6 +47,8 @@ void CommandDispatcher::Dispatch(const CommandRequest& request) {
         rsp.Command = request.Command;
         rsp.Status = kStatusUnknownCommand;
         rsp.PayloadLen = 0;
+        rsp.StreamId = request.StreamId;
+        rsp.Fin = true;
         mResponseEvents.Notify(rsp);
         return;
     }
@@ -74,6 +76,7 @@ void CommandDispatcher::ProcessCommand(const CommandRequest& request) {
              static_cast<uint8_t>(request.Source));
 
     CommandResponse rsp = cmd->Execute(request);
+    rsp.StreamId = request.StreamId;
     mResponseEvents.Notify(rsp);
 }
 

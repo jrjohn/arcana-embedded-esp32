@@ -13,13 +13,25 @@ class FrameCodec {
 public:
     static constexpr uint8_t  kMagic[2] = {0xAC, 0xDA};
     static constexpr uint8_t  kVersion  = 0x01;
-    static constexpr size_t   kHeaderLen = 5;   // magic(2) + ver(1) + len(2)
+    static constexpr size_t   kHeaderLen = 7;   // magic(2) + ver(1) + flags(1) + sid(1) + len(2)
     static constexpr size_t   kCrcLen    = 2;
-    static constexpr size_t   kOverhead  = kHeaderLen + kCrcLen; // 7
+    static constexpr size_t   kOverhead  = kHeaderLen + kCrcLen; // 9
 
-    // Frame: payload -> [magic:2][ver:1][len:2 LE][payload:N][crc:2 LE]
+    // Flags
+    static constexpr uint8_t  kFlagFin  = 0x01; // Bit 0: last frame in stream
+
+    // Stream ID ranges
+    static constexpr uint8_t  kSidNone       = 0x00; // One-shot (no stream)
+    static constexpr uint8_t  kSidClientMin  = 0x01; // Client-initiated range start
+    static constexpr uint8_t  kSidClientMax  = 0x7F; // Client-initiated range end
+    static constexpr uint8_t  kSidServerMin  = 0x80; // Server-initiated range start
+    static constexpr uint8_t  kSidServerMax  = 0xFE; // Server-initiated range end
+    static constexpr uint8_t  kSidReserved   = 0xFF; // Reserved
+
+    // Frame: payload -> [magic:2][ver:1][flags:1][sid:1][len:2 LE][payload:N][crc:2 LE]
     static bool Frame(const uint8_t* payload, size_t payloadLen,
-                      uint8_t* out, size_t outBufSize, size_t& outLen) {
+                      uint8_t* out, size_t outBufSize, size_t& outLen,
+                      uint8_t flags = kFlagFin, uint8_t streamId = kSidNone) {
         const size_t totalLen = kHeaderLen + payloadLen + kCrcLen;
         if (totalLen > outBufSize) {
             ESP_LOGW(kTag, "Frame buffer too small: need %zu, have %zu", totalLen, outBufSize);
@@ -30,8 +42,10 @@ public:
         out[0] = kMagic[0];
         out[1] = kMagic[1];
         out[2] = kVersion;
-        out[3] = static_cast<uint8_t>(payloadLen & 0xFF);
-        out[4] = static_cast<uint8_t>((payloadLen >> 8) & 0xFF);
+        out[3] = flags;
+        out[4] = streamId;
+        out[5] = static_cast<uint8_t>(payloadLen & 0xFF);
+        out[6] = static_cast<uint8_t>((payloadLen >> 8) & 0xFF);
 
         // Payload
         memcpy(out + kHeaderLen, payload, payloadLen);
@@ -46,9 +60,10 @@ public:
         return true;
     }
 
-    // Deframe: [magic:2][ver:1][len:2 LE][payload:N][crc:2 LE] -> payload ptr + len
+    // Deframe: [magic:2][ver:1][flags:1][sid:1][len:2 LE][payload:N][crc:2 LE] -> payload ptr + len
     static bool Deframe(const uint8_t* frame, size_t frameLen,
-                        const uint8_t*& payload, size_t& payloadLen) {
+                        const uint8_t*& payload, size_t& payloadLen,
+                        uint8_t& flags, uint8_t& streamId) {
         if (frameLen < kOverhead) {
             ESP_LOGW(kTag, "Frame too short: %zu bytes", frameLen);
             return false;
@@ -67,9 +82,13 @@ public:
             return false;
         }
 
+        // Read flags + stream ID
+        flags = frame[3];
+        streamId = frame[4];
+
         // Read length (LE uint16)
-        uint16_t len = static_cast<uint16_t>(frame[3]) |
-                       (static_cast<uint16_t>(frame[4]) << 8);
+        uint16_t len = static_cast<uint16_t>(frame[5]) |
+                       (static_cast<uint16_t>(frame[6]) << 8);
 
         // Validate total frame size
         const size_t expectedLen = kHeaderLen + len + kCrcLen;
