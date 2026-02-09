@@ -1,0 +1,22 @@
+menu "Command Service Configuration"
+
+    config CMD_QUEUE_STACK_SIZE
+        int "Command queue task stack size"
+        default 4096
+        range 2048 8192
+        help
+            Stack size for the async command processing task.
+
+    config CMD_MQTT_CMD_TOPIC
+        string "MQTT command topic"
+        default "arcana/cmd"
+        help
+            MQTT topic to subscribe for incoming commands.
+
+    config CMD_MQTT_RSP_TOPIC
+        string "MQTT response topic"
+        default "arcana/rsp"
+        help
+            MQTT topic for publishing command responses.
+
+endmenu

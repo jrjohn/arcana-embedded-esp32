@@ -18,6 +18,10 @@
 
 #include "BleService.hpp"
 #include "ObservableSensor.hpp"
+#include "CommandService.hpp"
+#include "BleCommandAdapter.hpp"
+#include "MqttCommandAdapter.hpp"
+#include "commands/GetMqttStatusCommand.hpp"
 
 static const char *TAG = "mqtt5_example";
 
@@ -90,6 +94,22 @@ static void print_user_property(mqtt5_user_property_handle_t user_property)
     }
 }
 
+// MQTT client handle (needed for publishing responses)
+static esp_mqtt_client_handle_t sMqttClient = nullptr;
+
+// Command topic
+#ifdef CONFIG_CMD_MQTT_CMD_TOPIC
+static const char* sCmdTopic = CONFIG_CMD_MQTT_CMD_TOPIC;
+#else
+static const char* sCmdTopic = "arcana/cmd";
+#endif
+
+#ifdef CONFIG_CMD_MQTT_RSP_TOPIC
+static const char* sRspTopic = CONFIG_CMD_MQTT_RSP_TOPIC;
+#else
+static const char* sRspTopic = "arcana/rsp";
+#endif
+
 /*
  * @brief Event handler registered to receive MQTT events
  */
@@ -126,6 +146,18 @@ static void mqtt5_event_handler(void *handler_args, esp_event_base_t base, int32
         subscribe1_property.user_property = NULL;
         ESP_LOGI(TAG, "sent subscribe successful, msg_id=%d", msg_id);
 
+        // Subscribe to command topic
+        msg_id = esp_mqtt_client_subscribe(client, sCmdTopic, 1);
+        ESP_LOGI(TAG, "Subscribed to command topic '%s', msg_id=%d", sCmdTopic, msg_id);
+
+        // Update MQTT status in command service
+        {
+            auto* factory = Arcana::Command::CommandService::Instance().Factory();
+            if (factory && factory->MqttStatusCmd()) {
+                factory->MqttStatusCmd()->SetConnected(true);
+            }
+        }
+
         esp_mqtt5_client_set_user_property(&unsubscribe_property.user_property, user_property_arr, USE_PROPERTY_ARR_SIZE);
         esp_mqtt5_client_set_unsubscribe_property(client, &unsubscribe_property);
         msg_id = esp_mqtt_client_unsubscribe(client, "/topic/qos0");
@@ -136,6 +168,12 @@ static void mqtt5_event_handler(void *handler_args, esp_event_base_t base, int32
     case MQTT_EVENT_DISCONNECTED:
         ESP_LOGI(TAG, "MQTT_EVENT_DISCONNECTED");
         print_user_property(event->property->user_property);
+        {
+            auto* factory = Arcana::Command::CommandService::Instance().Factory();
+            if (factory && factory->MqttStatusCmd()) {
+                factory->MqttStatusCmd()->SetConnected(false);
+            }
+        }
         break;
     case MQTT_EVENT_SUBSCRIBED:
         ESP_LOGI(TAG, "MQTT_EVENT_SUBSCRIBED, msg_id=%d", event->msg_id);
@@ -166,6 +204,21 @@ static void mqtt5_event_handler(void *handler_args, esp_event_base_t base, int32
         ESP_LOGI(TAG, "content_type is %.*s", event->property->content_type_len, event->property->content_type);
         ESP_LOGI(TAG, "TOPIC=%.*s", event->topic_len, event->topic);
         ESP_LOGI(TAG, "DATA=%.*s", event->data_len, event->data);
+
+        // Check if this is a command message
+        if (event->topic_len > 0 && event->data_len > 0 &&
+            strncmp(event->topic, sCmdTopic, event->topic_len) == 0 &&
+            static_cast<size_t>(event->topic_len) == strlen(sCmdTopic)) {
+            Arcana::Command::CommandRequest req;
+            if (Arcana::Command::MqttCommandAdapter::ParseRequest(
+                    event->data, event->data_len, req)) {
+                ESP_LOGI(TAG, "MQTT command received: func=0x%02x",
+                         static_cast<uint8_t>(req.Function));
+                Arcana::Command::CommandService::Instance().HandleRequest(req);
+            } else {
+                ESP_LOGW(TAG, "Failed to parse MQTT command");
+            }
+        }
         break;
     case MQTT_EVENT_ERROR:
         ESP_LOGI(TAG, "MQTT_EVENT_ERROR");
@@ -239,18 +292,18 @@ static void mqtt5_app_start(void)
     }
 #endif /* CONFIG_BROKER_URL_FROM_STDIN */
 
-    esp_mqtt_client_handle_t client = esp_mqtt_client_init(&mqtt5_cfg);
+    sMqttClient = esp_mqtt_client_init(&mqtt5_cfg);
 
     /* Set connection properties and user properties */
     esp_mqtt5_client_set_user_property(&connect_property.user_property, user_property_arr, USE_PROPERTY_ARR_SIZE);
     esp_mqtt5_client_set_user_property(&connect_property.will_user_property, user_property_arr, USE_PROPERTY_ARR_SIZE);
-    esp_mqtt5_client_set_connect_property(client, &connect_property);
+    esp_mqtt5_client_set_connect_property(sMqttClient, &connect_property);
 
     esp_mqtt5_client_delete_user_property(connect_property.user_property);
     esp_mqtt5_client_delete_user_property(connect_property.will_user_property);
 
-    esp_mqtt_client_register_event(client, static_cast<esp_mqtt_event_id_t>(ESP_EVENT_ANY_ID), mqtt5_event_handler, NULL);
-    esp_mqtt_client_start(client);
+    esp_mqtt_client_register_event(sMqttClient, static_cast<esp_mqtt_event_id_t>(ESP_EVENT_ANY_ID), mqtt5_event_handler, NULL);
+    esp_mqtt_client_start(sMqttClient);
 }
 
 /*******************************************************************************
@@ -294,6 +347,71 @@ static void ble_sensor_bridge_init(void)
 }
 
 /*******************************************************************************
+ * Command Service Wiring
+ ******************************************************************************/
+
+static void command_service_init(void)
+{
+    using namespace Arcana::Command;
+    using namespace Arcana::Ble;
+
+    auto& cmdSvc = CommandService::Instance();
+    ESP_ERROR_CHECK(cmdSvc.Init(sSensor));
+    ESP_ERROR_CHECK(cmdSvc.Start());
+
+    // Wire BLE Command writes → CommandService
+    BleGattServer::Instance().CommandWriteEvents().Subscribe(
+        [](const BleCommandWriteEvent& evt) {
+            CommandRequest req;
+            if (BleCommandAdapter::ParseRequest(evt.first, evt.second.data(),
+                                                 static_cast<uint16_t>(evt.second.size()), req)) {
+                ESP_LOGI(TAG, "BLE command received: func=0x%02x conn_id=%d",
+                         static_cast<uint8_t>(req.Function), req.ConnectionId);
+                CommandService::Instance().HandleRequest(req);
+            } else {
+                ESP_LOGW(TAG, "Failed to parse BLE command");
+            }
+        }
+    );
+
+    // Wire CommandService responses → BLE / MQTT
+    cmdSvc.ResponseEvents().Subscribe(
+        [](const CommandResponse& rsp) {
+            switch (rsp.Source) {
+            case CommandSource::BLE: {
+                uint8_t buf[264];
+                uint16_t outLen = 0;
+                if (BleCommandAdapter::SerializeResponse(rsp, buf, sizeof(buf), outLen)) {
+                    BleGattServer::Instance().SendCommandResponse(rsp.ConnectionId, buf, outLen);
+                    ESP_LOGI(TAG, "BLE response sent: func=0x%02x status=%d len=%d",
+                             static_cast<uint8_t>(rsp.Function), rsp.Status, outLen);
+                }
+                break;
+            }
+            case CommandSource::MQTT: {
+                if (sMqttClient) {
+                    char jsonBuf[512];
+                    size_t jsonLen = 0;
+                    if (MqttCommandAdapter::SerializeResponse(rsp, jsonBuf, sizeof(jsonBuf), jsonLen)) {
+                        esp_mqtt_client_publish(sMqttClient, sRspTopic, jsonBuf,
+                                                static_cast<int>(jsonLen), 1, 0);
+                        ESP_LOGI(TAG, "MQTT response sent: %.*s", (int)jsonLen, jsonBuf);
+                    }
+                }
+                break;
+            }
+            default:
+                ESP_LOGD(TAG, "Internal command response: func=0x%02x",
+                         static_cast<uint8_t>(rsp.Function));
+                break;
+            }
+        }
+    );
+
+    ESP_LOGI(TAG, "Command service wired to BLE + MQTT");
+}
+
+/*******************************************************************************
  * app_main
  ******************************************************************************/
 
@@ -321,6 +439,9 @@ extern "C" void app_main(void)
 
     /* Bridge ObservableSensor → BLE GATT Server */
     ble_sensor_bridge_init();
+
+    /* Initialize Command Service */
+    command_service_init();
 
     /* Wi-Fi + MQTT5 */
     ESP_ERROR_CHECK(example_connect());

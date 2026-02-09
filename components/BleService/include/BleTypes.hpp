@@ -84,6 +84,12 @@ enum SensorServiceAttr : uint16_t {
     ATTR_STATUS_CHAR,
     ATTR_STATUS_VAL,
 
+    ATTR_CMD_CHAR,
+    ATTR_CMD_VAL,
+    ATTR_RSP_CHAR,
+    ATTR_RSP_VAL,
+    ATTR_RSP_CCCD,
+
     ATTR_COUNT
 };
 
@@ -99,12 +105,14 @@ struct ServerClientInfo {
     esp_bd_addr_t Addr;
     bool TempCccdEnabled;
     bool HumidCccdEnabled;
+    bool RspCccdEnabled;
 
     ServerClientInfo()
         : Connected(false)
         , ConnId(0)
         , TempCccdEnabled(false)
-        , HumidCccdEnabled(false) {
+        , HumidCccdEnabled(false)
+        , RspCccdEnabled(false) {
         memset(Addr, 0, sizeof(esp_bd_addr_t));
     }
 };

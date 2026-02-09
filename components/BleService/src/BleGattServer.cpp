@@ -25,10 +25,14 @@ static const uint16_t sEnvSensingUuid   = UUID_SVC_ENVIRONMENTAL_SENSING;
 static const uint16_t sTempUuid         = UUID_CHAR_TEMPERATURE;
 static const uint16_t sHumidUuid        = UUID_CHAR_HUMIDITY;
 static const uint16_t sStatusUuid       = UUID_CHAR_SENSOR_STATUS;
+static const uint16_t sCmdUuid          = UUID_CHAR_COMMAND;
+static const uint16_t sRspUuid          = UUID_CHAR_RESPONSE;
 
 // Characteristic properties
 static const uint8_t sCharPropReadNotify = ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_NOTIFY;
 static const uint8_t sCharPropRead       = ESP_GATT_CHAR_PROP_BIT_READ;
+static const uint8_t sCharPropWrite      = ESP_GATT_CHAR_PROP_BIT_WRITE;
+static const uint8_t sCharPropNotify     = ESP_GATT_CHAR_PROP_BIT_NOTIFY;
 
 // Default CCCD value (notifications disabled)
 static uint16_t sCccdDefaultVal = 0x0000;
@@ -37,6 +41,12 @@ static uint16_t sCccdDefaultVal = 0x0000;
 static int16_t  sTempDefaultVal   = 0;
 static uint16_t sHumidDefaultVal  = 0;
 static uint8_t  sStatusDefaultVal = 0;
+static uint8_t  sCmdDefaultVal    = 0;
+static uint8_t  sRspDefaultVal    = 0;
+
+// Maximum command/response value length
+static constexpr uint16_t kCmdMaxLen = 131;  // 1 + 2 + 128 (funccode + len + payload)
+static constexpr uint16_t kRspMaxLen = 260;  // 1 + 1 + 2 + 256
 
 // Full GATT attribute table
 static const esp_gatts_attr_db_t sAttrTable[ATTR_COUNT] = {
@@ -133,6 +143,58 @@ static const esp_gatts_attr_db_t sAttrTable[ATTR_COUNT] = {
             (uint8_t*)&sStatusDefaultVal
         }
     },
+
+    // Command Characteristic Declaration (WRITE)
+    [ATTR_CMD_CHAR] = {
+        {ESP_GATT_AUTO_RSP},
+        {
+            ESP_UUID_LEN_16, (uint8_t*)&sCharDeclUuid,
+            ESP_GATT_PERM_READ,
+            sizeof(uint8_t), sizeof(sCharPropWrite),
+            (uint8_t*)&sCharPropWrite
+        }
+    },
+    // Command Value (ESP_GATT_RSP_BY_APP — app handles write)
+    [ATTR_CMD_VAL] = {
+        {ESP_GATT_RSP_BY_APP},
+        {
+            ESP_UUID_LEN_16, (uint8_t*)&sCmdUuid,
+            ESP_GATT_PERM_WRITE,
+            kCmdMaxLen, sizeof(sCmdDefaultVal),
+            (uint8_t*)&sCmdDefaultVal
+        }
+    },
+
+    // Response Characteristic Declaration (NOTIFY)
+    [ATTR_RSP_CHAR] = {
+        {ESP_GATT_AUTO_RSP},
+        {
+            ESP_UUID_LEN_16, (uint8_t*)&sCharDeclUuid,
+            ESP_GATT_PERM_READ,
+            sizeof(uint8_t), sizeof(sCharPropNotify),
+            (uint8_t*)&sCharPropNotify
+        }
+    },
+    // Response Value
+    [ATTR_RSP_VAL] = {
+        {ESP_GATT_AUTO_RSP},
+        {
+            ESP_UUID_LEN_16, (uint8_t*)&sRspUuid,
+            ESP_GATT_PERM_READ,
+            kRspMaxLen, sizeof(sRspDefaultVal),
+            (uint8_t*)&sRspDefaultVal
+        }
+    },
+    // Response CCCD
+    [ATTR_RSP_CCCD] = {
+        {ESP_GATT_AUTO_RSP},
+        {
+            ESP_UUID_LEN_16, (uint8_t*)&sCccdUuid,
+            ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
+            sizeof(uint16_t), sizeof(sCccdDefaultVal),
+            (uint8_t*)&sCccdDefaultVal
+        }
+    },
 };
 
 /*******************************************************************************
@@ -207,6 +269,7 @@ void BleGattServer::HandleGattsEvent(esp_gatts_cb_event_t event, esp_gatt_if_t g
             memcpy(slot->Addr, param->connect.remote_bda, sizeof(esp_bd_addr_t));
             slot->TempCccdEnabled = false;
             slot->HumidCccdEnabled = false;
+            slot->RspCccdEnabled = false;
         } else {
             ESP_LOGW(TAG, "Max clients reached, no slot available");
         }
@@ -274,6 +337,37 @@ void BleGattServer::HandleGattsEvent(esp_gatts_cb_event_t event, esp_gatt_if_t g
                 }
             }
         }
+        // Check if writing to Response CCCD
+        else if (handle == mHandleTable[ATTR_RSP_CCCD]) {
+            if (param->write.len == 2) {
+                uint16_t cccdVal = param->write.value[0] | (param->write.value[1] << 8);
+                ServerClientInfo* client = FindClient(param->write.conn_id);
+                if (client) {
+                    client->RspCccdEnabled = (cccdVal == 0x0001);
+                    ESP_LOGI(TAG, "Response CCCD: conn_id=%d enabled=%d",
+                        param->write.conn_id, client->RspCccdEnabled);
+                }
+            }
+        }
+        // Check if writing to Command characteristic
+        else if (handle == mHandleTable[ATTR_CMD_VAL]) {
+            ESP_LOGI(TAG, "Command write: conn_id=%d len=%d",
+                param->write.conn_id, param->write.len);
+
+            if (param->write.len > 0 && param->write.value) {
+                std::vector<uint8_t> data(param->write.value,
+                                           param->write.value + param->write.len);
+                BleCommandWriteEvent evt = std::make_pair(param->write.conn_id, std::move(data));
+                mCommandWriteEvents.Notify(evt);
+            }
+
+            // Send write response for RSP_BY_APP
+            if (param->write.need_rsp) {
+                esp_ble_gatts_send_response(gattsIf, param->write.conn_id,
+                    param->write.trans_id, ESP_GATT_OK, nullptr);
+            }
+            break;  // Skip the generic response below
+        }
 
         if (param->write.need_rsp) {
             esp_ble_gatts_send_response(gattsIf, param->write.conn_id,
@@ -322,6 +416,26 @@ void BleGattServer::UpdateSensorStatus(uint8_t status) {
 
     esp_ble_gatts_set_attr_value(mHandleTable[ATTR_STATUS_VAL],
         sizeof(mSensorStatus), &mSensorStatus);
+}
+
+void BleGattServer::SendCommandResponse(uint16_t connId, const uint8_t* data, uint16_t len) {
+    if (mGattsIf == ESP_GATT_IF_NONE) return;
+
+    ServerClientInfo* client = FindClient(connId);
+    if (client && client->RspCccdEnabled) {
+        esp_ble_gatts_send_indicate(mGattsIf, connId,
+            mHandleTable[ATTR_RSP_VAL], len, const_cast<uint8_t*>(data), false);
+    }
+}
+
+uint8_t BleGattServer::GetConnectionCount() const {
+    uint8_t count = 0;
+    for (const auto& client : mClients) {
+        if (client.Connected) {
+            ++count;
+        }
+    }
+    return count;
 }
 
 void BleGattServer::NotifyTemperature() {

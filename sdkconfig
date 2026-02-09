@@ -2447,6 +2447,14 @@ CONFIG_BLE_NOTIFY_INTERVAL_MS=1000
 # end of BLE Service Configuration
 
 #
+# Command Service Configuration
+#
+CONFIG_CMD_QUEUE_STACK_SIZE=4096
+CONFIG_CMD_MQTT_CMD_TOPIC="arcana/cmd"
+CONFIG_CMD_MQTT_RSP_TOPIC="arcana/rsp"
+# end of Command Service Configuration
+
+#
 # Observable Sensor Configuration
 #
 CONFIG_OBSERVABLE_SENSOR_TASK_STACK_SIZE=4096

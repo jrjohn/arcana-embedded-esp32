@@ -11,8 +11,10 @@ static constexpr uint16_t UUID_SVC_ENVIRONMENTAL_SENSING = 0x181A;
 static constexpr uint16_t UUID_CHAR_TEMPERATURE          = 0x2A6E;
 static constexpr uint16_t UUID_CHAR_HUMIDITY             = 0x2A6F;
 
-// Custom UUID (vendor-specific)
+// Custom UUIDs (vendor-specific)
 static constexpr uint16_t UUID_CHAR_SENSOR_STATUS        = 0xFF01;
+static constexpr uint16_t UUID_CHAR_COMMAND              = 0xFF10;
+static constexpr uint16_t UUID_CHAR_RESPONSE             = 0xFF11;
 
 // GATT Descriptors
 static constexpr uint16_t UUID_DESC_CCCD                 = 0x2902;

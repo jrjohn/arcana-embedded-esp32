@@ -5,9 +5,14 @@
 #include "Observable.hpp"
 
 #include "esp_gatts_api.h"
+#include <vector>
+#include <utility>
 
 namespace Arcana {
 namespace Ble {
+
+// BLE command write event: (connId, data)
+using BleCommandWriteEvent = std::pair<uint16_t, std::vector<uint8_t>>;
 
 class BleGattServer {
 public:
@@ -21,7 +26,11 @@ public:
     void UpdateHumidity(uint16_t humidCenti);
     void UpdateSensorStatus(uint8_t status);
 
+    void SendCommandResponse(uint16_t connId, const uint8_t* data, uint16_t len);
+    uint8_t GetConnectionCount() const;
+
     Observable<BleConnectionEvent>& ConnectionEvents() { return mConnectionEvents; }
+    Observable<BleCommandWriteEvent>& CommandWriteEvents() { return mCommandWriteEvents; }
 
 private:
     BleGattServer();
@@ -38,6 +47,7 @@ private:
     void RemoveClient(uint16_t connId);
 
     Observable<BleConnectionEvent> mConnectionEvents;
+    Observable<BleCommandWriteEvent> mCommandWriteEvents;
 
     esp_gatt_if_t mGattsIf;
     uint16_t mHandleTable[ATTR_COUNT];
