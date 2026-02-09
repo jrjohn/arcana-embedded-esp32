@@ -12,13 +12,15 @@
 /* Struct definitions */
 typedef PB_BYTES_ARRAY_T(128) arcana_CmdRequest_payload_t;
 typedef struct _arcana_CmdRequest {
-    uint32_t func; /* FuncCode enum */
+    uint32_t cluster; /* Cluster domain (System, Sensor, Ble, Mqtt, Security) */
+    uint32_t command; /* Command ID within cluster */
     arcana_CmdRequest_payload_t payload; /* Command-specific params (max 128 bytes) */
 } arcana_CmdRequest;
 
 typedef PB_BYTES_ARRAY_T(256) arcana_CmdResponse_payload_t;
 typedef struct _arcana_CmdResponse {
-    uint32_t func;
+    uint32_t cluster; /* Cluster domain (echo) */
+    uint32_t command; /* Command ID (echo) */
     uint32_t status; /* 0 = OK */
     arcana_CmdResponse_payload_t payload; /* Command-specific data (max 256 bytes) */
 } arcana_CmdResponse;
@@ -29,29 +31,33 @@ extern "C" {
 #endif
 
 /* Initializer values for message structs */
-#define arcana_CmdRequest_init_default           {0, {0, {0}}}
-#define arcana_CmdResponse_init_default          {0, 0, {0, {0}}}
-#define arcana_CmdRequest_init_zero              {0, {0, {0}}}
-#define arcana_CmdResponse_init_zero             {0, 0, {0, {0}}}
+#define arcana_CmdRequest_init_default           {0, 0, {0, {0}}}
+#define arcana_CmdResponse_init_default          {0, 0, 0, {0, {0}}}
+#define arcana_CmdRequest_init_zero              {0, 0, {0, {0}}}
+#define arcana_CmdResponse_init_zero             {0, 0, 0, {0, {0}}}
 
 /* Field tags (for use in manual encoding/decoding) */
-#define arcana_CmdRequest_func_tag               1
-#define arcana_CmdRequest_payload_tag            2
-#define arcana_CmdResponse_func_tag              1
-#define arcana_CmdResponse_status_tag            2
-#define arcana_CmdResponse_payload_tag           3
+#define arcana_CmdRequest_cluster_tag            1
+#define arcana_CmdRequest_command_tag            2
+#define arcana_CmdRequest_payload_tag            3
+#define arcana_CmdResponse_cluster_tag           1
+#define arcana_CmdResponse_command_tag           2
+#define arcana_CmdResponse_status_tag            3
+#define arcana_CmdResponse_payload_tag           4
 
 /* Struct field encoding specification for nanopb */
 #define arcana_CmdRequest_FIELDLIST(X, a) \
-X(a, STATIC,   SINGULAR, UINT32,   func,              1) \
-X(a, STATIC,   SINGULAR, BYTES,    payload,           2)
+X(a, STATIC,   SINGULAR, UINT32,   cluster,           1) \
+X(a, STATIC,   SINGULAR, UINT32,   command,           2) \
+X(a, STATIC,   SINGULAR, BYTES,    payload,           3)
 #define arcana_CmdRequest_CALLBACK NULL
 #define arcana_CmdRequest_DEFAULT NULL
 
 #define arcana_CmdResponse_FIELDLIST(X, a) \
-X(a, STATIC,   SINGULAR, UINT32,   func,              1) \
-X(a, STATIC,   SINGULAR, UINT32,   status,            2) \
-X(a, STATIC,   SINGULAR, BYTES,    payload,           3)
+X(a, STATIC,   SINGULAR, UINT32,   cluster,           1) \
+X(a, STATIC,   SINGULAR, UINT32,   command,           2) \
+X(a, STATIC,   SINGULAR, UINT32,   status,            3) \
+X(a, STATIC,   SINGULAR, BYTES,    payload,           4)
 #define arcana_CmdResponse_CALLBACK NULL
 #define arcana_CmdResponse_DEFAULT NULL
 
@@ -64,8 +70,8 @@ extern const pb_msgdesc_t arcana_CmdResponse_msg;
 
 /* Maximum encoded size of messages (where known) */
 #define ARCANA_ARCANA_CMD_PB_H_MAX_SIZE          arcana_CmdResponse_size
-#define arcana_CmdRequest_size                   137
-#define arcana_CmdResponse_size                  271
+#define arcana_CmdRequest_size                   143
+#define arcana_CmdResponse_size                  277
 
 #ifdef __cplusplus
 } /* extern "C" */

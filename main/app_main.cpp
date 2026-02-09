@@ -97,7 +97,7 @@ static void print_user_property(mqtt5_user_property_handle_t user_property)
 // MQTT client handle (needed for publishing responses)
 static esp_mqtt_client_handle_t sMqttClient = nullptr;
 
-// Command codec (protobuf + optional AES-128-CCM)
+// Command codec (protobuf + optional AES-256-CCM)
 static Arcana::Command::CommandCodec sCodec;
 
 // Command topic
@@ -216,8 +216,8 @@ static void mqtt5_event_handler(void *handler_args, esp_event_base_t base, int32
             if (sCodec.DecodeRequest(Arcana::Command::CommandSource::MQTT, 0,
                                       reinterpret_cast<const uint8_t*>(event->data),
                                       static_cast<size_t>(event->data_len), req)) {
-                ESP_LOGI(TAG, "MQTT command received: func=0x%02x",
-                         static_cast<uint8_t>(req.Function));
+                ESP_LOGI(TAG, "MQTT command received: cluster=0x%02x cmd=0x%02x",
+                         static_cast<uint8_t>(req.ClusterId), req.Command);
                 Arcana::Command::CommandService::Instance().HandleRequest(req);
             } else {
                 ESP_LOGW(TAG, "Failed to parse MQTT command");
@@ -385,8 +385,8 @@ static void command_service_init(void)
             CommandRequest req;
             if (sCodec.DecodeRequest(CommandSource::BLE, evt.first,
                                       evt.second.data(), evt.second.size(), req)) {
-                ESP_LOGI(TAG, "BLE command received: func=0x%02x conn_id=%d",
-                         static_cast<uint8_t>(req.Function), req.ConnectionId);
+                ESP_LOGI(TAG, "BLE command received: cluster=0x%02x cmd=0x%02x conn_id=%d",
+                         static_cast<uint8_t>(req.ClusterId), req.Command, req.ConnectionId);
                 CommandService::Instance().HandleRequest(req);
             } else {
                 ESP_LOGW(TAG, "Failed to parse BLE command");
@@ -397,7 +397,7 @@ static void command_service_init(void)
     // Wire CommandService responses → encode → BLE / MQTT
     cmdSvc.ResponseEvents().Subscribe(
         [](const CommandResponse& rsp) {
-            uint8_t buf[300];
+            uint8_t buf[320];
             size_t outLen = 0;
             if (!sCodec.EncodeResponse(rsp, buf, sizeof(buf), outLen)) return;
 
@@ -405,20 +405,20 @@ static void command_service_init(void)
             case CommandSource::BLE:
                 BleGattServer::Instance().SendCommandResponse(
                     rsp.ConnectionId, buf, static_cast<uint16_t>(outLen));
-                ESP_LOGI(TAG, "BLE response sent: func=0x%02x status=%d len=%zu",
-                         static_cast<uint8_t>(rsp.Function), rsp.Status, outLen);
+                ESP_LOGI(TAG, "BLE response sent: cluster=0x%02x cmd=0x%02x status=%d len=%zu",
+                         static_cast<uint8_t>(rsp.ClusterId), rsp.Command, rsp.Status, outLen);
                 break;
             case CommandSource::MQTT:
                 if (sMqttClient) {
                     esp_mqtt_client_publish(sMqttClient, sRspTopic,
                         reinterpret_cast<const char*>(buf), static_cast<int>(outLen), 1, 0);
-                    ESP_LOGI(TAG, "MQTT response sent: func=0x%02x len=%zu",
-                             static_cast<uint8_t>(rsp.Function), outLen);
+                    ESP_LOGI(TAG, "MQTT response sent: cluster=0x%02x cmd=0x%02x len=%zu",
+                             static_cast<uint8_t>(rsp.ClusterId), rsp.Command, outLen);
                 }
                 break;
             default:
-                ESP_LOGD(TAG, "Internal command response: func=0x%02x",
-                         static_cast<uint8_t>(rsp.Function));
+                ESP_LOGD(TAG, "Internal command response: cluster=0x%02x cmd=0x%02x",
+                         static_cast<uint8_t>(rsp.ClusterId), rsp.Command);
                 break;
             }
         }

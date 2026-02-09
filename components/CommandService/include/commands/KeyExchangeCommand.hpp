@@ -15,7 +15,8 @@ public:
         CommandResponse rsp;
         rsp.Source = request.Source;
         rsp.ConnectionId = request.ConnectionId;
-        rsp.Function = FuncCode::KeyExchange;
+        rsp.ClusterId = Cluster::Security;
+        rsp.Command = SecurityCmd::KeyExchange;
 
         if (!mMgr) {
             rsp.Status = kStatusError;

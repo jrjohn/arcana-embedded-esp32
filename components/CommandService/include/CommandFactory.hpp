@@ -19,7 +19,7 @@ public:
 
     explicit CommandFactory(const Dependencies& deps) : mDeps(deps) {}
 
-    std::unique_ptr<ICommand> Create(FuncCode code);
+    std::unique_ptr<ICommand> Create(Cluster cluster, uint8_t command);
 
     // Access to stateful commands for external updates
     GetMqttStatusCommand* MqttStatusCmd() { return mMqttStatusCmd; }

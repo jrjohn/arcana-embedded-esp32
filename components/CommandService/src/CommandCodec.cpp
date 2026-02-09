@@ -1,4 +1,5 @@
 #include "CommandCodec.hpp"
+#include "FrameCodec.hpp"
 #include "KeyExchangeManager.hpp"
 #include "arcana_cmd.pb.h"
 #include "esp_log.h"
@@ -47,8 +48,15 @@ CryptoEngine* CommandCodec::SelectEngine(CommandSource source, uint16_t connId) 
 bool CommandCodec::DecodeRequest(CommandSource source, uint16_t connId,
                                   const uint8_t* data, size_t len,
                                   CommandRequest& out) {
-    const uint8_t* pbData = data;
-    size_t pbLen = len;
+    // Deframe: strip header + verify CRC
+    const uint8_t* framePayload = nullptr;
+    size_t framePayloadLen = 0;
+    if (!FrameCodec::Deframe(data, len, framePayload, framePayloadLen)) {
+        return false;
+    }
+
+    const uint8_t* pbData = framePayload;
+    size_t pbLen = framePayloadLen;
     uint8_t plainBuf[arcana_CmdRequest_size];
 
     // Decrypt if encryption is enabled
@@ -59,12 +67,14 @@ bool CommandCodec::DecodeRequest(CommandSource source, uint16_t connId,
         // Try session key first
         CryptoEngine* session = SelectEngine(source, connId);
         if (session) {
-            decrypted = session->Decrypt(data, len, plainBuf, sizeof(plainBuf), plainLen);
+            decrypted = session->Decrypt(framePayload, framePayloadLen,
+                                         plainBuf, sizeof(plainBuf), plainLen);
         }
 
         // Fallback to PSK
         if (!decrypted) {
-            if (!mCrypto.Decrypt(data, len, plainBuf, sizeof(plainBuf), plainLen)) {
+            if (!mCrypto.Decrypt(framePayload, framePayloadLen,
+                                 plainBuf, sizeof(plainBuf), plainLen)) {
                 ESP_LOGW(TAG, "Decryption failed (session + PSK)");
                 return false;
             }
@@ -85,7 +95,8 @@ bool CommandCodec::DecodeRequest(CommandSource source, uint16_t connId,
     // Map to CommandRequest
     out.Source = source;
     out.ConnectionId = connId;
-    out.Function = static_cast<FuncCode>(msg.func);
+    out.ClusterId = static_cast<Cluster>(msg.cluster);
+    out.Command = static_cast<uint8_t>(msg.command);
     out.PayloadLen = static_cast<uint16_t>(msg.payload.size);
     if (msg.payload.size > 0 && msg.payload.size <= kMaxRequestPayload) {
         memcpy(out.Payload, msg.payload.bytes, msg.payload.size);
@@ -94,8 +105,8 @@ bool CommandCodec::DecodeRequest(CommandSource source, uint16_t connId,
         return false;
     }
 
-    ESP_LOGD(TAG, "Decoded request: func=0x%02x payload=%u bytes",
-             msg.func, (unsigned)msg.payload.size);
+    ESP_LOGD(TAG, "Decoded request: cluster=0x%02x cmd=0x%02x payload=%u bytes",
+             msg.cluster, msg.command, (unsigned)msg.payload.size);
     return true;
 }
 
@@ -103,7 +114,8 @@ bool CommandCodec::EncodeResponse(const CommandResponse& rsp,
                                    uint8_t* buf, size_t bufSize, size_t& outLen) {
     // Map CommandResponse to protobuf struct
     arcana_CmdResponse msg = arcana_CmdResponse_init_zero;
-    msg.func = static_cast<uint32_t>(rsp.Function);
+    msg.cluster = static_cast<uint32_t>(rsp.ClusterId);
+    msg.command = static_cast<uint32_t>(rsp.Command);
     msg.status = rsp.Status;
     msg.payload.size = rsp.PayloadLen;
     if (rsp.PayloadLen > 0) {
@@ -119,9 +131,15 @@ bool CommandCodec::EncodeResponse(const CommandResponse& rsp,
     }
     size_t pbLen = stream.bytes_written;
 
+    // Inner buffer for pre-frame payload (encrypted or plaintext)
+    // Max: protobuf + crypto overhead
+    uint8_t innerBuf[arcana_CmdResponse_size + CryptoEngine::kOverhead];
+    size_t innerLen = 0;
+
     // Encrypt if enabled
     if (mEncryptionEnabled) {
-        bool isKeyExchangeOk = (rsp.Function == FuncCode::KeyExchange &&
+        bool isKeyExchangeOk = (rsp.ClusterId == Cluster::Security &&
+                                rsp.Command == SecurityCmd::KeyExchange &&
                                 rsp.Status == kStatusOk);
 
         // KeyExchange response ALWAYS uses PSK (session not yet installed)
@@ -133,7 +151,7 @@ bool CommandCodec::EncodeResponse(const CommandResponse& rsp,
             engine = &mCrypto; // PSK fallback
         }
 
-        if (!engine->Encrypt(pbBuf, pbLen, buf, bufSize, outLen)) {
+        if (!engine->Encrypt(pbBuf, pbLen, innerBuf, sizeof(innerBuf), innerLen)) {
             ESP_LOGW(TAG, "Encryption failed");
             return false;
         }
@@ -143,16 +161,17 @@ bool CommandCodec::EncodeResponse(const CommandResponse& rsp,
             mKeyExchangeMgr->InstallPendingSession(rsp.Source, rsp.ConnectionId);
         }
     } else {
-        if (bufSize < pbLen) {
-            ESP_LOGW(TAG, "Output buffer too small: need %zu, have %zu", pbLen, bufSize);
-            return false;
-        }
-        memcpy(buf, pbBuf, pbLen);
-        outLen = pbLen;
+        memcpy(innerBuf, pbBuf, pbLen);
+        innerLen = pbLen;
     }
 
-    ESP_LOGD(TAG, "Encoded response: func=0x%02x status=%d wire=%zu bytes",
-             msg.func, msg.status, outLen);
+    // Frame: wrap inner payload with header + CRC
+    if (!FrameCodec::Frame(innerBuf, innerLen, buf, bufSize, outLen)) {
+        return false;
+    }
+
+    ESP_LOGD(TAG, "Encoded response: cluster=0x%02x cmd=0x%02x status=%d wire=%zu bytes",
+             msg.cluster, msg.command, msg.status, outLen);
     return true;
 }
 

@@ -13,7 +13,8 @@ public:
         CommandResponse rsp;
         rsp.Source = request.Source;
         rsp.ConnectionId = request.ConnectionId;
-        rsp.Function = FuncCode::GetBleStatus;
+        rsp.ClusterId = Cluster::Ble;
+        rsp.Command = BleCmd::GetStatus;
         rsp.Status = kStatusOk;
 
         // Count connected server clients

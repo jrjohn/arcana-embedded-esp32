@@ -36,13 +36,15 @@ void CommandDispatcher::Stop() {
 
 void CommandDispatcher::Dispatch(const CommandRequest& request) {
     // Create command to check if it's async
-    auto cmd = mFactory.Create(request.Function);
+    auto cmd = mFactory.Create(request.ClusterId, request.Command);
     if (!cmd) {
-        ESP_LOGW(TAG, "Unknown command: 0x%02x", static_cast<uint8_t>(request.Function));
+        ESP_LOGW(TAG, "Unknown command: cluster=0x%02x cmd=0x%02x",
+                 static_cast<uint8_t>(request.ClusterId), request.Command);
         CommandResponse rsp;
         rsp.Source = request.Source;
         rsp.ConnectionId = request.ConnectionId;
-        rsp.Function = request.Function;
+        rsp.ClusterId = request.ClusterId;
+        rsp.Command = request.Command;
         rsp.Status = kStatusUnknownCommand;
         rsp.PayloadLen = 0;
         mResponseEvents.Notify(rsp);
@@ -52,8 +54,8 @@ void CommandDispatcher::Dispatch(const CommandRequest& request) {
     if (cmd->IsAsync()) {
         // Post to queue for async execution
         if (!mAsyncQueue.Post(request)) {
-            ESP_LOGW(TAG, "Async queue full, dropping command 0x%02x",
-                     static_cast<uint8_t>(request.Function));
+            ESP_LOGW(TAG, "Async queue full, dropping cluster=0x%02x cmd=0x%02x",
+                     static_cast<uint8_t>(request.ClusterId), request.Command);
         }
     } else {
         // Execute synchronously in caller's context
@@ -62,13 +64,13 @@ void CommandDispatcher::Dispatch(const CommandRequest& request) {
 }
 
 void CommandDispatcher::ProcessCommand(const CommandRequest& request) {
-    auto cmd = mFactory.Create(request.Function);
+    auto cmd = mFactory.Create(request.ClusterId, request.Command);
     if (!cmd) {
         return;
     }
 
-    ESP_LOGI(TAG, "Executing command 0x%02x (source=%d)",
-             static_cast<uint8_t>(request.Function),
+    ESP_LOGI(TAG, "Executing cluster=0x%02x cmd=0x%02x (source=%d)",
+             static_cast<uint8_t>(request.ClusterId), request.Command,
              static_cast<uint8_t>(request.Source));
 
     CommandResponse rsp = cmd->Execute(request);

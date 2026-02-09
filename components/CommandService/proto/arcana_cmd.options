@@ -1,2 +1,2 @@
-arcana.CmdRequest.payload    max_size:128
-arcana.CmdResponse.payload   max_size:256
+arcana.CmdRequest.payload     max_size:128
+arcana.CmdResponse.payload    max_size:256

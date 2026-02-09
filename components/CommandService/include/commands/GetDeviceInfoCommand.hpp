@@ -15,7 +15,8 @@ public:
         CommandResponse rsp;
         rsp.Source = request.Source;
         rsp.ConnectionId = request.ConnectionId;
-        rsp.Function = FuncCode::GetDeviceInfo;
+        rsp.ClusterId = Cluster::System;
+        rsp.Command = SystemCmd::GetDeviceInfo;
         rsp.Status = kStatusOk;
 
         // Pack: [idf_version_len:1][idf_version:N][mac:6][free_heap:4]

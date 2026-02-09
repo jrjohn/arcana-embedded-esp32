@@ -15,7 +15,8 @@ public:
         CommandResponse rsp;
         rsp.Source = request.Source;
         rsp.ConnectionId = request.ConnectionId;
-        rsp.Function = FuncCode::BleScan;
+        rsp.ClusterId = Cluster::Ble;
+        rsp.Command = BleCmd::Scan;
 
         // Parse scan duration from payload (default 10 seconds)
         uint32_t durationSec = 10;

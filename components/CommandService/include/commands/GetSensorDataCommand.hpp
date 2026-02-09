@@ -15,7 +15,8 @@ public:
         CommandResponse rsp;
         rsp.Source = request.Source;
         rsp.ConnectionId = request.ConnectionId;
-        rsp.Function = FuncCode::GetSensorData;
+        rsp.ClusterId = Cluster::Sensor;
+        rsp.Command = SensorCmd::GetData;
 
         if (!mSensor) {
             rsp.Status = kStatusError;

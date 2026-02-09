@@ -13,7 +13,8 @@ public:
         CommandResponse rsp;
         rsp.Source = request.Source;
         rsp.ConnectionId = request.ConnectionId;
-        rsp.Function = FuncCode::Ping;
+        rsp.ClusterId = Cluster::System;
+        rsp.Command = SystemCmd::Ping;
         rsp.Status = kStatusOk;
 
         // Return timestamp (microseconds since boot) as uint64_t

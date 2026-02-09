@@ -14,7 +14,8 @@ public:
         CommandResponse rsp;
         rsp.Source = request.Source;
         rsp.ConnectionId = request.ConnectionId;
-        rsp.Function = FuncCode::SetDeviceName;
+        rsp.ClusterId = Cluster::Ble;
+        rsp.Command = BleCmd::SetDeviceName;
 
         if (request.PayloadLen == 0 || request.PayloadLen > 29) {
             rsp.Status = kStatusInvalidParam;

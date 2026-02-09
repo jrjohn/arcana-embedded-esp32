@@ -13,41 +13,59 @@
 namespace Arcana {
 namespace Command {
 
-std::unique_ptr<ICommand> CommandFactory::Create(FuncCode code) {
-    switch (code) {
-    case FuncCode::Ping:
-        return std::make_unique<PingCommand>();
+std::unique_ptr<ICommand> CommandFactory::Create(Cluster cluster, uint8_t command) {
+    switch (cluster) {
+    case Cluster::System:
+        switch (command) {
+        case SystemCmd::Ping:
+            return std::make_unique<PingCommand>();
+        case SystemCmd::GetDeviceInfo:
+            return std::make_unique<GetDeviceInfoCommand>();
+        }
+        break;
 
-    case FuncCode::GetSensorData:
-        return std::make_unique<GetSensorDataCommand>(mDeps.Sensor);
+    case Cluster::Sensor:
+        switch (command) {
+        case SensorCmd::GetData:
+            return std::make_unique<GetSensorDataCommand>(mDeps.Sensor);
+        case SensorCmd::SetNotifyInterval:
+            return std::make_unique<SetNotifyIntervalCommand>(mDeps.Sensor);
+        }
+        break;
 
-    case FuncCode::GetDeviceInfo:
-        return std::make_unique<GetDeviceInfoCommand>();
+    case Cluster::Ble:
+        switch (command) {
+        case BleCmd::GetStatus:
+            return std::make_unique<GetBleStatusCommand>();
+        case BleCmd::SetDeviceName:
+            return std::make_unique<SetDeviceNameCommand>();
+        case BleCmd::Scan:
+            return std::make_unique<BleScanCommand>();
+        }
+        break;
 
-    case FuncCode::SetNotifyInterval:
-        return std::make_unique<SetNotifyIntervalCommand>(mDeps.Sensor);
+    case Cluster::Mqtt:
+        switch (command) {
+        case MqttCmd::GetStatus: {
+            auto cmd = std::make_unique<GetMqttStatusCommand>();
+            mMqttStatusCmd = cmd.get();
+            return cmd;
+        }
+        }
+        break;
 
-    case FuncCode::GetBleStatus:
-        return std::make_unique<GetBleStatusCommand>();
-
-    case FuncCode::SetDeviceName:
-        return std::make_unique<SetDeviceNameCommand>();
-
-    case FuncCode::BleScan:
-        return std::make_unique<BleScanCommand>();
-
-    case FuncCode::GetMqttStatus: {
-        auto cmd = std::make_unique<GetMqttStatusCommand>();
-        mMqttStatusCmd = cmd.get();
-        return cmd;
-    }
-
-    case FuncCode::KeyExchange:
-        return std::make_unique<KeyExchangeCommand>(mDeps.KeyExchangeMgr);
+    case Cluster::Security:
+        switch (command) {
+        case SecurityCmd::KeyExchange:
+            return std::make_unique<KeyExchangeCommand>(mDeps.KeyExchangeMgr);
+        }
+        break;
 
     default:
-        return nullptr;
+        break;
     }
+
+    return nullptr;
 }
 
 } // namespace Command

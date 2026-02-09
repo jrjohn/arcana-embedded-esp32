@@ -15,7 +15,8 @@ public:
         CommandResponse rsp;
         rsp.Source = request.Source;
         rsp.ConnectionId = request.ConnectionId;
-        rsp.Function = FuncCode::GetMqttStatus;
+        rsp.ClusterId = Cluster::Mqtt;
+        rsp.Command = MqttCmd::GetStatus;
         rsp.Status = kStatusOk;
 
         // Pack: [connected:1]

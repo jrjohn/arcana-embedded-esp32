@@ -15,7 +15,8 @@ public:
         CommandResponse rsp;
         rsp.Source = request.Source;
         rsp.ConnectionId = request.ConnectionId;
-        rsp.Function = FuncCode::SetNotifyInterval;
+        rsp.ClusterId = Cluster::Sensor;
+        rsp.Command = SensorCmd::SetNotifyInterval;
 
         if (!mSensor || request.PayloadLen < sizeof(uint32_t)) {
             rsp.Status = kStatusInvalidParam;

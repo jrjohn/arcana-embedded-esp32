@@ -17,7 +17,9 @@
 
 <p align="center">
   <a href="#system-architecture">Architecture</a> &bull;
+  <a href="#arcana-frame-protocol">Frame Protocol</a> &bull;
   <a href="#command-protocol">Command Protocol</a> &bull;
+  <a href="#protocol-samples">Protocol Samples</a> &bull;
   <a href="#security">Security</a> &bull;
   <a href="#ble-dual-role">BLE</a> &bull;
   <a href="#observable-pattern">Observable</a> &bull;
@@ -39,16 +41,16 @@
 | **Connectivity** | 9.5/10 | WiFi + BLE coexistence, MQTT5, unified BLE+MQTT command pipeline |
 | **Code Quality** | 9.0/10 | RAII patterns, SOLID principles, singleton facades, header-only commands |
 | **Extensibility** | 9.5/10 | ICommand + CommandFactory switch-case, Observable subscriptions, Kconfig |
-| **Protocol Design** | 9.0/10 | nanopb protobuf wire format, identical BLE/MQTT encoding, session-aware codec |
-| **Memory Efficiency** | 9.0/10 | Static/dynamic Observable variants, ~16 KB custom code footprint |
+| **Protocol Design** | 9.5/10 | Frame layer (magic/ver/len/CRC) + nanopb protobuf + session-aware codec |
+| **Memory Efficiency** | 9.0/10 | Static/dynamic Observable variants, ~17 KB custom code footprint |
 | **Overall** | **9.2/10** | Production-ready encrypted IoT command platform |
 
 ### Strengths
 
-- **Unified command pipeline** - BLE and MQTT share identical wire format (protobuf + AES-256-CCM), single codec handles both
-- **Perfect Forward Secrecy** - ECDH session keys are independent of PSK; PSK compromise does not expose past sessions
-- **Clean layering** - Three components with explicit dependency chains, MINIMAL_BUILD enforced
-- **Thread-safe session management** - Mutex-protected session table, safe across BLE/MQTT tasks
+- **Unified command pipeline** — BLE and MQTT share identical wire format (frame + protobuf + AES-256-CCM), single codec handles both
+- **Frame Protocol** — Magic bytes + version + length + CRC-16 enable packet detection, integrity checking, and stream-transport readiness (UART/TCP)
+- **Perfect Forward Secrecy** — ECDH session keys are independent of PSK; PSK compromise does not expose past sessions
+- **Clean layering** — Three components with explicit dependency chains, MINIMAL_BUILD enforced
 
 ### Trade-offs
 
@@ -59,6 +61,18 @@
 | Manual HKDF | ~50 lines of code | `MBEDTLS_HKDF_C` not enabled in ESP-IDF default sdkconfig |
 | nanopb (not full protobuf) | Manual `.options` file | 10x smaller than protobuf-c, fits embedded constraints |
 | Singleton pattern | Global state | Natural fit for hardware peripherals (BLE, sensor); single instance enforced |
+| Custom Frame (not COBS/SLIP) | 7 bytes overhead | Simpler, includes version + magic for protocol detection; CRC covers entire frame |
+
+### Transport Compatibility
+
+| Transport | Status | Notes |
+|-----------|--------|-------|
+| **BLE GATT** | Supported | Write to 0xFF10, Notify on 0xFF11 |
+| **MQTT** | Supported | Binary payload on `arcana/cmd` / `arcana/rsp` |
+| **UART** | Ready | Frame layer provides packet boundaries + CRC |
+| **TCP Raw Socket** | Ready | Frame layer provides length-delimited framing |
+| **Thread / Zigbee** | Not supported | Requires 802.15.4 radio (ESP32-H2/C6) + separate protocol stack |
+| **Matter-over-WiFi** | Future | Would be a parallel stack, not replacement |
 
 ---
 
@@ -77,7 +91,7 @@
 |  | OnThreshold()      |  |   .UpdateHumid()|  | CommandFactory      |  |
 |  | OnLifecycle()      |  |                 |  |   9 ICommand impls  |  |
 |  |                    |  | GattClient      |  | CommandCodec        |  |
-|  | [RTOS Task]        |  |   .Connect()    |  |   protobuf+AES-256 |  |
+|  | [RTOS Task]        |  |   .Connect()    |  |   Frame+PB+AES-256 |  |
 |  | ReadHardware()     |  |   .Discover()   |  | KeyExchangeManager  |  |
 |  +--------------------+  |                 |  |   ECDH P-256        |  |
 |                          | BleGap          |  |   4 session slots   |  |
@@ -88,6 +102,19 @@
 |                                                                        |
 +------------------------------------------------------------------------+
 |                         PROTOCOL LAYER                                  |
+|                                                                        |
+|  Application     CommandRequest / CommandResponse                      |
+|       |                                                                |
+|  Serialization   nanopb protobuf encode/decode                        |
+|       |                                                                |
+|  Encryption      AES-256-CCM [counter:4][cipher][tag:8] (optional)    |
+|       |                                                                |
+|  Framing         [magic:2][ver:1][len:2][payload:N][crc:2]            |
+|       |                                                                |
+|  Transport       BLE / MQTT / UART / TCP                              |
+|                                                                        |
++------------------------------------------------------------------------+
+|                         SYSTEM LAYER                                    |
 |                                                                        |
 |  +----------+  +----------------------------------------------+        |
 |  |   WiFi   |  |          Bluedroid BLE Stack                 |        |
@@ -112,6 +139,7 @@
 main (app_main.cpp)
   +-- CommandService
   |     +-- mbedtls          (AES-256-CCM, ECDH, HMAC, SHA-256)
+  |     +-- esp_hw_support   (CRC-16 ROM acceleration)
   |     +-- BleService
   |     |     +-- bt         (Bluedroid)
   |     |     +-- nvs_flash
@@ -126,16 +154,83 @@ main (app_main.cpp)
 
 ---
 
+## Arcana Frame Protocol
+
+Every Arcana packet — whether plaintext or encrypted — is wrapped in a Frame for transport integrity.
+
+### Wire Layout
+
+```
+Offset:  0     1     2     3     4     5              5+N   5+N+1
+       +-----+-----+-----+-----+-----+--------------+-----+-----+
+       | 0xAC| 0xDA| Ver |  Length LE |   Payload    |  CRC-16 LE|
+       +-----+-----+-----+-----+-----+--------------+-----+-----+
+       |<-- Magic-->|     |<-- 2B --> |<-- N bytes-->|<-- 2B  -->|
+       |                                             |
+       |<-------------- CRC-16 covers -------------->|
+```
+
+| Field | Offset | Size | Value | Description |
+|-------|--------|------|-------|-------------|
+| **Magic** | 0 | 2 | `0xAC 0xDA` | "Arcana Data" identifier |
+| **Version** | 2 | 1 | `0x01` | Protocol version (v1) |
+| **Length** | 3 | 2 | LE uint16 | Payload length (excludes header and CRC) |
+| **Payload** | 5 | N | — | Encrypted: `[counter:4][cipher][tag:8]`; Plaintext: raw protobuf |
+| **CRC-16** | 5+N | 2 | LE uint16 | `esp_crc16_le(0, magic..payload)` (hardware-accelerated on ESP32-S3) |
+
+- **Header**: 5 bytes (Magic + Version + Length)
+- **Trailer**: 2 bytes (CRC-16)
+- **Total overhead**: 7 bytes
+- **CRC scope**: Magic through end of Payload (excludes the CRC itself)
+
+### Max Wire Sizes
+
+| Direction | Protobuf Max | + Crypto (12B) | + Frame (7B) | Total |
+|-----------|-------------|----------------|--------------|-------|
+| Request   | 143 B       | 155 B          | **162 B**    | 162 B |
+| Response  | 277 B       | 289 B          | **296 B**    | 296 B |
+
+### FrameCodec API
+
+```cpp
+namespace Arcana::Command {
+
+class FrameCodec {
+public:
+    static constexpr uint8_t  kMagic[2] = {0xAC, 0xDA};
+    static constexpr uint8_t  kVersion  = 0x01;
+    static constexpr size_t   kOverhead = 7;  // 5 header + 2 CRC
+
+    // Wrap payload into frame
+    static bool Frame(const uint8_t* payload, size_t payloadLen,
+                      uint8_t* out, size_t outBufSize, size_t& outLen);
+
+    // Unwrap frame, verify magic + version + CRC, return payload pointer
+    static bool Deframe(const uint8_t* frame, size_t frameLen,
+                        const uint8_t*& payload, size_t& payloadLen);
+};
+
+}
+```
+
+---
+
 ## Command Protocol
 
 ### Overview
 
-The CommandService provides a **unified binary command pipeline** shared by BLE and MQTT. Both channels use identical protobuf wire format with optional AES-256-CCM encryption.
+The CommandService provides a **unified binary command pipeline** shared by BLE and MQTT. Both channels use identical framed protobuf wire format with optional AES-256-CCM encryption.
 
 ```
               BLE Write (0xFF10)                    MQTT (arcana/cmd)
                      |                                     |
                      v                                     v
+            +------------------------------------------------+
+            |          FrameCodec::Deframe                   |
+            |  verify magic + version + CRC-16               |
+            +------------------------+-----------------------+
+                                     |
+                                     v
             +------------------------------------------------+
             |            CommandCodec.DecodeRequest           |
             |  [counter:4][ciphertext:N][tag:8] -> protobuf  |
@@ -160,45 +255,226 @@ The CommandService provides a **unified binary command pipeline** shared by BLE 
             |  protobuf -> [counter:4][ciphertext:N][tag:8]  |
             +------------------------+-----------------------+
                                      |
+                                     v
+            +------------------------------------------------+
+            |           FrameCodec::Frame                    |
+            |  wrap with magic + version + length + CRC-16   |
+            +------------------------+-----------------------+
+                                     |
                      +---------------+---------------+
                      |                               |
                      v                               v
            BLE Notify (0xFF11)              MQTT (arcana/rsp)
 ```
 
-### Commands
+### Cluster + Command Dispatch
 
-| FuncCode | Name | Type | Description |
-|----------|------|------|-------------|
-| `0x01` | Ping | Sync | Returns timestamp (microseconds since boot) |
-| `0x02` | GetSensorData | Sync | Current temperature + humidity |
-| `0x03` | GetDeviceInfo | Sync | Chip model, IDF version, free heap, MAC |
-| `0x04` | SetNotifyInterval | Sync | Change sensor polling interval (ms) |
-| `0x05` | GetBleStatus | Sync | Connected clients, advertising state |
-| `0x06` | SetDeviceName | Sync | Update BLE device name (persisted to NVS) |
-| `0x07` | BleScan | **Async** | Trigger BLE scan, results via response stream |
-| `0x08` | GetMqttStatus | Sync | MQTT connection state |
-| `0x09` | KeyExchange | Sync | ECDH P-256 key exchange (requires encryption enabled) |
+Commands follow a **Matter/ZCL-style two-layer dispatch**: a `Cluster` identifies the domain, and a `Command` ID selects the operation within that cluster.
+
+| Cluster | ID | Command | ID | Type | Description |
+|---------|----|---------|----|------|-------------|
+| **System** | `0x00` | Ping | `0x01` | Sync | Returns timestamp (microseconds since boot) |
+| | | GetDeviceInfo | `0x02` | Sync | Chip model, IDF version, free heap, MAC |
+| **Sensor** | `0x01` | GetData | `0x01` | Sync | Current temperature + humidity |
+| | | SetNotifyInterval | `0x02` | Sync | Change sensor polling interval (ms) |
+| **Ble** | `0x02` | GetStatus | `0x01` | Sync | Connected clients, advertising state |
+| | | SetDeviceName | `0x02` | Sync | Update BLE device name (persisted to NVS) |
+| | | Scan | `0x03` | **Async** | Trigger BLE scan, results via response stream |
+| **Mqtt** | `0x03` | GetStatus | `0x01` | Sync | MQTT connection state |
+| **Security** | `0x04` | KeyExchange | `0x01` | Sync | ECDH P-256 key exchange (requires encryption) |
+
+### Status Codes
+
+| Code | Name | Description |
+|------|------|-------------|
+| `0x00` | OK | Success |
+| `0x01` | UnknownCommand | Cluster or command not recognized |
+| `0x02` | InvalidParam | Payload validation failed |
+| `0x03` | Busy | Resource busy (e.g., scan in progress) |
+| `0xFF` | Error | Generic error |
 
 ### Wire Format (Protobuf)
 
 ```protobuf
 // arcana_cmd.proto
 message CmdRequest {
-  uint32 func    = 1;    // FuncCode enum
-  bytes  payload = 2;    // max 128 bytes
+  uint32 cluster = 1;    // Cluster domain (System=0, Sensor=1, Ble=2, Mqtt=3, Security=4)
+  uint32 command = 2;    // Command ID within cluster
+  bytes  payload = 3;    // max 128 bytes
 }
 
 message CmdResponse {
-  uint32 func    = 1;
-  uint32 status  = 2;    // 0 = OK
-  bytes  payload = 3;    // max 256 bytes
+  uint32 cluster = 1;    // Cluster domain (echo)
+  uint32 command = 2;    // Command ID (echo)
+  uint32 status  = 3;    // 0 = OK
+  bytes  payload = 4;    // max 256 bytes
 }
 ```
 
-**Plaintext wire**: raw nanopb-encoded bytes
+### Complete Wire Encoding
 
-**Encrypted wire**: `[counter:4 LE][ciphertext:N][tag:8]`
+```
+Plaintext:   Frame( protobuf_bytes )
+Encrypted:   Frame( [counter:4 LE][AES-CCM(protobuf_bytes)][tag:8] )
+```
+
+---
+
+## Protocol Samples
+
+### Sample 1: Plaintext Ping Request
+
+System::Ping — cluster=0x00, command=0x01, no payload.
+
+**Protobuf encoding** (4 bytes):
+```
+08 00        <- field 1 (cluster) varint = 0x00
+10 01        <- field 2 (command) varint = 0x01
+             <- field 3 (payload) omitted (empty)
+```
+
+**Framed wire** (11 bytes):
+```
+Offset  Hex                          Description
+------  ---------------------------  -----------
+ 0-1    AC DA                        Magic "Arcana Data"
+ 2      01                           Version 1
+ 3-4    04 00                        Length = 4 (LE)
+ 5-8    08 00 10 01                  Payload (protobuf)
+ 9-10   xx xx                        CRC-16 (LE, computed over bytes 0..8)
+```
+
+### Sample 2: Plaintext Ping Response
+
+System::Ping response — cluster=0x00, command=0x01, status=0, payload=timestamp.
+
+Assume timestamp = 1234567 (0x12D687) encoded as string `"1234567"` (7 bytes):
+
+**Protobuf encoding** (13 bytes):
+```
+08 00              <- cluster = 0x00
+10 01              <- command = 0x01
+18 00              <- status  = 0x00 (OK)
+22 07 31 32 33     <- payload = "1234567" (length-delimited, 7 bytes)
+34 35 36 37
+```
+
+**Framed wire** (20 bytes):
+```
+Offset  Hex                                      Description
+------  -----------------------------------------  -----------
+ 0-1    AC DA                                      Magic
+ 2      01                                         Version 1
+ 3-4    0D 00                                      Length = 13 (LE)
+ 5-17   08 00 10 01 18 00 22 07 31 32 33 34 35    Payload (protobuf)
+ 18-19  xx xx                                      CRC-16 (LE)
+```
+
+### Sample 3: Encrypted Ping Request
+
+Same Ping request, but with AES-256-CCM encryption enabled.
+
+**Inner protobuf** (4 bytes): `08 00 10 01`
+
+**Encrypted payload** (16 bytes = 4 counter + 4 ciphertext + 8 tag):
+```
+01 00 00 00        <- TX counter = 1 (LE uint32)
+xx xx xx xx        <- AES-256-CCM ciphertext (4 bytes, same length as plaintext)
+xx xx xx xx        <- Authentication tag (8 bytes)
+xx xx xx xx
+```
+
+**Framed wire** (23 bytes):
+```
+Offset  Hex                                            Description
+------  ---------------------------------------------  -----------
+ 0-1    AC DA                                          Magic
+ 2      01                                             Version 1
+ 3-4    10 00                                          Length = 16 (LE)
+ 5-8    01 00 00 00                                    Counter (LE)
+ 9-12   xx xx xx xx                                    Ciphertext
+ 13-20  xx xx xx xx xx xx xx xx                        Auth tag (8B)
+ 21-22  xx xx                                          CRC-16 (LE)
+```
+
+### Sample 4: Sensor::GetData Response (Plaintext)
+
+Sensor::GetData — cluster=0x01, command=0x01, status=0, payload=JSON `{"t":25.5,"h":60.2}` (20 bytes):
+
+**Framed wire** (35 bytes):
+```
+AC DA              Magic
+01                 Version 1
+1C 00              Length = 28 (LE)
+                   Payload (protobuf):
+  08 01              cluster = 0x01 (Sensor)
+  10 01              command = 0x01 (GetData)
+  18 00              status  = 0x00 (OK)
+  22 14 ...          payload (length-delimited, 20 bytes of sensor data)
+xx xx              CRC-16 (LE)
+```
+
+### Sample 5: Security::KeyExchange Request (Encrypted with PSK)
+
+The KeyExchange request carries a 64-byte P-256 public key, encrypted with PSK.
+
+**Inner protobuf** (~69 bytes):
+```
+08 04              <- cluster = 0x04 (Security)
+10 01              <- command = 0x01 (KeyExchange)
+1A 40 ...          <- payload = 64 bytes (client public key: X‖Y)
+```
+
+**Encrypted payload** (~81 bytes = 4 counter + ~69 ciphertext + 8 tag):
+```
+[counter:4][encrypted_protobuf:~69][tag:8]
+```
+
+**Framed wire** (~88 bytes):
+```
+AC DA 01 51 00     Magic + Version + Length=81 (LE)
+[encrypted_payload: 81 bytes]
+xx xx              CRC-16 (LE)
+```
+
+### Decode/Encode Flow Summary
+
+```
+=== RECEIVE (Decode) ===
+Raw bytes from BLE/MQTT/UART
+  |
+  v
+FrameCodec::Deframe()
+  - Check magic: 0xAC 0xDA
+  - Check version: 0x01
+  - Read length (LE uint16)
+  - Verify CRC-16 over [magic..payload]
+  - Return payload pointer + length
+  |
+  v
+CommandCodec::DecodeRequest()
+  - If encrypted: try session key, then PSK fallback
+    - Strip [counter:4], decrypt ciphertext, verify [tag:8]
+  - Decode protobuf (cluster, command, payload)
+  - Return CommandRequest struct
+
+=== SEND (Encode) ===
+CommandResponse struct
+  |
+  v
+CommandCodec::EncodeResponse()
+  - Encode protobuf (cluster, command, status, payload)
+  - If encrypted: AES-256-CCM -> [counter:4][ciphertext][tag:8]
+  |
+  v
+FrameCodec::Frame()
+  - Write header: [0xAC 0xDA][0x01][length LE]
+  - Copy payload
+  - Compute & append CRC-16 (LE)
+  |
+  v
+Send framed bytes via BLE/MQTT/UART
+```
 
 ---
 
@@ -258,6 +534,14 @@ Client                                   Server (ESP32)
 | BLE disconnect | Session automatically removed via ConnectionEvents subscription |
 | Thread safety | FreeRTOS mutex protects session table across BLE/MQTT tasks |
 
+### Integrity Protection by Mode
+
+| Mode | Encryption Auth | Frame CRC-16 | Protection Level |
+|------|----------------|--------------|------------------|
+| Plaintext | None | Yes | Corruption detection |
+| PSK Encrypted | AES-CCM tag (8B) | Yes | Tampering + corruption |
+| Session Encrypted | AES-CCM tag (8B) | Yes | Tampering + corruption + PFS |
+
 ---
 
 ## BLE Dual-Role
@@ -269,8 +553,8 @@ Client                                   Server (ESP32)
 | Temperature | 0x2A6E | Read + Notify | `int16_t` (Celsius * 100) |
 | Humidity | 0x2A6F | Read + Notify | `uint16_t` (% * 100) |
 | Sensor Status | 0xFF01 | Read | `uint8_t` |
-| Command | 0xFF10 | Write | Binary (protobuf or encrypted) |
-| Response | 0xFF11 | Notify | Binary (protobuf or encrypted) |
+| Command | 0xFF10 | Write | Binary (framed protobuf or encrypted) |
+| Response | 0xFF11 | Notify | Binary (framed protobuf or encrypted) |
 
 **Features:**
 - Attribute table approach (`esp_ble_gatts_create_attr_tab`), 14 attributes total
@@ -363,16 +647,23 @@ ObservableSensor Task (periodic ReadHardware)
 BLE Write (0xFF10)          MQTT Data (arcana/cmd)
         |                           |
         v                           v
-  CommandCodec::DecodeRequest(source, connId, data, len)
+  FrameCodec::Deframe(data, len)
+    1. Verify magic 0xAC 0xDA
+    2. Check version
+    3. Verify CRC-16
+    4. Extract payload
+        |
+        v
+  CommandCodec::DecodeRequest(source, connId, payload, payloadLen)
     1. Try session CryptoEngine decrypt
     2. Fallback to PSK CryptoEngine
-    3. nanopb decode -> CommandRequest
+    3. nanopb decode -> CommandRequest {Cluster, Command, Payload}
         |
         v
   CommandDispatcher::Dispatch() -> EventQueue<CommandRequest, 10>
         |
         v
-  CommandFactory::Create(funcCode) -> ICommand
+  CommandFactory::Create(cluster, command) -> ICommand
         |
         v
   ICommand::Execute(request) -> CommandResponse
@@ -382,6 +673,12 @@ BLE Write (0xFF10)          MQTT Data (arcana/cmd)
     1. nanopb encode
     2. If KeyExchange OK -> always PSK encrypt, then InstallPendingSession
     3. Else -> session encrypt (if available) or PSK
+        |
+        v
+  FrameCodec::Frame(innerPayload, innerLen)
+    1. Write [magic:2][ver:1][len:2 LE]
+    2. Copy payload
+    3. Compute + append CRC-16
         |
         +----> BLE: BleGattServer::SendCommandResponse(connId, buf)
         +----> MQTT: esp_mqtt_client_publish(arcana/rsp, buf)
@@ -497,9 +794,10 @@ arcana-embedded-esp32/
 |       +-- include/
 |       |   +-- CommandService.hpp        # Singleton facade, owns KeyExchangeManager
 |       |   +-- CommandDispatcher.hpp     # EventQueue async dispatch
-|       |   +-- CommandFactory.hpp        # FuncCode -> ICommand factory
-|       |   +-- CommandTypes.hpp          # FuncCode enum, Request/Response structs
+|       |   +-- CommandFactory.hpp        # Cluster+Command -> ICommand factory
+|       |   +-- CommandTypes.hpp          # Cluster/Command enums, Request/Response structs
 |       |   +-- CommandCodec.hpp          # Protobuf + AES-256-CCM codec
+|       |   +-- FrameCodec.hpp           # Frame/Deframe: magic + version + CRC-16
 |       |   +-- CryptoEngine.hpp          # AES-256-CCM encrypt/decrypt
 |       |   +-- KeyExchangeManager.hpp    # ECDH P-256, session management
 |       |   +-- ICommand.hpp              # Command interface
@@ -579,10 +877,12 @@ public:
 
     void SetKeyExchangeManager(KeyExchangeManager* mgr);
 
+    // Deframe + decrypt + decode protobuf -> CommandRequest
     bool DecodeRequest(CommandSource source, uint16_t connId,
                        const uint8_t* data, size_t len,
                        CommandRequest& out);
 
+    // Encode protobuf + encrypt + Frame -> wire bytes
     bool EncodeResponse(const CommandResponse& rsp,
                         uint8_t* buf, size_t bufSize, size_t& outLen);
 };
@@ -709,7 +1009,7 @@ cmdSvc.Start();
 // Wire KeyExchangeManager to codec
 codec.SetKeyExchangeManager(cmdSvc.KeyExchangeMgr());
 
-// BLE commands -> decode -> dispatch
+// BLE commands -> deframe -> decode -> dispatch
 BleGattServer::Instance().CommandWriteEvents().Subscribe(
     [&codec](const BleCommandWriteEvent& evt) {
         CommandRequest req;
@@ -719,10 +1019,10 @@ BleGattServer::Instance().CommandWriteEvents().Subscribe(
         }
     });
 
-// Responses -> encode -> route back
+// Responses -> encode -> frame -> route back
 cmdSvc.ResponseEvents().Subscribe(
     [&codec](const CommandResponse& rsp) {
-        uint8_t buf[300];
+        uint8_t buf[320];
         size_t len = 0;
         if (!codec.EncodeResponse(rsp, buf, sizeof(buf), len)) return;
 
@@ -745,20 +1045,22 @@ BleGattServer::Instance().ConnectionEvents().Subscribe(
 ### Adding a New Command
 
 ```cpp
-// 1. Add FuncCode to CommandTypes.hpp
-enum class FuncCode : uint8_t {
-    // ...existing...
-    MyNewCommand = 0x0A,
-};
+// 1. Add command ID to the appropriate cluster namespace in CommandTypes.hpp
+namespace SensorCmd {
+    static constexpr uint8_t GetData           = 0x01;
+    static constexpr uint8_t SetNotifyInterval = 0x02;
+    static constexpr uint8_t Calibrate         = 0x03;  // NEW
+}
 
 // 2. Create header-only command
-class MyNewCommand : public ICommand {
+class CalibrateCommand : public ICommand {
 public:
     CommandResponse Execute(const CommandRequest& req) override {
         CommandResponse rsp;
         rsp.Source = req.Source;
         rsp.ConnectionId = req.ConnectionId;
-        rsp.Function = FuncCode::MyNewCommand;
+        rsp.ClusterId = Cluster::Sensor;
+        rsp.Command = SensorCmd::Calibrate;
         rsp.Status = kStatusOk;
         // Fill rsp.Payload...
         return rsp;
@@ -766,8 +1068,12 @@ public:
 };
 
 // 3. Add to CommandFactory::Create() switch
-case FuncCode::MyNewCommand:
-    return std::make_unique<MyNewCommand>();
+case Cluster::Sensor:
+    switch (cmd) {
+    case SensorCmd::Calibrate:
+        return std::make_unique<CalibrateCommand>();
+    // ...
+    }
 ```
 
 ---
@@ -788,12 +1094,13 @@ case FuncCode::MyNewCommand:
 
 1. **Build**: `idf.py set-target esp32s3 && idf.py build`
 2. **BLE Sensor**: Use nRF Connect to scan for `ARCANA-ESP32S3`, subscribe to Temperature/Humidity notifications
-3. **BLE Command**: Write binary protobuf to 0xFF10, receive response on 0xFF11
-4. **MQTT Command**: Publish to `arcana/cmd`, subscribe to `arcana/rsp`
-5. **Encryption**: Enable `CMD_ENCRYPTION_ENABLED`, verify PSK-encrypted round-trip
-6. **Key Exchange**: Send KeyExchange (0x09) with client P-256 public key, verify session-encrypted subsequent commands
-7. **Session Cleanup**: Disconnect BLE, verify session removed, next command falls back to PSK
-8. **Coexistence**: Confirm MQTT publish/subscribe operates normally while BLE is active
+3. **BLE Command**: Write framed binary to 0xFF10, receive framed response on 0xFF11
+4. **MQTT Command**: Publish framed binary to `arcana/cmd`, subscribe to `arcana/rsp`
+5. **Frame Validation**: Send garbage bytes (wrong magic / bad CRC), verify `FrameCodec::Deframe` rejects with log warning
+6. **Encryption**: Enable `CMD_ENCRYPTION_ENABLED`, verify PSK-encrypted round-trip inside frames
+7. **Key Exchange**: Send KeyExchange (Security/0x01) with client P-256 public key, verify session-encrypted subsequent commands
+8. **Session Cleanup**: Disconnect BLE, verify session removed, next command falls back to PSK
+9. **Coexistence**: Confirm MQTT publish/subscribe operates normally while BLE is active
 
 ---
 
@@ -813,6 +1120,8 @@ case FuncCode::MyNewCommand:
 - [x] **AES-256-CCM encryption**
 - [x] **ECDH P-256 key exchange (Perfect Forward Secrecy)**
 - [x] **Per-connection session keys (4 slots)**
+- [x] **Frame Protocol (magic + version + CRC-16)**
+- [ ] UART transport (frame layer ready)
 - [ ] BLE bonding & SMP pairing
 - [ ] OTA firmware update
 - [ ] Real hardware sensor driver (I2C/SPI)
