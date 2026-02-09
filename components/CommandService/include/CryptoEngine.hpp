@@ -1,0 +1,46 @@
+#pragma once
+
+#include <cstdint>
+#include <cstddef>
+#include "esp_err.h"
+#include "mbedtls/ccm.h"
+
+namespace Arcana {
+namespace Command {
+
+class CryptoEngine {
+public:
+    CryptoEngine() = default;
+    ~CryptoEngine();
+
+    CryptoEngine(const CryptoEngine&) = delete;
+    CryptoEngine& operator=(const CryptoEngine&) = delete;
+
+    esp_err_t Init(const uint8_t key[16]);
+
+    // Encrypt: plaintext -> [counter:4 LE][ciphertext:N][tag:8]
+    bool Encrypt(const uint8_t* plain, size_t plainLen,
+                 uint8_t* out, size_t outBufSize, size_t& outLen);
+
+    // Decrypt: [counter:4 LE][ciphertext:N][tag:8] -> plaintext
+    bool Decrypt(const uint8_t* in, size_t inLen,
+                 uint8_t* plain, size_t plainBufSize, size_t& plainLen);
+
+    static constexpr size_t kTagLen = 8;
+    static constexpr size_t kCounterLen = 4;
+    static constexpr size_t kOverhead = kCounterLen + kTagLen; // 12 bytes
+
+private:
+    static constexpr size_t kNoncePrefixLen = 9;
+    static constexpr size_t kNonceLen = kNoncePrefixLen + kCounterLen; // 13
+
+    mbedtls_ccm_context mCtx{};
+    uint8_t mNoncePrefix[kNoncePrefixLen]{};
+    uint32_t mTxCounter = 0;
+    bool mInitialized = false;
+
+    void BuildNonce(uint32_t counter, uint8_t nonce[kNonceLen]) const;
+};
+
+} // namespace Command
+} // namespace Arcana

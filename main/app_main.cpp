@@ -19,8 +19,7 @@
 #include "BleService.hpp"
 #include "ObservableSensor.hpp"
 #include "CommandService.hpp"
-#include "BleCommandAdapter.hpp"
-#include "MqttCommandAdapter.hpp"
+#include "CommandCodec.hpp"
 #include "commands/GetMqttStatusCommand.hpp"
 
 static const char *TAG = "mqtt5_example";
@@ -96,6 +95,9 @@ static void print_user_property(mqtt5_user_property_handle_t user_property)
 
 // MQTT client handle (needed for publishing responses)
 static esp_mqtt_client_handle_t sMqttClient = nullptr;
+
+// Command codec (protobuf + optional AES-128-CCM)
+static Arcana::Command::CommandCodec sCodec;
 
 // Command topic
 #ifdef CONFIG_CMD_MQTT_CMD_TOPIC
@@ -210,8 +212,9 @@ static void mqtt5_event_handler(void *handler_args, esp_event_base_t base, int32
             strncmp(event->topic, sCmdTopic, event->topic_len) == 0 &&
             static_cast<size_t>(event->topic_len) == strlen(sCmdTopic)) {
             Arcana::Command::CommandRequest req;
-            if (Arcana::Command::MqttCommandAdapter::ParseRequest(
-                    event->data, event->data_len, req)) {
+            if (sCodec.DecodeRequest(Arcana::Command::CommandSource::MQTT, 0,
+                                      reinterpret_cast<const uint8_t*>(event->data),
+                                      static_cast<size_t>(event->data_len), req)) {
                 ESP_LOGI(TAG, "MQTT command received: func=0x%02x",
                          static_cast<uint8_t>(req.Function));
                 Arcana::Command::CommandService::Instance().HandleRequest(req);
@@ -355,16 +358,19 @@ static void command_service_init(void)
     using namespace Arcana::Command;
     using namespace Arcana::Ble;
 
+    // Init codec (reads Kconfig, init crypto if enabled)
+    ESP_ERROR_CHECK(sCodec.Init());
+
     auto& cmdSvc = CommandService::Instance();
     ESP_ERROR_CHECK(cmdSvc.Init(sSensor));
     ESP_ERROR_CHECK(cmdSvc.Start());
 
-    // Wire BLE Command writes → CommandService
+    // Wire BLE Command writes → decode → CommandService
     BleGattServer::Instance().CommandWriteEvents().Subscribe(
         [](const BleCommandWriteEvent& evt) {
             CommandRequest req;
-            if (BleCommandAdapter::ParseRequest(evt.first, evt.second.data(),
-                                                 static_cast<uint16_t>(evt.second.size()), req)) {
+            if (sCodec.DecodeRequest(CommandSource::BLE, evt.first,
+                                      evt.second.data(), evt.second.size(), req)) {
                 ESP_LOGI(TAG, "BLE command received: func=0x%02x conn_id=%d",
                          static_cast<uint8_t>(req.Function), req.ConnectionId);
                 CommandService::Instance().HandleRequest(req);
@@ -374,32 +380,28 @@ static void command_service_init(void)
         }
     );
 
-    // Wire CommandService responses → BLE / MQTT
+    // Wire CommandService responses → encode → BLE / MQTT
     cmdSvc.ResponseEvents().Subscribe(
         [](const CommandResponse& rsp) {
+            uint8_t buf[300];
+            size_t outLen = 0;
+            if (!sCodec.EncodeResponse(rsp, buf, sizeof(buf), outLen)) return;
+
             switch (rsp.Source) {
-            case CommandSource::BLE: {
-                uint8_t buf[264];
-                uint16_t outLen = 0;
-                if (BleCommandAdapter::SerializeResponse(rsp, buf, sizeof(buf), outLen)) {
-                    BleGattServer::Instance().SendCommandResponse(rsp.ConnectionId, buf, outLen);
-                    ESP_LOGI(TAG, "BLE response sent: func=0x%02x status=%d len=%d",
-                             static_cast<uint8_t>(rsp.Function), rsp.Status, outLen);
-                }
+            case CommandSource::BLE:
+                BleGattServer::Instance().SendCommandResponse(
+                    rsp.ConnectionId, buf, static_cast<uint16_t>(outLen));
+                ESP_LOGI(TAG, "BLE response sent: func=0x%02x status=%d len=%zu",
+                         static_cast<uint8_t>(rsp.Function), rsp.Status, outLen);
                 break;
-            }
-            case CommandSource::MQTT: {
+            case CommandSource::MQTT:
                 if (sMqttClient) {
-                    char jsonBuf[512];
-                    size_t jsonLen = 0;
-                    if (MqttCommandAdapter::SerializeResponse(rsp, jsonBuf, sizeof(jsonBuf), jsonLen)) {
-                        esp_mqtt_client_publish(sMqttClient, sRspTopic, jsonBuf,
-                                                static_cast<int>(jsonLen), 1, 0);
-                        ESP_LOGI(TAG, "MQTT response sent: %.*s", (int)jsonLen, jsonBuf);
-                    }
+                    esp_mqtt_client_publish(sMqttClient, sRspTopic,
+                        reinterpret_cast<const char*>(buf), static_cast<int>(outLen), 1, 0);
+                    ESP_LOGI(TAG, "MQTT response sent: func=0x%02x len=%zu",
+                             static_cast<uint8_t>(rsp.Function), outLen);
                 }
                 break;
-            }
             default:
                 ESP_LOGD(TAG, "Internal command response: func=0x%02x",
                          static_cast<uint8_t>(rsp.Function));
