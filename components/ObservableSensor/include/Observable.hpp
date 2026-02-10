@@ -53,12 +53,49 @@ class Observable {
 public:
     static constexpr size_t kMaxSubscribers = MaxSubscribers;
 
-    Observable() : mNextId(1) {
+    /**
+     * @brief Default constructor - synchronous Notify()
+     */
+    Observable() : mNextId(1), mName(nullptr), mQueue(nullptr), mTaskHandle(nullptr) {
         mMutex = xSemaphoreCreateMutex();
         configASSERT(mMutex != nullptr);
     }
 
+    /**
+     * @brief Named constructor - creates FreeRTOS task + queue for async dispatch
+     *
+     * Each named Observable runs its own task that dequeues events
+     * and dispatches to subscribers asynchronously.
+     *
+     * @param Name Task name (used for FreeRTOS task identification)
+     * @param QueueDepth Number of events the queue can hold
+     * @param StackSize Task stack size in bytes
+     * @param Priority Task priority
+     */
+    explicit Observable(const char* Name, size_t QueueDepth = 20,
+                        uint32_t StackSize = 2048, uint8_t Priority = 5)
+        : mNextId(1), mName(Name), mQueue(nullptr), mTaskHandle(nullptr)
+    {
+        mMutex = xSemaphoreCreateMutex();
+        configASSERT(mMutex != nullptr);
+
+        mQueue = xQueueCreate(QueueDepth, sizeof(T));
+        configASSERT(mQueue != nullptr);
+
+        BaseType_t ret = xTaskCreate(AsyncTaskEntry, Name, StackSize, this, Priority, &mTaskHandle);
+        configASSERT(ret == pdPASS);
+    }
+
     ~Observable() {
+        // Stop async task if running
+        if (mTaskHandle) {
+            vTaskDelete(mTaskHandle);
+            mTaskHandle = nullptr;
+        }
+        if (mQueue) {
+            vQueueDelete(mQueue);
+            mQueue = nullptr;
+        }
         if (mMutex) {
             vSemaphoreDelete(mMutex);
         }
@@ -159,33 +196,21 @@ public:
     /**
      * @brief Notify all observers with event data
      *
-     * Optimization: Returns early if no subscribers exist
+     * If this Observable was created with a name (task-backed), events are
+     * posted to the queue and dispatched asynchronously by the internal task.
+     * Otherwise, subscribers are called synchronously in the caller's context.
      *
      * @param Data Event data to broadcast
      */
     void Notify(const T& Data) {
-        // Copy observers to allow modifications during iteration
-        std::vector<Observer<T>> ObserversCopy;
-        {
-            Lock lock(mMutex);
-
-            // Early return optimization: skip if no subscribers
-            if (mObservers.empty()) {
-                return;
-            }
-
-            ObserversCopy.reserve(mObservers.size());
-            for (const auto& Entry : mObservers) {
-                ObserversCopy.push_back(Entry.second);
-            }
+        if (mQueue) {
+            // Async mode: post to queue, task will dispatch
+            xQueueSend(mQueue, &Data, 0);
+            return;
         }
 
-        // Notify outside lock to prevent deadlocks
-        for (const auto& ObserverCallback : ObserversCopy) {
-            if (ObserverCallback) {
-                ObserverCallback(Data);
-            }
-        }
+        // Synchronous mode: dispatch directly
+        NotifySync(Data);
     }
 
     /**
@@ -194,6 +219,16 @@ public:
     void Notify(T&& Data) {
         Notify(static_cast<const T&>(Data));
     }
+
+    /**
+     * @brief Get the task name (nullptr if synchronous)
+     */
+    const char* GetName() const { return mName; }
+
+    /**
+     * @brief Check if this Observable is task-backed (async)
+     */
+    bool IsAsync() const { return mQueue != nullptr; }
 
     /**
      * @brief Get number of subscribers
@@ -237,9 +272,55 @@ private:
         SemaphoreHandle_t mMutex;
     };
 
+    /**
+     * @brief Synchronous dispatch to all subscribers (used internally)
+     */
+    void NotifySync(const T& Data) {
+        std::vector<Observer<T>> ObserversCopy;
+        {
+            Lock lock(mMutex);
+            if (mObservers.empty()) return;
+
+            ObserversCopy.reserve(mObservers.size());
+            for (const auto& Entry : mObservers) {
+                ObserversCopy.push_back(Entry.second);
+            }
+        }
+        for (const auto& ObserverCallback : ObserversCopy) {
+            if (ObserverCallback) {
+                ObserverCallback(Data);
+            }
+        }
+    }
+
+    /**
+     * @brief Async task entry point
+     */
+    static void AsyncTaskEntry(void* Arg) {
+        auto* Self = static_cast<Observable*>(Arg);
+        Self->AsyncTaskLoop();
+    }
+
+    /**
+     * @brief Async task loop - dequeues events and dispatches to subscribers
+     */
+    void AsyncTaskLoop() {
+        T Event;
+        while (true) {
+            if (xQueueReceive(mQueue, &Event, portMAX_DELAY) == pdTRUE) {
+                NotifySync(Event);
+            }
+        }
+    }
+
     std::vector<std::pair<SubscriptionId, Observer<T>>> mObservers;
     mutable SemaphoreHandle_t mMutex;
     SubscriptionId mNextId;
+
+    // Async task support (active when constructed with name)
+    const char* mName;
+    QueueHandle_t mQueue;
+    TaskHandle_t mTaskHandle;
 };
 
 /**

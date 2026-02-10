@@ -3,6 +3,7 @@ idf_component_register(
          "src/BleGap.cpp"
          "src/BleGattServer.cpp"
          "src/BleGattClient.cpp"
+         "src/BleTransportServiceImpl.cpp"
     INCLUDE_DIRS "include"
     REQUIRES bt nvs_flash esp_event ObservableSensor
 )

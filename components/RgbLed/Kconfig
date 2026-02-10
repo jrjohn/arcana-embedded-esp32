@@ -1,0 +1,24 @@
+menu "RGB LED Configuration"
+
+    config RGB_LED_GPIO
+        int "WS2812B data GPIO pin"
+        default 26
+        range 0 33
+        help
+            GPIO pin connected to the WS2812B data line.
+
+    config RGB_LED_NUM_LEDS
+        int "Number of LEDs"
+        default 3
+        range 1 256
+        help
+            Number of WS2812B LEDs in the strip.
+
+    config RGB_LED_CYCLE_INTERVAL_MS
+        int "Color cycle interval (ms)"
+        default 1000
+        range 100 10000
+        help
+            Interval between color changes during cycling.
+
+endmenu

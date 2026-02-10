@@ -1,3 +1,15 @@
+menu "Arcana Timer Configuration"
+
+    config TIMER_BASE_INTERVAL_MS
+        int "Base timer interval (ms)"
+        default 1000
+        range 50 10000
+        help
+            Interval in milliseconds for the base periodic timer.
+            All timer-driven services (e.g. LED cycling) subscribe to this tick.
+
+endmenu
+
 menu "Arcana MQTT Configuration"
 
     config BROKER_URL
@@ -24,13 +36,13 @@ menu "Arcana WIFI Connection Configuration"
     if EXAMPLE_CONNECT_WIFI
         config EXAMPLE_WIFI_SSID
             string "WiFi SSID"
-            default "myssid"
+            default "somnics"
             help
                 SSID (network name) for the example to connect to.
 
         config EXAMPLE_WIFI_PASSWORD
             string "WiFi Password"
-            default "mypassword"
+            default "peWphYJmgPWjL8y7"
             help
                 WiFi password (WPA or WPA2) for the example to use.
                 Can be left blank if the network has no security set.

@@ -13,9 +13,23 @@ namespace Command {
 
 class CommandService {
 public:
+    struct Input {
+        Sensor::ObservableSensor* Sensor = nullptr;
+    };
+
+    struct Output {
+        Observable<CommandResponse>* ResponseEvents = nullptr;
+        KeyExchangeManager* KeyExchangeMgr = nullptr;
+        CommandFactory* Factory = nullptr;
+    };
+
+    Input input;
+    Output output;
+
     static CommandService& Instance();
 
     esp_err_t Init(Sensor::ObservableSensor* sensor);
+    esp_err_t init();   // New: uses input struct
     esp_err_t Start();
     void Stop();
 

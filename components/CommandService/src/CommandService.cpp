@@ -12,6 +12,10 @@ CommandService& CommandService::Instance() {
     return sInstance;
 }
 
+esp_err_t CommandService::init() {
+    return Init(input.Sensor);
+}
+
 esp_err_t CommandService::Init(Sensor::ObservableSensor* sensor) {
 #ifdef CONFIG_CMD_ENCRYPTION_ENABLED
     // Init KeyExchangeManager with PSK
@@ -40,6 +44,11 @@ esp_err_t CommandService::Init(Sensor::ObservableSensor* sensor) {
         ESP_LOGE(TAG, "Dispatcher init failed: %s", esp_err_to_name(ret));
         return ret;
     }
+
+    // Populate output pointers for Controller wiring
+    output.ResponseEvents = &mDispatcher->ResponseEvents();
+    output.KeyExchangeMgr = mKeyExchangeMgr.get();
+    output.Factory = mFactory.get();
 
     ESP_LOGI(TAG, "Initialized");
     return ESP_OK;

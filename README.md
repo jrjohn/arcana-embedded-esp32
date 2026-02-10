@@ -1,9 +1,9 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/Architecture-Observable_+_BLE_+_Command-gold?style=for-the-badge" alt="Architecture">
-  <img src="https://img.shields.io/badge/MCU-ESP32--S3-E7352C?style=for-the-badge&logo=espressif" alt="ESP32">
+  <img src="https://img.shields.io/badge/Architecture-Service_+_Observable_+_Timer-gold?style=for-the-badge" alt="Architecture">
+  <img src="https://img.shields.io/badge/MCU-ESP32-E7352C?style=for-the-badge&logo=espressif" alt="ESP32">
   <img src="https://img.shields.io/badge/RTOS-FreeRTOS-00A86B?style=for-the-badge" alt="FreeRTOS">
-  <img src="https://img.shields.io/badge/Language-C++17-00599C?style=for-the-badge&logo=cplusplus" alt="C++">
-  <img src="https://img.shields.io/badge/IDF-v5.5-blue?style=for-the-badge" alt="ESP-IDF">
+  <img src="https://img.shields.io/badge/Language-C++23-00599C?style=for-the-badge&logo=cplusplus" alt="C++">
+  <img src="https://img.shields.io/badge/IDF-v5.5.2-blue?style=for-the-badge" alt="ESP-IDF">
   <img src="https://img.shields.io/badge/BLE-Bluedroid_Dual--Role-0082FC?style=for-the-badge&logo=bluetooth" alt="BLE">
   <img src="https://img.shields.io/badge/Crypto-AES--256--CCM_+_ECDH-8B5CF6?style=for-the-badge" alt="Crypto">
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
@@ -12,20 +12,21 @@
 <h1 align="center">Arcana Embedded ESP32</h1>
 
 <p align="center">
-  <strong>Modern C++17 IoT platform: Observable Pattern + BLE Dual-Role + Encrypted Command Pipeline</strong>
+  <strong>Modern C++23 IoT platform: Service Pattern + Observable Event System + Encrypted Command Pipeline</strong>
 </p>
 
 <p align="center">
+  <a href="#architecture-evaluation">Evaluation</a> &bull;
   <a href="#system-architecture">Architecture</a> &bull;
+  <a href="#service-pattern">Service Pattern</a> &bull;
+  <a href="#controller-lifecycle">Controller</a> &bull;
+  <a href="#data-flow">Data Flow</a> &bull;
   <a href="#arcana-frame-protocol">Frame Protocol</a> &bull;
   <a href="#command-protocol">Command Protocol</a> &bull;
-  <a href="#protocol-samples">Protocol Samples</a> &bull;
   <a href="#security">Security</a> &bull;
   <a href="#ble-dual-role">BLE</a> &bull;
   <a href="#observable-pattern">Observable</a> &bull;
-  <a href="#memory-footprint">Memory</a> &bull;
-  <a href="#getting-started">Getting Started</a> &bull;
-  <a href="#api-reference">API</a>
+  <a href="#getting-started">Getting Started</a>
 </p>
 
 ---
@@ -34,23 +35,24 @@
 
 | Category | Score | Details |
 |----------|-------|---------|
-| **Type Safety** | 9.5/10 | C++17 templates, `std::variant`, compile-time checks |
+| **Service Architecture** | 9.5/10 | Abstract base + Meyer's singleton, Input/Output wiring, 4-phase lifecycle |
+| **Task Ownership** | 9.5/10 | ServiceImpl never creates FreeRTOS tasks; Observable owns dispatch tasks, TimerService owns periodic behavior |
+| **Type Safety** | 9.5/10 | C++23 templates, `std::variant`, compile-time checks, typed Observable subscriptions |
 | **Security** | 9.0/10 | AES-256-CCM + ECDH P-256 key exchange, per-connection sessions, PFS |
 | **Thread Safety** | 9.0/10 | FreeRTOS mutex, copy-before-notify, per-session mutex in KeyExchangeManager |
 | **BLE Integration** | 9.0/10 | Bluedroid dual-role, attribute table, multi-connection CCCD tracking |
 | **Connectivity** | 9.5/10 | WiFi + BLE coexistence, MQTT5, unified BLE+MQTT command pipeline |
-| **Code Quality** | 9.0/10 | RAII patterns, SOLID principles, singleton facades, header-only commands |
-| **Extensibility** | 9.5/10 | ICommand + CommandFactory switch-case, Observable subscriptions, Kconfig |
 | **Protocol Design** | 9.5/10 | Frame layer (magic/ver/flags/SID/len/CRC) + nanopb protobuf + session-aware codec |
-| **Memory Efficiency** | 9.0/10 | Static/dynamic Observable variants, ~17 KB custom code footprint |
-| **Overall** | **9.2/10** | Production-ready encrypted IoT command platform |
+| **Extensibility** | 9.5/10 | ICommand + CommandFactory, Observable subscriptions, Kconfig, service wiring in Controller |
+| **Overall** | **9.3/10** | Production-ready encrypted IoT command platform with clean service architecture |
 
 ### Strengths
 
-- **Unified command pipeline** — BLE and MQTT share identical wire format (frame + protobuf + AES-256-CCM), single codec handles both
-- **Frame Protocol** — Magic bytes + version + length + CRC-16 enable packet detection, integrity checking, and stream-transport readiness (UART/TCP)
-- **Perfect Forward Secrecy** — ECDH session keys are independent of PSK; PSK compromise does not expose past sessions
-- **Clean layering** — Three components with explicit dependency chains, MINIMAL_BUILD enforced
+- **Service pattern with Input/Output wiring** -- Services declare typed dependencies as struct fields; Controller wires Observable pointers at startup, achieving compile-time dependency injection without a DI framework
+- **Task ownership rule** -- ServiceImpl never calls `xTaskCreate`. Observable creates internal dispatch tasks; TimerService provides periodic ticks via `esp_timer`. This centralizes concurrency management and eliminates scattered task lifecycle code
+- **Unified command pipeline** -- BLE and MQTT share identical wire format (frame + protobuf + AES-256-CCM), single codec handles both
+- **Perfect Forward Secrecy** -- ECDH session keys are independent of PSK; PSK compromise does not expose past sessions
+- **Two-stage event pipelines** -- Sensor/Timer events flow through synchronous Observable (within producing task) into async Observable (dedicated dispatch task), decoupling producers from consumers
 
 ### Trade-offs
 
@@ -62,6 +64,7 @@
 | nanopb (not full protobuf) | Manual `.options` file | 10x smaller than protobuf-c, fits embedded constraints |
 | Singleton pattern | Global state | Natural fit for hardware peripherals (BLE, sensor); single instance enforced |
 | Custom Frame (not COBS/SLIP) | 9 bytes overhead | Simpler, includes version + flags + stream ID + magic for protocol detection; CRC covers entire frame |
+| TimerTypes in ObservableSensor | Foundation component grows | Avoids circular dependency between `main/` and component layer |
 
 ### Transport Compatibility
 
@@ -71,72 +74,99 @@
 | **MQTT** | Supported | Binary payload on `arcana/cmd` / `arcana/rsp` |
 | **UART** | Ready | Frame layer provides packet boundaries + CRC |
 | **TCP Raw Socket** | Ready | Frame layer provides length-delimited framing |
-| **Thread / Zigbee** | Not supported | Requires 802.15.4 radio (ESP32-H2/C6) + separate protocol stack |
-| **Matter-over-WiFi** | Future | Would be a parallel stack, not replacement |
 
 ---
 
 ## System Architecture
 
 ```
-+-----------------------------------------------------------------------+
-|                         APPLICATION LAYER                              |
-|                                                                        |
-|  +--------------------+  +-----------------+  +---------------------+  |
-|  | ObservableSensor   |  |   BleService    |  |  CommandService     |  |
-|  | (Arcana::Sensor)   |  |  (Arcana::Ble)  |  | (Arcana::Command)  |  |
-|  |                    |  |                 |  |                     |  |
-|  | OnData() ----------+--+-> GattServer    |  | CommandDispatcher   |  |
-|  | OnError()          |  |   .UpdateTemp() |  |   EventQueue<10>   |  |
-|  | OnThreshold()      |  |   .UpdateHumid()|  | CommandFactory      |  |
-|  | OnLifecycle()      |  |                 |  |   9 ICommand impls  |  |
-|  |                    |  | GattClient      |  | CommandCodec        |  |
-|  | [RTOS Task]        |  |   .Connect()    |  |   Frame+PB+AES-256 |  |
-|  | ReadHardware()     |  |   .Discover()   |  | KeyExchangeManager  |  |
-|  +--------------------+  |                 |  |   ECDH P-256        |  |
-|                          | BleGap          |  |   4 session slots   |  |
-|  +--------------------+  |   .Advertise()  |  +---------------------+  |
-|  |   MQTT5 Client     |  |   .Scan()       |                          |
-|  | (esp_mqtt_client)  |  +-----------------+                          |
-|  +--------------------+                                                |
-|                                                                        |
-+------------------------------------------------------------------------+
-|                         PROTOCOL LAYER                                  |
-|                                                                        |
-|  Application     CommandRequest / CommandResponse                      |
-|       |                                                                |
-|  Serialization   nanopb protobuf encode/decode                        |
-|       |                                                                |
-|  Encryption      AES-256-CCM [counter:4][cipher][tag:8] (optional)    |
-|       |                                                                |
-|  Framing         [magic:2][ver:1][flags:1][sid:1][len:2][payload][crc:2]|
-|       |                                                                |
-|  Transport       BLE / MQTT / UART / TCP                              |
-|                                                                        |
-+------------------------------------------------------------------------+
-|                         SYSTEM LAYER                                    |
-|                                                                        |
-|  +----------+  +----------------------------------------------+        |
-|  |   WiFi   |  |          Bluedroid BLE Stack                 |        |
-|  | (esp_wifi)|  |  +------+  +--------+  +--------+          |        |
-|  |          |  |  | GAP  |  | GATTS  |  | GATTC  |          |        |
-|  +----+-----+  |  +------+  +--------+  +--------+          |        |
-|       |         +--------------------+------------------------+        |
-|       |    WiFi+BLE Coexistence      |                                 |
-|       +-------------+---------------+                                  |
-|                      |                                                  |
-+----------------------+--------------------------------------------------+
-|                    FreeRTOS KERNEL                                       |
 +-------------------------------------------------------------------------+
-|                   ESP32-S3 HARDWARE                                      |
-|           (512KB SRAM / 8MB PSRAM / 16MB Flash)                         |
-+-------------------------------------------------------------------------+
+|                          APPLICATION LAYER                               |
+|                                                                          |
+|  +------------------+  +-------------------+  +----------------------+   |
+|  | TimerService     |  | SensorService     |  |  LedService          |   |
+|  | (Arcana::Timer)  |  | (Arcana::Sensor)  |  |  (Arcana::Led)       |   |
+|  |                  |  |                   |  |                      |   |
+|  | esp_timer ------>|  | DhtSensor ------->|  | Input: TimerEvents   |   |
+|  |  BaseTimer tick  |  |  DataEvents       |  | Output: LedObservable|   |
+|  +--------+---------+  |  ErrorEvents      |  +----------+-----------+   |
+|           |             |  [RTOS Task]      |             |              |
+|           |             +---+---------------+             |              |
+|           |                 |                             |              |
+|           |  +--------------v-----------+                 v              |
+|           |  |   BleTransportService    |        RgbLed (WS2812B)       |
+|           |  |   (Arcana::Ble)          |        RMT peripheral         |
+|           |  |                          |                               |
+|           |  |   BleGap (ADV/Scan)      |                               |
+|           |  |   BleGattServer (0x181A) |                               |
+|           |  |   BleGattClient          |                               |
+|           |  +-----+----+--------------+                                |
+|           |        |    |                                               |
+|  +--------+--------v----v-------------------------------------------+   |
+|  |              CommandBridgeService (main/)                        |   |
+|  |  Subscribes: BLE cmds + MQTT cmds + Responses + Connections      |   |
+|  |  Decodes/Encodes via CommandCodec, routes to/from transports     |   |
+|  +---------------------+-------------------------------------------+   |
+|                         |                                               |
+|  +---------------------v-------------------+  +---------------------+   |
+|  |        CommandService                   |  | MqttTransportService|   |
+|  |        (Arcana::Command)                |  | (Arcana::Mqtt)      |   |
+|  |                                         |  |                     |   |
+|  |  CommandDispatcher (EventQueue<10>)     |  | MQTT5 Client        |   |
+|  |  CommandFactory (9 ICommand impls)      |  | CommandEvents       |   |
+|  |  CommandCodec (Frame+PB+AES-256)        |  | ConnectionStatus    |   |
+|  |  KeyExchangeManager (ECDH P-256)        |  +---------------------+   |
+|  +------------------------------------------+                           |
+|                                                                          |
++--------------------------------------------------------------------------+
+|                          PROTOCOL LAYER                                   |
+|                                                                          |
+|  Application     CommandRequest / CommandResponse                        |
+|       |                                                                  |
+|  Serialization   nanopb protobuf encode/decode                          |
+|       |                                                                  |
+|  Encryption      AES-256-CCM [counter:4][cipher][tag:8] (optional)      |
+|       |                                                                  |
+|  Framing         [magic:2][ver:1][flags:1][sid:1][len:2][payload][crc:2] |
+|       |                                                                  |
+|  Transport       BLE / MQTT / UART / TCP                                |
+|                                                                          |
++--------------------------------------------------------------------------+
+|                          SYSTEM LAYER                                     |
+|                                                                          |
+|  +-----------+  +----------------------------------------------+         |
+|  |   WiFi    |  |          Bluedroid BLE Stack                 |         |
+|  | (esp_wifi)|  |  +------+  +--------+  +--------+           |         |
+|  |           |  |  | GAP  |  | GATTS  |  | GATTC  |           |         |
+|  +-----+-----+  |  +------+  +--------+  +--------+           |         |
+|        |         +--------------------+------------------------+         |
+|        |    WiFi+BLE Coexistence      |                                  |
+|        +-------------+---------------+                                   |
+|                       |                                                   |
++-----------------------+---------------------------------------------------+
+|                     FreeRTOS KERNEL                                        |
++-------------------------+-------------------------------------------------+
+|                    ESP32 HARDWARE                                          |
+|            (520KB SRAM / 4MB Flash / RMT / GPIO)                          |
++--------------------------------------------------------------------------+
 ```
+
+### Component Map
+
+| Component | Namespace | Service | Role |
+|-----------|-----------|---------|------|
+| `ObservableSensor` | `Arcana::Sensor` | `SensorService` | Observable pattern, sensor base, DHT driver, shared types |
+| `BleService` | `Arcana::Ble` | `BleTransportService` | BLE GAP, GATT server/client, transport layer |
+| `CommandService` | `Arcana::Command` | `CommandService` | Command pattern with protobuf + AES-256-CCM + ECDH |
+| `MqttService` | `Arcana::Mqtt` | `MqttTransportService` | MQTT5 client transport layer |
+| `RgbLed` | `Arcana::Led` | `LedService` | WS2812B RGB LED strip via RMT peripheral |
+| `main/` | `Arcana` / `Arcana::Timer` | `TimerService`, `CommandBridgeService`, `Controller` | App entry, wiring, timer, command bridge |
 
 ### Component Dependency Graph
 
 ```
-main (app_main.cpp)
+main (Controller, TimerService, CommandBridge)
+  +-- esp_timer         (TimerServiceImpl)
   +-- CommandService
   |     +-- mbedtls          (AES-256-CCM, ECDH, HMAC, SHA-256)
   |     +-- esp_hw_support   (CRC-16 ROM acceleration)
@@ -144,19 +174,237 @@ main (app_main.cpp)
   |     |     +-- bt         (Bluedroid)
   |     |     +-- nvs_flash
   |     |     +-- esp_event
-  |     |     +-- ObservableSensor
+  |     |     +-- ObservableSensor   <-- foundation component
   |     |           +-- freertos
   |     |           +-- esp_timer
+  |     |           +-- driver
   |     +-- ObservableSensor (reused)
   |     +-- nanopb           (managed component)
-  +-- protocol_examples_common (WiFi/MQTT helpers)
+  +-- RgbLed
+  |     +-- driver           (RMT for WS2812B)
+  |     +-- esp_timer
+  |     +-- ObservableSensor (reused)
+  +-- MqttService
+  |     +-- mqtt             (esp_mqtt)
+  |     +-- ObservableSensor (reused)
+  +-- protocol_examples_common (WiFi helpers)
+```
+
+---
+
+## Service Pattern
+
+Every service follows a consistent abstract base / Meyer's singleton implementation pattern:
+
+```cpp
+// Abstract base (in component include/)
+class XxxService {
+public:
+    struct Input  { Observable<SomeEvent>* Events = nullptr; };  // dependencies
+    struct Output { Observable<MyEvent>*   Data   = nullptr; };  // publications
+
+    Input  input;
+    Output output;
+
+    virtual esp_err_t init_HAL() = 0;   // Phase 1: hardware peripherals
+    virtual esp_err_t init()     = 0;   // Phase 2: subscriptions + logic
+    virtual esp_err_t start()    = 0;   // Phase 3: activate
+    virtual void      stop()     = 0;   // Deactivate
+};
+
+// Implementation (Meyer's singleton)
+class XxxServiceImpl : public XxxService {
+public:
+    static XxxService& getInstance();   // singleton access
+    // ... override all four lifecycle methods
+private:
+    XxxServiceImpl();                   // allocates output Observables
+};
+```
+
+### Service Map
+
+| Service | Input | Output | Task Ownership |
+|---------|-------|--------|----------------|
+| **TimerService** | (none) | `BaseTimer` | `esp_timer` fires ticks; Observable dispatches |
+| **SensorService** | (none) | `DataEvents`, `ErrorEvents`, `Sensor*` | ObservableSensor creates FreeRTOS task |
+| **BleTransportService** | `SensorDataEvents` | `ConnectionEvents`, `CommandWriteEvents` | Bluedroid stack tasks |
+| **MqttTransportService** | (none) | `CommandEvents`, `ConnectionStatus` | esp_mqtt_client task |
+| **LedService** | `TimerEvents` | `LedObservable` | No own task; timer-driven |
+| **CommandService** | `Sensor*` | `ResponseEvents`, `KeyExchangeMgr`, `Factory` | EventQueue creates async task |
+| **CommandBridgeService** | 8 fields (BLE+MQTT+Command) | (none) | Purely reactive (subscription callbacks) |
+
+### Task Ownership Rule
+
+**ServiceImpl never calls `xTaskCreate`.** Task lifecycle is owned by:
+
+| Task Source | Mechanism | Example |
+|-------------|-----------|---------|
+| `Observable<T>("name")` | Named constructor creates FreeRTOS task + queue | `"TimerSvc BaseTimer"`, `"LedSvc Observable"` |
+| `EventQueue<T, N>` | `Start()` creates FreeRTOS task | CommandDispatcher async queue |
+| `ObservableSensor` | Base class creates sensor reading task | `"sensor_0"` |
+| `esp_timer` | ESP-IDF timer task fires callbacks | TimerServiceImpl periodic tick |
+| ESP-IDF stacks | Internal tasks | Bluedroid, WiFi, MQTT client |
+
+---
+
+## Controller Lifecycle
+
+The Controller (`main/Controller.cpp`) is a Meyer's singleton that orchestrates all services through a 4-phase lifecycle:
+
+```
+app_main()
+  nvs_flash_init()
+  esp_netif_init()
+  esp_event_loop_create_default()
+  Controller::getInstance().run()
+
+Controller::run()
+  wireServices()      Phase 0: get singletons, wire Input/Output pointers
+  initHAL()           Phase 1: hardware peripherals
+  initServices()      Phase 2: subscriptions + logic
+  example_connect()   WiFi must be up before MQTT
+  startServices()     Phase 3: activate all services
+```
+
+### Phase 0: wireServices()
+
+Gets singleton references and connects Observable pointers between services:
+
+```
+mTimer   = &TimerServiceImpl::getInstance()     // allocates BaseTimer Observable
+mSensor  = &SensorServiceImpl::getInstance()    // allocates DataEvents, ErrorEvents
+mLed     = &LedServiceImpl::getInstance()       // allocates LedObservable
+mBle     = &BleTransportServiceImpl::getInstance()
+mMqtt    = &MqttTransportServiceImpl::getInstance()
+mBridge  = &CommandBridgeServiceImpl::getInstance()
+mCommand = &CommandService::Instance()
+
+// Wire dependencies via Input structs
+mLed->input.TimerEvents      = mTimer->output.BaseTimer
+mBle->input.SensorDataEvents = mSensor->output.DataEvents
+mCommand->input.Sensor        = mSensor->output.Sensor
+```
+
+Output Observables are allocated in constructors (`new Observable<T>("name")`), so pointers are valid here. Bridge wiring happens later (Phase 2) because its inputs depend on `init_HAL()` / `init()` populating BLE/MQTT/Command outputs.
+
+### Phase 1: initHAL()
+
+```
+mTimer->init_HAL()     // esp_timer_create(periodic callback)
+mSensor->init_HAL()    // DhtSensor static instance, output.Sensor = &dht
+mBle->init_HAL()       // BleService::Init(), sets output Observable pointers
+mLed->init_HAL()       // RgbLed RMT channel setup
+mMqtt->init_HAL()      // reads Kconfig topic
+```
+
+### Phase 2: initServices()
+
+```
+mTimer->init()         // (no-op, no rate dividers yet)
+mSensor->init()        // subscribes DhtSensor events -> service Observables
+mBle->init()           // subscribes to SensorDataEvents for GATT notifications
+mCommand->init()       // creates KeyExchangeManager, Factory, Dispatcher
+
+// Late wiring: Bridge inputs depend on BLE/MQTT/Command init outputs
+mBridge->input.BleConnectionEvents    = mBle->output.ConnectionEvents
+mBridge->input.BleCommandWriteEvents  = mBle->output.CommandWriteEvents
+mBridge->input.MqttCommandEvents      = mMqtt->output.CommandEvents
+mBridge->input.MqttConnectionStatus   = mMqtt->output.ConnectionStatus
+mBridge->input.CommandResponseEvents  = mCommand->output.ResponseEvents
+mBridge->input.KeyExchangeMgr         = mCommand->output.KeyExchangeMgr
+mBridge->input.Factory                = mCommand->output.Factory
+mBridge->input.MqttTransport          = mMqtt
+mBridge->input.BleServer              = &mBle->server()
+
+mBridge->init()        // subscribes to all 5 input event streams
+mLed->init()           // subscribes to TimerEvents + own LedObservable
+mMqtt->init()          // (no-op)
+```
+
+### Phase 3: startServices()
+
+```
+mTimer->start()        // esp_timer_start_periodic (CONFIG_TIMER_BASE_INTERVAL_MS)
+mSensor->start()       // ObservableSensor FreeRTOS task starts reading
+mBle->start()          // BLE advertising begins
+mCommand->Start()      // CommandDispatcher async queue task starts
+mLed->start()          // sets mRunning=true (timer ticks now produce LED frames)
+mMqtt->start()         // MQTT client connects to broker
+```
+
+---
+
+## Data Flow
+
+### Timer -> LED Cycling
+
+```
+esp_timer periodic callback (timer task context)
+  -> TimerServiceImpl::periodic_timer_callback()
+    -> output.BaseTimer->Notify(TimerTick)          [async: "TimerSvc BaseTimer"]
+      -> LedServiceImpl (subscribed in init)
+        -> if mRunning: build LedFrame, cycle color index
+        -> output.LedObservable->Notify(frame)      [async: "LedSvc Observable"]
+          -> LedServiceImpl self-subscription
+            -> RgbLed::SetColor() per LED + Show()   [RMT peripheral]
+```
+
+### Sensor -> BLE Notifications
+
+```
+ObservableSensor task (periodic ReadHardware)
+  -> DhtSensor::ReadHardware() [GPIO bit-banging, critical section]
+  -> mDataObservable.Notify(SensorData)              [sync, sensor task]
+    -> SensorServiceImpl (subscribed in init)
+      -> output.DataEvents->Notify(data)             [async: "SensorSvc DataEvents"]
+        -> BleTransportServiceImpl (subscribed in init)
+          -> BleGattServer::UpdateTemperature/UpdateHumidity
+          -> esp_ble_gatts_send_indicate() per client
+```
+
+### BLE Command -> Response
+
+```
+BLE GATT write to 0xFF10
+  -> BleGattServer::HandleGattsEvent()
+    -> output.CommandWriteEvents->Notify(event)      [sync]
+      -> CommandBridgeServiceImpl (subscribed in init)
+        -> CommandCodec::DecodeRequest()
+          -> FrameCodec::Deframe() -> CryptoEngine::Decrypt() -> pb_decode
+        -> CommandService::HandleRequest()
+          -> CommandDispatcher -> CommandFactory::Create() -> ICommand::Execute()
+          -> output.ResponseEvents->Notify(response) [sync]
+            -> CommandBridgeServiceImpl (subscribed in init)
+              -> CommandCodec::EncodeResponse()
+                -> pb_encode -> CryptoEngine::Encrypt() -> FrameCodec::Frame()
+              -> BleGattServer::SendCommandResponse()
+```
+
+### MQTT Command -> Response
+
+```
+MQTT broker -> esp_mqtt event handler
+  -> output.CommandEvents->Notify(MqttCommandEvent)  [async: "MqttSvc CommandEvents"]
+    -> CommandBridgeServiceImpl (subscribed in init)
+      -> Same decode/dispatch path as BLE
+      -> MqttTransportService::publish("arcana/rsp", framed_response)
+```
+
+### BLE Disconnect -> Session Cleanup
+
+```
+BLE disconnect event
+  -> output.ConnectionEvents->Notify(event)
+    -> CommandBridgeServiceImpl (subscribed in init)
+      -> KeyExchangeManager::RemoveSession(BLE, connId)
 ```
 
 ---
 
 ## Arcana Frame Protocol
 
-Every Arcana packet — whether plaintext or encrypted — is wrapped in a Frame for transport integrity.
+Every Arcana packet -- whether plaintext or encrypted -- is wrapped in a Frame for transport integrity.
 
 ### Wire Layout
 
@@ -177,8 +425,8 @@ Offset:  0     1     2     3     4     5     6     7        7+N   7+N+1
 | **Flags** | 3 | 1 | bitfield | Bit 0: FIN (last frame in stream); bits 1-7 reserved (must be 0) |
 | **Stream ID** | 4 | 1 | `0x00-0xFF` | Stream identifier for request-response correlation |
 | **Length** | 5 | 2 | LE uint16 | Payload length (excludes header and CRC) |
-| **Payload** | 7 | N | — | Encrypted: `[counter:4][cipher][tag:8]`; Plaintext: raw protobuf |
-| **CRC-16** | 7+N | 2 | LE uint16 | `esp_crc16_le(0, magic..payload)` (hardware-accelerated on ESP32-S3) |
+| **Payload** | 7 | N | -- | Encrypted: `[counter:4][cipher][tag:8]`; Plaintext: raw protobuf |
+| **CRC-16** | 7+N | 2 | LE uint16 | `esp_crc16_le(0, magic..payload)` (hardware-accelerated on ESP32) |
 
 - **Header**: 7 bytes (Magic + Version + Flags + Stream ID + Length)
 - **Trailer**: 2 bytes (CRC-16)
@@ -198,22 +446,17 @@ Offset:  0     1     2     3     4     5     6     7        7+N   7+N+1
 
 **Sync (Ping)**:
 ```
-Client → [FIN, SID=0x01] Request
-Server → [FIN, SID=0x01] Response    ← stream complete
+Client -> [FIN, SID=0x01] Request
+Server -> [FIN, SID=0x01] Response    <- stream complete
 ```
 
 **Async multi-response (BleScan, future)**:
 ```
-Client → [FIN, SID=0x02] Scan Request
-Server → [    SID=0x02] ACK           ← Fin=0, more to come
-Server → [    SID=0x02] Scan Result 1
-Server → [    SID=0x02] Scan Result 2
-Server → [FIN, SID=0x02] Scan Done    ← stream complete
-```
-
-**Server push (future)**:
-```
-Server → [FIN, SID=0x80] Notification  ← single push, immediately done
+Client -> [FIN, SID=0x02] Scan Request
+Server -> [    SID=0x02] ACK           <- Fin=0, more to come
+Server -> [    SID=0x02] Scan Result 1
+Server -> [    SID=0x02] Scan Result 2
+Server -> [FIN, SID=0x02] Scan Done    <- stream complete
 ```
 
 ### Max Wire Sizes
@@ -361,7 +604,7 @@ Encrypted:   Frame( [counter:4 LE][AES-CCM(protobuf_bytes)][tag:8] )
 
 ### Sample 1: Plaintext Ping Request
 
-System::Ping — cluster=0x00, command=0x01, no payload.
+System::Ping -- cluster=0x00, command=0x01, no payload.
 
 **Protobuf encoding** (4 bytes):
 ```
@@ -383,35 +626,7 @@ Offset  Hex                          Description
  11-12  xx xx                        CRC-16 (LE, computed over bytes 0..10)
 ```
 
-### Sample 2: Plaintext Ping Response
-
-System::Ping response — cluster=0x00, command=0x01, status=0, payload=timestamp.
-
-Assume timestamp = 1234567 (0x12D687) encoded as string `"1234567"` (7 bytes):
-
-**Protobuf encoding** (13 bytes):
-```
-08 00              <- cluster = 0x00
-10 01              <- command = 0x01
-18 00              <- status  = 0x00 (OK)
-22 07 31 32 33     <- payload = "1234567" (length-delimited, 7 bytes)
-34 35 36 37
-```
-
-**Framed wire** (22 bytes):
-```
-Offset  Hex                                      Description
-------  -----------------------------------------  -----------
- 0-1    AC DA                                      Magic
- 2      01                                         Version 1
- 3      01                                         Flags (FIN=1)
- 4      00                                         Stream ID (0 = one-shot)
- 5-6    0D 00                                      Length = 13 (LE)
- 7-19   08 00 10 01 18 00 22 07 31 32 33 34 35    Payload (protobuf)
- 20-21  xx xx                                      CRC-16 (LE)
-```
-
-### Sample 3: Encrypted Ping Request
+### Sample 2: Encrypted Ping Request
 
 Same Ping request, but with AES-256-CCM encryption enabled.
 
@@ -440,26 +655,7 @@ Offset  Hex                                            Description
  23-24  xx xx                                          CRC-16 (LE)
 ```
 
-### Sample 4: Sensor::GetData Response (Plaintext)
-
-Sensor::GetData — cluster=0x01, command=0x01, status=0, payload=JSON `{"t":25.5,"h":60.2}` (20 bytes):
-
-**Framed wire** (37 bytes):
-```
-AC DA              Magic
-01                 Version 1
-01                 Flags (FIN=1)
-00                 Stream ID (0 = one-shot)
-1C 00              Length = 28 (LE)
-                   Payload (protobuf):
-  08 01              cluster = 0x01 (Sensor)
-  10 01              command = 0x01 (GetData)
-  18 00              status  = 0x00 (OK)
-  22 14 ...          payload (length-delimited, 20 bytes of sensor data)
-xx xx              CRC-16 (LE)
-```
-
-### Sample 5: Security::KeyExchange Request (Encrypted with PSK)
+### Sample 3: Security::KeyExchange Request (Encrypted with PSK)
 
 The KeyExchange request carries a 64-byte P-256 public key, encrypted with PSK.
 
@@ -467,13 +663,10 @@ The KeyExchange request carries a 64-byte P-256 public key, encrypted with PSK.
 ```
 08 04              <- cluster = 0x04 (Security)
 10 01              <- command = 0x01 (KeyExchange)
-1A 40 ...          <- payload = 64 bytes (client public key: X‖Y)
+1A 40 ...          <- payload = 64 bytes (client public key: X||Y)
 ```
 
-**Encrypted payload** (~81 bytes = 4 counter + ~69 ciphertext + 8 tag):
-```
-[counter:4][encrypted_protobuf:~69][tag:8]
-```
+**Encrypted payload** (~81 bytes = 4 counter + ~69 ciphertext + 8 tag)
 
 **Framed wire** (~90 bytes):
 ```
@@ -510,7 +703,7 @@ CommandResponse struct
   v
 CommandCodec::EncodeResponse()
   - Encode protobuf (cluster, command, status, payload)
-  - If encrypted: AES-256-CCM -> [counter:4][ciphertext][tag:8]
+  - If encrypted: AES-256-CCM -> [counter:4][ciphertext:N][tag:8]
   |
   v
 FrameCodec::Frame()
@@ -541,7 +734,7 @@ Optional, enabled via `CMD_ENCRYPTION_ENABLED=y` in Kconfig.
 
 ### ECDH P-256 Key Exchange
 
-Provides **Perfect Forward Secrecy** — per-connection session keys are derived independently from the PSK. If the PSK is compromised, past session traffic remains protected.
+Provides **Perfect Forward Secrecy** -- per-connection session keys are derived independently from the PSK. If the PSK is compromised, past session traffic remains protected.
 
 ```
 Client                                   Server (ESP32)
@@ -574,7 +767,7 @@ Client                                   Server (ESP32)
 |----------|-------|
 | Max concurrent sessions | 4 (3 BLE + 1 MQTT) |
 | Session key derivation | HKDF-SHA256 (manual impl, MBEDTLS_HKDF_C not available) |
-| Auth tag | HMAC-SHA256(PSK, server_pub \|\| client_pub) — 32 bytes |
+| Auth tag | HMAC-SHA256(PSK, server_pub \|\| client_pub) -- 32 bytes |
 | Decrypt fallback | Session key first, then PSK (allows pre-KeyExchange commands) |
 | KeyExchange response | Always PSK-encrypted (session installed after send) |
 | BLE disconnect | Session automatically removed via ConnectionEvents subscription |
@@ -592,7 +785,7 @@ Client                                   Server (ESP32)
 
 ## BLE Dual-Role
 
-### GATT Server — Environmental Sensing (0x181A)
+### GATT Server -- Environmental Sensing (0x181A)
 
 | Characteristic | UUID | Properties | Format |
 |---------------|------|------------|--------|
@@ -608,7 +801,7 @@ Client                                   Server (ESP32)
 - Automatic re-advertising after client disconnect
 - Observable for connection events and command writes
 
-### GATT Client — Remote Sensor Discovery
+### GATT Client -- Remote Sensor Discovery
 
 ```
 Scan -> Connect -> MTU Negotiation -> Service Discovery
@@ -616,7 +809,7 @@ Scan -> Connect -> MTU Negotiation -> Service Discovery
     -> Register for Notify -> Write CCCD -> Receive Notifications
 ```
 
-### GAP — Advertising & Scanning
+### GAP -- Advertising & Scanning
 
 | Parameter | Value |
 |-----------|-------|
@@ -624,7 +817,7 @@ Scan -> Connect -> MTU Negotiation -> Service Discovery
 | ADV Interval | 20-40 ms |
 | Scan Type | Active |
 | Scan Interval / Window | 50 ms / 30 ms |
-| Device Name | `ARCANA-ESP32S3` (configurable via Kconfig) |
+| Device Name | `ARCANA-ESP32` (configurable via Kconfig) |
 | Appearance | Generic Sensor (0x0540) |
 
 ### BLE + WiFi Coexistence
@@ -635,6 +828,15 @@ Both WiFi and BLE run simultaneously via ESP-IDF's software coexistence manager 
 
 ## Observable Pattern
 
+### Construction Modes
+
+| Mode | Constructor | Dispatch | Task Created? |
+|------|-------------|----------|---------------|
+| **Synchronous** | `Observable<T>()` | In caller's thread | No |
+| **Asynchronous** | `Observable<T>("name")` | Dedicated FreeRTOS task + queue | Yes |
+
+Asynchronous mode is used for all service-level Observables (decouples producers from consumers). Synchronous mode is used for hardware-level callbacks within components.
+
 ### Variants
 
 | Variant | Heap | Callback Type | Max Subscribers | Use Case |
@@ -643,19 +845,20 @@ Both WiFi and BLE run simultaneously via ESP-IDF's software coexistence manager 
 | `Observable<T, N>` | Yes | `std::function` | N (compile-time) | Bounded resources |
 | `StaticObservable<T, N>` | No | Function pointer | N (compile-time) | Memory-constrained |
 
-### Event Types
+### Utilities
 
-| Option | Virtual Calls | Type Safety | Use Case |
-|--------|---------------|-------------|----------|
-| Direct `Observable<T>` | No | Compile-time | Single event type |
-| `IModel` inheritance | Yes | Runtime check | Multiple event types |
-| `std::variant` | No | Compile-time | Pattern matching |
+| Utility | Purpose |
+|---------|---------|
+| `Subscription<T>` | RAII guard, auto-unsubscribes on destruction |
+| `EventQueue<T, N>` | Standalone FreeRTOS queue + task (used by CommandDispatcher) |
+| `WeakObserver<T, Owner>` | Wraps `std::weak_ptr`, skips expired observers |
+| `Subject<Events...>` | Variadic base for components emitting multiple event types |
 
-### Event Hierarchy
+### Event Hierarchy (SensorTypes)
 
 ```
-IModel (interface)
-  |-- SensorData      (Value, Temperature, Humidity, Quality)
+IModel (interface, runtime type ID without RTTI)
+  |-- SensorData      (Value, Temperature, Humidity, Quality, Timestamp)
   |-- SensorError     (ErrorCode, Message)
   |-- ThresholdEvent  (High/Low, Value, Threshold)
   +-- LifecycleEvent  (Started/Stopped/Initialized/Deinitialized)
@@ -663,99 +866,23 @@ IModel (interface)
 
 ---
 
-## Data Flow
+## Task Architecture
 
-### Sensor -> BLE Notifications
-
-```
-ObservableSensor Task (periodic ReadHardware)
-        |
-        v
-  mDataObservable.Notify(SensorData)
-        |
-        +----> App Logic (logging, dashboard, etc.)
-        |
-        +----> BLE Bridge (float -> int16/uint16)
-                    |
-                    v
-              BleGattServer::UpdateTemperature() / UpdateHumidity()
-                    |
-                    v
-              esp_ble_gatts_send_indicate()
-                -> Client 1 (if CCCD enabled)
-                -> Client 2 (if CCCD enabled)
-                -> Client 3 (if CCCD enabled)
-```
-
-### Command Pipeline (BLE + MQTT)
-
-```
-BLE Write (0xFF10)          MQTT Data (arcana/cmd)
-        |                           |
-        v                           v
-  FrameCodec::Deframe(data, len)
-    1. Verify magic 0xAC 0xDA
-    2. Check version
-    3. Verify CRC-16
-    4. Extract payload
-        |
-        v
-  CommandCodec::DecodeRequest(source, connId, payload, payloadLen)
-    1. Try session CryptoEngine decrypt
-    2. Fallback to PSK CryptoEngine
-    3. nanopb decode -> CommandRequest {Cluster, Command, Payload}
-        |
-        v
-  CommandDispatcher::Dispatch() -> EventQueue<CommandRequest, 10>
-        |
-        v
-  CommandFactory::Create(cluster, command) -> ICommand
-        |
-        v
-  ICommand::Execute(request) -> CommandResponse
-        |
-        v
-  CommandCodec::EncodeResponse(response)
-    1. nanopb encode
-    2. If KeyExchange OK -> always PSK encrypt, then InstallPendingSession
-    3. Else -> session encrypt (if available) or PSK
-        |
-        v
-  FrameCodec::Frame(innerPayload, innerLen, flags, streamId)
-    1. Write [magic:2][ver:1][flags:1][sid:1][len:2 LE]
-    2. Copy payload
-    3. Compute + append CRC-16
-        |
-        +----> BLE: BleGattServer::SendCommandResponse(connId, buf)
-        +----> MQTT: esp_mqtt_client_publish(arcana/rsp, buf)
-```
-
----
-
-## Memory Footprint
-
-### Overall (ESP32-S3, ESP-IDF v5.5.2)
-
-| Region | Used | Remaining | Total | Usage |
-|--------|------|-----------|-------|-------|
-| **DRAM** | ~131 KB | ~203 KB | 334 KB | ~39% |
-| IRAM | 16 KB | 0 KB | 16 KB | 100% |
-| Flash Code | ~1,011 KB | -- | -- | -- |
-| Flash Data | ~223 KB | -- | -- | -- |
-| **Binary Total** | **~1.34 MB** | ~138 KB | 1.5 MB | ~91% |
-
-### Component Breakdown
-
-| Component | Size | Role |
-|-----------|------|------|
-| libbt.a (Bluedroid) | ~293 KB | BLE host stack |
-| libbtdm_app.a | ~93 KB | BLE controller |
-| libnet80211.a | ~142 KB | WiFi MAC |
-| liblwip.a | ~105 KB | TCP/IP stack |
-| libmqtt.a | ~33 KB | MQTT5 client |
-| libBleService.a | ~9 KB | BLE dual-role facade |
-| libObservableSensor.a | ~8 KB | Sensor + Observable |
-| **Custom code total** | **~17 KB** | All application logic |
+| Task | Stack | Priority | Owner | Created By |
+|------|-------|----------|-------|------------|
+| `"TimerSvc BaseTimer"` | 2048 | 5 | Observable | TimerServiceImpl constructor |
+| `"sensor_0"` | 4096 (Kconfig) | 5 | ObservableSensor | ObservableSensor::Start() |
+| `"SensorSvc DataEvents"` | 2048 | 5 | Observable | SensorServiceImpl constructor |
+| `"SensorSvc ErrorEvents"` | 2048 | 5 | Observable | SensorServiceImpl constructor |
+| `"LedSvc Observable"` | 2048 | 5 | Observable | LedServiceImpl constructor |
+| `"MqttSvc CommandEvents"` | 2048 | 5 | Observable | MqttTransportServiceImpl constructor |
+| `"MqttSvc ConnStatus"` | 2048 | 5 | Observable | MqttTransportServiceImpl constructor |
+| CommandDispatcher | 4096 (Kconfig) | 5 | EventQueue | CommandService::Start() |
+| BT Controller | (internal) | High | Bluedroid | BleService::Init() |
+| BT Host | (internal) | High | Bluedroid | BleService::Init() |
+| WiFi | (internal) | -- | esp_wifi | example_connect() |
+| MQTT Client | (internal) | -- | esp_mqtt | MqttTransportService::start() |
+| esp_timer | (internal) | 22 | esp_timer | System startup |
 
 ---
 
@@ -763,8 +890,8 @@ BLE Write (0xFF10)          MQTT Data (arcana/cmd)
 
 ### Prerequisites
 
-- [ESP-IDF v5.5+](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/get-started/)
-- ESP32-S3 development board
+- [ESP-IDF v5.5.2+](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/get-started/)
+- ESP32 development board
 
 ### Build & Flash
 
@@ -773,10 +900,9 @@ git clone https://github.com/jrjohn/arcana-embedded-esp32.git
 cd arcana-embedded-esp32
 
 # Set up ESP-IDF environment
-. $IDF_PATH/export.sh
+source ~/.espressif/v5.5.2/esp-idf/export.sh
 
-# Set target and build
-idf.py set-target esp32s3
+# Build
 idf.py build
 
 # Flash and monitor
@@ -791,18 +917,20 @@ idf.py menuconfig
 
 | Menu | Option | Default |
 |------|--------|---------|
-| **BLE Service** | Device Name | `ARCANA-ESP32S3` |
-| | Scan Duration | 30 seconds |
+| **Arcana Timer** | Base Interval | 1000 ms |
+| **RGB LED** | GPIO Pin | 26 |
+| | Number of LEDs | 3 |
+| | Cycle Interval | 1000 ms |
+| **Observable Sensor** | DHT Type | DHT11 |
+| | GPIO Pin | (Kconfig) |
+| | Read Interval | (Kconfig) |
+| **BLE Service** | Device Name | `ARCANA-ESP32` |
 | | Max Connections | 3 |
-| | Notify Interval | 1000 ms |
-| **Observable Sensor** | Task Stack Size | 4096 |
-| | Task Priority | 5 |
-| | Default Interval | 1000 ms |
-| **Command Service** | Queue Stack Size | 4096 |
-| | MQTT Cmd Topic | `arcana/cmd` |
-| | MQTT Rsp Topic | `arcana/rsp` |
-| | Encryption (AES-256-CCM) | OFF |
-| | PSK (64 hex chars) | `0011...EEFF` (repeated) |
+| **Command Service** | Encryption (AES-256-CCM) | OFF |
+| | PSK (64 hex chars) | `0011...EEFF` |
+| **MQTT Service** | Cmd Topic | `arcana/cmd` |
+| | Rsp Topic | `arcana/rsp` |
+| **MQTT Configuration** | Broker URL | `mqtt://mqtt.eclipse.org` |
 
 ---
 
@@ -811,284 +939,87 @@ idf.py menuconfig
 ```
 arcana-embedded-esp32/
 +-- components/
-|   +-- ObservableSensor/
+|   +-- ObservableSensor/            # Foundation: Observable, sensor, shared types
 |   |   +-- include/
-|   |   |   +-- Observable.hpp            # Core Observable<T,N>, EventQueue, StaticObservable
-|   |   |   +-- ObservableSensor.hpp      # Sensor with RTOS task
-|   |   |   +-- SensorTypes.hpp           # IModel, SensorData, std::variant events
+|   |   |   +-- Observable.hpp           # Observable<T,N>, EventQueue, StaticObservable
+|   |   |   +-- ObservableSensor.hpp     # Sensor base with RTOS task
+|   |   |   +-- SensorTypes.hpp          # IModel, SensorData, std::variant events
+|   |   |   +-- SensorService.hpp        # Abstract service base
+|   |   |   +-- SensorServiceImpl.hpp    # Meyer's singleton impl
+|   |   |   +-- DhtSensor.hpp            # DHT11/DHT22 GPIO bit-bang driver
+|   |   |   +-- TimerTypes.hpp           # TimerTick struct (shared)
 |   |   +-- ObservableSensor.cpp
-|   |   +-- CMakeLists.txt
-|   |   +-- Kconfig
+|   |   +-- SensorServiceImpl.cpp
+|   |   +-- DhtSensor.cpp
+|   |   +-- CMakeLists.txt / Kconfig
 |   |
-|   +-- BleService/
+|   +-- BleService/                  # BLE dual-role transport
 |   |   +-- include/
-|   |   |   +-- BleService.hpp            # Facade: init / start / stop
-|   |   |   +-- BleGattServer.hpp         # GATT Server (Env Sensing + Command)
-|   |   |   +-- BleGattClient.hpp         # GATT Client (scan + connect)
-|   |   |   +-- BleGap.hpp               # GAP advertising + scanning
-|   |   |   +-- BleTypes.hpp             # Event types, enums, attr indices
-|   |   |   +-- BleUuids.hpp             # UUID constants
+|   |   |   +-- BleService.hpp           # BLE facade
+|   |   |   +-- BleTransportService.hpp  # Abstract service base
+|   |   |   +-- BleTransportServiceImpl.hpp
+|   |   |   +-- BleGattServer.hpp        # GATT Server (Env Sensing + Command)
+|   |   |   +-- BleGattClient.hpp        # GATT Client (scan + connect)
+|   |   |   +-- BleGap.hpp              # GAP advertising + scanning
+|   |   |   +-- BleTypes.hpp / BleUuids.hpp
 |   |   +-- src/
-|   |   |   +-- BleService.cpp            # BT init, extern "C" trampolines
-|   |   |   +-- BleGattServer.cpp         # Attribute table, CCCD, notify
-|   |   |   +-- BleGattClient.cpp         # Discovery, CCCD, notifications
-|   |   |   +-- BleGap.cpp               # ADV/scan params
-|   |   +-- CMakeLists.txt
-|   |   +-- Kconfig
+|   |   |   +-- BleService.cpp / BleTransportServiceImpl.cpp
+|   |   |   +-- BleGattServer.cpp / BleGattClient.cpp / BleGap.cpp
+|   |   +-- CMakeLists.txt / Kconfig
 |   |
-|   +-- CommandService/
+|   +-- CommandService/              # Command pipeline + crypto
+|   |   +-- include/
+|   |   |   +-- CommandService.hpp       # Singleton facade
+|   |   |   +-- CommandDispatcher.hpp    # EventQueue async dispatch
+|   |   |   +-- CommandFactory.hpp       # Cluster+Command -> ICommand
+|   |   |   +-- CommandTypes.hpp         # Enums, Request/Response structs
+|   |   |   +-- CommandCodec.hpp         # Protobuf + AES-256-CCM codec
+|   |   |   +-- FrameCodec.hpp          # Frame/Deframe: magic + ver + CRC-16
+|   |   |   +-- CryptoEngine.hpp        # AES-256-CCM encrypt/decrypt
+|   |   |   +-- KeyExchangeManager.hpp  # ECDH P-256, session management
+|   |   |   +-- ICommand.hpp            # Command interface
+|   |   |   +-- commands/               # 9 ICommand implementations
+|   |   +-- src/
+|   |   |   +-- CommandService.cpp / CommandFactory.cpp / CommandDispatcher.cpp
+|   |   |   +-- CommandCodec.cpp / CryptoEngine.cpp / KeyExchangeManager.cpp
+|   |   |   +-- arcana_cmd.pb.c         # nanopb generated
+|   |   +-- proto/
+|   |   |   +-- arcana_cmd.proto / arcana_cmd.options
+|   |   +-- CMakeLists.txt / Kconfig / idf_component.yml
+|   |
+|   +-- MqttService/                 # MQTT5 transport
+|   |   +-- include/
+|   |   |   +-- MqttTransportService.hpp
+|   |   |   +-- MqttTransportServiceImpl.hpp
+|   |   +-- MqttTransportServiceImpl.cpp
+|   |   +-- CMakeLists.txt / Kconfig
+|   |
+|   +-- RgbLed/                      # WS2812B LED strip via RMT
 |       +-- include/
-|       |   +-- CommandService.hpp        # Singleton facade, owns KeyExchangeManager
-|       |   +-- CommandDispatcher.hpp     # EventQueue async dispatch
-|       |   +-- CommandFactory.hpp        # Cluster+Command -> ICommand factory
-|       |   +-- CommandTypes.hpp          # Cluster/Command enums, Request/Response structs
-|       |   +-- CommandCodec.hpp          # Protobuf + AES-256-CCM codec
-|       |   +-- FrameCodec.hpp           # Frame/Deframe: magic + version + CRC-16
-|       |   +-- CryptoEngine.hpp          # AES-256-CCM encrypt/decrypt
-|       |   +-- KeyExchangeManager.hpp    # ECDH P-256, session management
-|       |   +-- ICommand.hpp              # Command interface
-|       |   +-- commands/
-|       |   |   +-- PingCommand.hpp
-|       |   |   +-- GetSensorDataCommand.hpp
-|       |   |   +-- GetDeviceInfoCommand.hpp
-|       |   |   +-- SetNotifyIntervalCommand.hpp
-|       |   |   +-- GetBleStatusCommand.hpp
-|       |   |   +-- SetDeviceNameCommand.hpp
-|       |   |   +-- BleScanCommand.hpp          # Async
-|       |   |   +-- GetMqttStatusCommand.hpp
-|       |   |   +-- KeyExchangeCommand.hpp      # ECDH initiation
-|       |   +-- arcana_cmd.pb.h           # nanopb generated
-|       +-- src/
-|       |   +-- CommandService.cpp
-|       |   +-- CommandFactory.cpp
-|       |   +-- CommandDispatcher.cpp
-|       |   +-- CommandCodec.cpp
-|       |   +-- CryptoEngine.cpp
-|       |   +-- KeyExchangeManager.cpp
-|       |   +-- arcana_cmd.pb.c           # nanopb generated
-|       +-- proto/
-|       |   +-- arcana_cmd.proto
-|       |   +-- arcana_cmd.options        # nanopb field options
-|       +-- CMakeLists.txt
-|       +-- Kconfig
-|       +-- idf_component.yml            # nanopb managed dependency
+|       |   +-- RgbLed.hpp               # RMT driver
+|       |   +-- LedService.hpp           # Abstract service base
+|       |   +-- LedServiceImpl.hpp       # Meyer's singleton impl
+|       +-- RgbLed.cpp / LedServiceImpl.cpp
+|       +-- CMakeLists.txt / Kconfig
 |
 +-- main/
-|   +-- app_main.cpp                      # Entry: BLE + MQTT5 + sensor bridge + command wiring
-|   +-- Kconfig.projbuild
-|   +-- CMakeLists.txt
-|   +-- idf_component.yml
+|   +-- app_main.cpp                     # Entry: NVS + netif + event loop + Controller::run()
+|   +-- Controller.hpp / Controller.cpp  # Service wiring + lifecycle orchestration
+|   +-- TimerService.hpp                 # Abstract base (esp_timer periodic ticks)
+|   +-- TimerServiceImpl.hpp / .cpp      # Meyer's singleton impl
+|   +-- CommandBridgeService.hpp         # Abstract base (glue service)
+|   +-- CommandBridgeServiceImpl.hpp / .cpp
+|   +-- CMakeLists.txt / Kconfig.projbuild / idf_component.yml
 |
-+-- partitions.csv                        # Custom partition table (2MB app)
-+-- sdkconfig.defaults                    # BLE + WiFi + coexistence config
-+-- CMakeLists.txt                        # Project config (MINIMAL_BUILD)
++-- partitions.csv                       # Custom partition table (~4MB app)
++-- sdkconfig
++-- CMakeLists.txt                       # Project config (MINIMAL_BUILD)
 +-- README.md
 ```
 
 ---
 
-## API Reference
-
-### CommandService
-
-```cpp
-namespace Arcana::Command {
-
-class CommandService {
-public:
-    static CommandService& Instance();
-
-    esp_err_t Init(Sensor::ObservableSensor* sensor);
-    esp_err_t Start();
-    void Stop();
-
-    void HandleRequest(const CommandRequest& request);
-    Observable<CommandResponse>& ResponseEvents();
-
-    CommandFactory* Factory();
-    KeyExchangeManager* KeyExchangeMgr();  // nullptr if encryption disabled
-};
-
-}
-```
-
-### CommandCodec
-
-```cpp
-namespace Arcana::Command {
-
-class CommandCodec {
-public:
-    esp_err_t Init();  // Reads Kconfig, init AES-256-CCM if enabled
-
-    void SetKeyExchangeManager(KeyExchangeManager* mgr);
-
-    // Deframe + decrypt + decode protobuf -> CommandRequest
-    bool DecodeRequest(CommandSource source, uint16_t connId,
-                       const uint8_t* data, size_t len,
-                       CommandRequest& out);
-
-    // Encode protobuf + encrypt + Frame -> wire bytes
-    bool EncodeResponse(const CommandResponse& rsp,
-                        uint8_t* buf, size_t bufSize, size_t& outLen);
-};
-
-}
-```
-
-### KeyExchangeManager
-
-```cpp
-namespace Arcana::Command {
-
-class KeyExchangeManager {
-public:
-    esp_err_t Init(const uint8_t psk[32]);
-
-    // ECDH: derive session key, stage as pending
-    bool PerformKeyExchange(CommandSource source, uint16_t connId,
-                            const uint8_t clientPub[64],
-                            uint8_t serverPub[64], uint8_t authTag[32]);
-
-    // Activate pending session (called after PSK-encrypted response sent)
-    bool InstallPendingSession(CommandSource source, uint16_t connId);
-
-    // Lookup active session (nullptr = use PSK)
-    CryptoEngine* GetSession(CommandSource source, uint16_t connId);
-
-    // Cleanup on disconnect
-    void RemoveSession(CommandSource source, uint16_t connId);
-};
-
-}
-```
-
-### BleService
-
-```cpp
-namespace Arcana::Ble {
-
-class BleService {
-public:
-    static BleService& Instance();
-    esp_err_t Init();
-    esp_err_t Start();
-    esp_err_t Stop();
-};
-
-class BleGattServer {
-public:
-    static BleGattServer& Instance();
-    void UpdateTemperature(int16_t tempCenti);
-    void UpdateHumidity(uint16_t humidCenti);
-    void SendCommandResponse(uint16_t connId, const uint8_t* data, uint16_t len);
-    Observable<BleConnectionEvent>& ConnectionEvents();
-    Observable<BleCommandWriteEvent>& CommandWriteEvents();
-};
-
-class BleGattClient {
-public:
-    static BleGattClient& Instance();
-    esp_err_t Connect(const esp_bd_addr_t addr);
-    esp_err_t Disconnect();
-    Observable<BleClientDiscovery>& DiscoveryEvents();
-    Observable<BleSensorNotification>& NotificationEvents();
-    Observable<BleConnectionEvent>& ConnectionEvents();
-};
-
-}
-```
-
-### ObservableSensor
-
-```cpp
-namespace Arcana::Sensor {
-
-class ObservableSensor {
-public:
-    explicit ObservableSensor(const SensorConfig& config = SensorConfig());
-    esp_err_t Start();
-    esp_err_t Stop();
-
-    SubscriptionId OnData(Observer<SensorData> callback);
-    SubscriptionId OnError(Observer<SensorError> callback);
-    SubscriptionId OnThreshold(Observer<ThresholdEvent> callback);
-    SubscriptionId OnLifecycle(Observer<LifecycleEvent> callback);
-    SubscriptionId OnAny(Observer<const IModel*> callback);
-
-protected:
-    virtual esp_err_t ReadHardware(SensorData& data);  // Override for real HW
-};
-
-}
-```
-
----
-
-## Examples
-
-### Sensor to BLE Bridge
-
-```cpp
-ObservableSensor sensor(SensorConfig().WithId(1).WithInterval(1000));
-
-sensor.OnData([](const SensorData& data) {
-    auto& server = BleGattServer::Instance();
-    server.UpdateTemperature(static_cast<int16_t>(data.Temperature * 100.0f));
-    server.UpdateHumidity(static_cast<uint16_t>(data.Humidity * 100.0f));
-});
-
-sensor.Start();
-```
-
-### Command Wiring (app_main)
-
-```cpp
-// Init codec and command service
-CommandCodec codec;
-codec.Init();
-
-auto& cmdSvc = CommandService::Instance();
-cmdSvc.Init(sensor);
-cmdSvc.Start();
-
-// Wire KeyExchangeManager to codec
-codec.SetKeyExchangeManager(cmdSvc.KeyExchangeMgr());
-
-// BLE commands -> deframe -> decode -> dispatch
-BleGattServer::Instance().CommandWriteEvents().Subscribe(
-    [&codec](const BleCommandWriteEvent& evt) {
-        CommandRequest req;
-        if (codec.DecodeRequest(CommandSource::BLE, evt.first,
-                                evt.second.data(), evt.second.size(), req)) {
-            CommandService::Instance().HandleRequest(req);
-        }
-    });
-
-// Responses -> encode -> frame -> route back
-cmdSvc.ResponseEvents().Subscribe(
-    [&codec](const CommandResponse& rsp) {
-        uint8_t buf[320];
-        size_t len = 0;
-        if (!codec.EncodeResponse(rsp, buf, sizeof(buf), len)) return;
-
-        if (rsp.Source == CommandSource::BLE)
-            BleGattServer::Instance().SendCommandResponse(rsp.ConnectionId, buf, len);
-        else if (rsp.Source == CommandSource::MQTT)
-            esp_mqtt_client_publish(client, "arcana/rsp", (char*)buf, len, 1, 0);
-    });
-
-// BLE disconnect -> remove ECDH session
-BleGattServer::Instance().ConnectionEvents().Subscribe(
-    [](const BleConnectionEvent& evt) {
-        if (evt.State == ConnectionState::Disconnected) {
-            auto* mgr = CommandService::Instance().KeyExchangeMgr();
-            if (mgr) mgr->RemoveSession(CommandSource::BLE, evt.ConnId);
-        }
-    });
-```
-
-### Adding a New Command
+## Adding a New Command
 
 ```cpp
 // 1. Add command ID to the appropriate cluster namespace in CommandTypes.hpp
@@ -1124,39 +1055,30 @@ case Cluster::Sensor:
 
 ---
 
-## Task Architecture
-
-| Task | Stack | Priority | Source |
-|------|-------|----------|--------|
-| BT Controller | (ESP-IDF internal) | High | Bluedroid |
-| BT Host | (ESP-IDF internal) | High | Bluedroid |
-| ObservableSensor | 4096 (configurable) | 5 | ObservableSensor component |
-| CommandDispatcher | 4096 (configurable) | 5 | CommandService component |
-| WiFi / MQTT | (ESP-IDF internal) | -- | esp_wifi / mqtt_client |
-
----
-
 ## Verification
 
-1. **Build**: `idf.py set-target esp32s3 && idf.py build`
-2. **BLE Sensor**: Use nRF Connect to scan for `ARCANA-ESP32S3`, subscribe to Temperature/Humidity notifications
-3. **BLE Command**: Write framed binary to 0xFF10, receive framed response on 0xFF11
-4. **MQTT Command**: Publish framed binary to `arcana/cmd`, subscribe to `arcana/rsp`
-5. **Frame Validation**: Send garbage bytes (wrong magic / bad CRC), verify `FrameCodec::Deframe` rejects with log warning
-6. **Encryption**: Enable `CMD_ENCRYPTION_ENABLED`, verify PSK-encrypted round-trip inside frames
-7. **Key Exchange**: Send KeyExchange (Security/0x01) with client P-256 public key, verify session-encrypted subsequent commands
-8. **Session Cleanup**: Disconnect BLE, verify session removed, next command falls back to PSK
-9. **Coexistence**: Confirm MQTT publish/subscribe operates normally while BLE is active
+1. **Build**: `idf.py build`
+2. **LED Cycling**: 3 WS2812B LEDs cycle colors at 1-second intervals (timer-driven)
+3. **BLE Sensor**: Use nRF Connect to scan for `ARCANA-ESP32`, subscribe to Temperature/Humidity notifications
+4. **BLE Command**: Write framed binary to 0xFF10, receive framed response on 0xFF11
+5. **MQTT Command**: Publish framed binary to `arcana/cmd`, subscribe to `arcana/rsp`
+6. **Frame Validation**: Send garbage bytes (wrong magic / bad CRC), verify `FrameCodec::Deframe` rejects
+7. **Encryption**: Enable `CMD_ENCRYPTION_ENABLED`, verify PSK-encrypted round-trip
+8. **Key Exchange**: Send KeyExchange (Security/0x01) with client P-256 public key, verify session-encrypted subsequent commands
+9. **Session Cleanup**: Disconnect BLE, verify session removed, next command falls back to PSK
+10. **No task leaks**: `grep -r xTaskCreate components/RgbLed/` returns nothing
 
 ---
 
 ## Roadmap
 
-- [x] Type-safe Observable template (dynamic + static)
-- [x] RAII Subscription guard
+- [x] Type-safe Observable template (dynamic + static + async)
+- [x] RAII Subscription guard + WeakObserver
 - [x] IModel polymorphic events + std::variant alternative
 - [x] EventQueue async dispatch
-- [x] WeakObserver support
+- [x] **Service pattern (abstract base + Input/Output + 4-phase lifecycle)**
+- [x] **Controller orchestration (wire -> initHAL -> init -> start)**
+- [x] **TimerService (esp_timer periodic ticks via Observable)**
 - [x] BLE GATT Server (Environmental Sensing 0x181A)
 - [x] BLE GATT Client (scan + connect + notify)
 - [x] WiFi + BLE coexistence
@@ -1167,6 +1089,7 @@ case Cluster::Sensor:
 - [x] **ECDH P-256 key exchange (Perfect Forward Secrecy)**
 - [x] **Per-connection session keys (4 slots)**
 - [x] **Frame Protocol (magic + version + flags + stream ID + CRC-16)**
+- [x] **RGB LED service (timer-driven, no own task)**
 - [ ] UART transport (frame layer ready)
 - [ ] BLE bonding & SMP pairing
 - [ ] OTA firmware update

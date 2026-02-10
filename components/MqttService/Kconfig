@@ -1,0 +1,15 @@
+menu "MQTT Service Configuration"
+
+    config MQTT_SVC_CMD_TOPIC
+        string "MQTT command topic"
+        default "arcana/cmd"
+        help
+            MQTT topic for receiving commands.
+
+    config MQTT_SVC_RSP_TOPIC
+        string "MQTT response topic"
+        default "arcana/rsp"
+        help
+            MQTT topic for publishing responses.
+
+endmenu
