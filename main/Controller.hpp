@@ -7,6 +7,7 @@
 #include "CommandBridgeService.hpp"
 #include "CommandService.hpp"
 #include "TimerService.hpp"
+#include "LcdService.hpp"
 
 namespace Arcana {
 
@@ -33,6 +34,7 @@ private:
     Mqtt::MqttTransportService* mMqtt = nullptr;
     Led::LedService* mLed = nullptr;
     CommandBridgeService* mBridge = nullptr;
+    Lcd::LcdService* mLcd = nullptr;
     Command::CommandService* mCommand = nullptr;
 };
 

@@ -3,6 +3,7 @@
 #include "BleTransportServiceImpl.hpp"
 #include "MqttTransportServiceImpl.hpp"
 #include "LedServiceImpl.hpp"
+#include "LcdServiceImpl.hpp"
 #include "TimerServiceImpl.hpp"
 #include "CommandBridgeServiceImpl.hpp"
 #include "protocol_examples_common.h"
@@ -49,11 +50,15 @@ void Controller::wireServices() {
     mBle     = &Ble::BleTransportServiceImpl::getInstance();
     mMqtt    = &Mqtt::MqttTransportServiceImpl::getInstance();
     mLed     = &Led::LedServiceImpl::getInstance();
+    mLcd     = &Lcd::LcdServiceImpl::getInstance();
     mBridge  = &CommandBridgeServiceImpl::getInstance();
     mCommand = &Command::CommandService::Instance();
 
-    // Wire LED <- Timer (fast tick for smooth cycling)
-    mLed->input.TimerEvents = mTimer->output.FastTimer;
+    // Wire LED <- Timer (base tick for 1-second cycling)
+    mLed->input.TimerEvents = mTimer->output.BaseTimer;
+
+    // Wire LCD <- Sensor (display temperature/humidity)
+    mLcd->input.SensorDataEvents = mSensor->output.DataEvents;
 
     // Wire BLE <- Sensor
     mBle->input.SensorDataEvents = mSensor->output.DataEvents;
@@ -70,6 +75,7 @@ void Controller::initHAL() {
     ESP_ERROR_CHECK(mSensor->init_HAL());
     ESP_ERROR_CHECK(mBle->init_HAL());
     ESP_ERROR_CHECK(mLed->init_HAL());
+    ESP_ERROR_CHECK(mLcd->init_HAL());
     ESP_ERROR_CHECK(mMqtt->init_HAL());
 
     ESP_LOGI(TAG, "HAL initialized");
@@ -105,6 +111,9 @@ void Controller::initServices() {
     // LED init (no dependencies)
     ESP_ERROR_CHECK(mLed->init());
 
+    // LCD init (subscribes to sensor data)
+    ESP_ERROR_CHECK(mLcd->init());
+
     // MQTT init (no dependencies)
     ESP_ERROR_CHECK(mMqtt->init());
 
@@ -117,6 +126,7 @@ void Controller::startServices() {
     ESP_ERROR_CHECK(mBle->start());
     ESP_ERROR_CHECK(mCommand->Start());
     ESP_ERROR_CHECK(mLed->start());
+    ESP_ERROR_CHECK(mLcd->start());
     ESP_ERROR_CHECK(mMqtt->start());
 
     ESP_LOGI(TAG, "Services started");

@@ -8,7 +8,7 @@ namespace Timer {
 
 TimerServiceImpl::TimerServiceImpl() {
     output.FastTimer = new Observable<TimerTick>("TimerSvc FastTimer", 20, 3072);
-    output.BaseTimer = new Observable<TimerTick>("TimerSvc BaseTimer");
+    output.BaseTimer = new Observable<TimerTick>("TimerSvc BaseTimer", 20, 3072);
 
     ESP_LOGI(TAG, "Created (output Observables allocated)");
 }
