@@ -33,26 +33,34 @@
 
 ## Architecture Evaluation
 
-| Category | Score | Details |
-|----------|-------|---------|
-| **Service Architecture** | 9.5/10 | Abstract base + Meyer's singleton, Input/Output wiring, 4-phase lifecycle |
-| **Task Ownership** | 9.5/10 | ServiceImpl never creates FreeRTOS tasks; Observable owns dispatch tasks, TimerService owns periodic behavior |
-| **Type Safety** | 9.5/10 | C++23 templates, `std::variant`, compile-time checks, typed Observable subscriptions |
-| **Security** | 9.0/10 | AES-256-CCM + ECDH P-256 key exchange, per-connection sessions, PFS |
-| **Thread Safety** | 9.0/10 | FreeRTOS mutex, copy-before-notify, per-session mutex in KeyExchangeManager |
-| **BLE Integration** | 9.0/10 | Bluedroid dual-role, attribute table, multi-connection CCCD tracking |
-| **Connectivity** | 9.5/10 | WiFi + BLE coexistence, MQTT5, unified BLE+MQTT command pipeline |
-| **Protocol Design** | 9.5/10 | Frame layer (magic/ver/flags/SID/len/CRC) + nanopb protobuf + session-aware codec |
-| **Extensibility** | 9.5/10 | ICommand + CommandFactory, Observable subscriptions, Kconfig, service wiring in Controller |
-| **Overall** | **9.3/10** | Production-ready encrypted IoT command platform with clean service architecture |
+### Pros
 
-### Strengths
+| # | Strength | Details |
+|---|----------|---------|
+| 1 | **Service pattern with Input/Output wiring** | Services declare typed dependencies as struct fields; Controller wires Observable pointers at startup, achieving compile-time dependency injection without a DI framework |
+| 2 | **Task ownership rule** | ServiceImpl never calls `xTaskCreate`. Observable owns dispatch tasks; `esp_timer` owns periodic behavior. Concurrency management is centralized, not scattered across services |
+| 3 | **Dual-rate TimerService** | Single `esp_timer` at 100ms with counter divider for 1000ms. Services choose FastTimer or BaseTimer based on their needs. Adding a new rate is one divider counter away |
+| 4 | **Unified command pipeline** | BLE and MQTT share identical wire format (Frame + protobuf + AES-256-CCM). Single CommandCodec handles both transports |
+| 5 | **Perfect Forward Secrecy** | ECDH P-256 session keys are independent of PSK; compromised PSK does not expose past sessions. Per-connection isolation (4 slots) |
+| 6 | **Two-stage event pipelines** | Sensor/Timer events flow: sync Observable (producer task) -> async Observable (dedicated dispatch task), cleanly decoupling producers from consumers |
+| 7 | **4-phase Controller lifecycle** | `wireServices -> initHAL -> initServices -> startServices` with explicit ordering rationale. Late-wiring pattern for bridge inputs ensures dependencies are initialized first |
+| 8 | **Protocol layering** | Frame (magic + CRC) / Encryption (AES-CCM) / Serialization (protobuf) -- each layer is independently testable and transport-agnostic |
+| 9 | **Extensibility** | Adding a command = 1 header-only class + 1 factory switch case. Adding a service = abstract base + singleton impl + wire in Controller |
 
-- **Service pattern with Input/Output wiring** -- Services declare typed dependencies as struct fields; Controller wires Observable pointers at startup, achieving compile-time dependency injection without a DI framework
-- **Task ownership rule** -- ServiceImpl never calls `xTaskCreate`. Observable creates internal dispatch tasks; TimerService provides periodic ticks via `esp_timer`. This centralizes concurrency management and eliminates scattered task lifecycle code
-- **Unified command pipeline** -- BLE and MQTT share identical wire format (frame + protobuf + AES-256-CCM), single codec handles both
-- **Perfect Forward Secrecy** -- ECDH session keys are independent of PSK; PSK compromise does not expose past sessions
-- **Two-stage event pipelines** -- Sensor/Timer events flow through synchronous Observable (within producing task) into async Observable (dedicated dispatch task), decoupling producers from consumers
+### Cons
+
+| # | Issue | Severity | Details | Location |
+|---|-------|----------|---------|----------|
+| 1 | **7 async Observables = 7 FreeRTOS tasks** | Medium | Each named Observable creates a task + queue. 7 Observables consume ~16 KB stack RAM (2x3072 + 5x2048) + 7 TCBs (~504B) + 7 queues. On ESP32 with ~200 KB free DRAM this is ~9% just for event dispatch | All `new Observable<T>("name")` calls |
+| 2 | **LED double queue hop** | Low | Each LED frame traverses two async queues: `esp_timer -> FastTimer queue -> LED callback -> LedObservable queue -> hardware callback`. Adds ~2ms latency per hop. Acceptable for LED cycling but would matter for latency-sensitive subscribers | `LedServiceImpl.cpp:61,70,79` |
+| 3 | **`MqttCommandEvent` raw pointer** | **High** | `MqttCommandEvent` stores `const uint8_t* Data` pointing into MQTT event buffer. The Observable is async (queue), but `xQueueSend` does `memcpy` of the struct -- copying the pointer, not the data. If dispatch happens after MQTT recycles the buffer: **use-after-free** | `MqttTypes.hpp:10` |
+| 4 | **`SensorError` contains `std::string`** | **High** | `SensorError::Message` is `std::string`. Passing through FreeRTOS queue (`xQueueSend` does raw `memcpy`) would bypass copy constructor, causing double-free. Latent bug -- fires when sensor errors actually occur. `SensorErrorV` (variant version with `char[64]`) exists but is not used | `SensorTypes.hpp:107` |
+| 5 | **`CommandService` naming inconsistency** | Low | Uses `Instance()` / `Start()` / `Stop()` (PascalCase) while all other services use `getInstance()` / `start()` / `stop()` (camelCase). Controller calls `mCommand->Start()` vs `mLed->start()` | `CommandService.hpp:29,33-34`, `Controller.cpp:118` |
+| 6 | **Controller skips Bridge lifecycle** | Low | `mBridge->init_HAL()` and `mBridge->start()` are never called. Harmless (both are no-ops) but breaks the pattern symmetry of calling all 4 lifecycle methods on every service | `Controller.cpp:67-76,114-122` |
+| 7 | **Unnecessary `static_cast`** | Low | Controller casts `*mBle` to `BleTransportServiceImpl&` to call `server()`, but `server()` is already `virtual` on the abstract base `BleTransportService` | `Controller.cpp:100` |
+| 8 | **Silent event drops on queue full** | Medium | `xQueueSend(mQueue, &Data, 0)` uses timeout=0: if queue (depth=20) is full, events are silently dropped with no log or metric. At 100ms fast timer rate, a slow subscriber could miss ticks | `Observable.hpp:208` |
+| 9 | **`CONFIG_RGB_LED_CYCLE_INTERVAL_MS` orphaned** | Low | Still defined in `RgbLed/Kconfig` and present in sdkconfig, but never referenced in code after timer refactor. Dead config | `RgbLed/Kconfig:17` |
+| 10 | **Duplicate Kconfig MQTT topics** | Low | `CommandService/Kconfig` defines `CMD_MQTT_CMD_TOPIC` / `CMD_MQTT_RSP_TOPIC`. `MqttService/Kconfig` defines `MQTT_SVC_CMD_TOPIC` / `MQTT_SVC_RSP_TOPIC`. Only the latter are used in code. The former are dead config | `CommandService/Kconfig:10,16` |
 
 ### Trade-offs
 
@@ -63,7 +71,8 @@
 | Manual HKDF | ~50 lines of code | `MBEDTLS_HKDF_C` not enabled in ESP-IDF default sdkconfig |
 | nanopb (not full protobuf) | Manual `.options` file | 10x smaller than protobuf-c, fits embedded constraints |
 | Singleton pattern | Global state | Natural fit for hardware peripherals (BLE, sensor); single instance enforced |
-| Custom Frame (not COBS/SLIP) | 9 bytes overhead | Simpler, includes version + flags + stream ID + magic for protocol detection; CRC covers entire frame |
+| Custom Frame (not COBS/SLIP) | 9 bytes overhead | Includes version + flags + stream ID + magic for protocol detection; CRC covers entire frame |
+| 1 task per async Observable | 2-3 KB RAM per Observable | Clean decoupling; alternative would be shared thread pool with priority inversion risk |
 | TimerTypes in ObservableSensor | Foundation component grows | Avoids circular dependency between `main/` and component layer |
 
 ### Transport Compatibility
@@ -88,7 +97,8 @@
 |  | (Arcana::Timer)  |  | (Arcana::Sensor)  |  |  (Arcana::Led)       |   |
 |  |                  |  |                   |  |                      |   |
 |  | esp_timer ------>|  | DhtSensor ------->|  | Input: TimerEvents   |   |
-|  |  BaseTimer tick  |  |  DataEvents       |  | Output: LedObservable|   |
+|  |  FastTimer 100ms |  |  DataEvents       |  | Output: LedObservable|   |
+|  |  BaseTimer 1000ms|  |                   |  |                      |   |
 |  +--------+---------+  |  ErrorEvents      |  +----------+-----------+   |
 |           |             |  [RTOS Task]      |             |              |
 |           |             +---+---------------+             |              |
@@ -226,7 +236,7 @@ private:
 
 | Service | Input | Output | Task Ownership |
 |---------|-------|--------|----------------|
-| **TimerService** | (none) | `BaseTimer` | `esp_timer` fires ticks; Observable dispatches |
+| **TimerService** | (none) | `FastTimer` (100ms), `BaseTimer` (1000ms) | `esp_timer` fires at fast rate; counter divider produces base rate |
 | **SensorService** | (none) | `DataEvents`, `ErrorEvents`, `Sensor*` | ObservableSensor creates FreeRTOS task |
 | **BleTransportService** | `SensorDataEvents` | `ConnectionEvents`, `CommandWriteEvents` | Bluedroid stack tasks |
 | **MqttTransportService** | (none) | `CommandEvents`, `ConnectionStatus` | esp_mqtt_client task |
@@ -240,7 +250,7 @@ private:
 
 | Task Source | Mechanism | Example |
 |-------------|-----------|---------|
-| `Observable<T>("name")` | Named constructor creates FreeRTOS task + queue | `"TimerSvc BaseTimer"`, `"LedSvc Observable"` |
+| `Observable<T>("name")` | Named constructor creates FreeRTOS task + queue | `"TimerSvc FastTimer"`, `"TimerSvc BaseTimer"`, `"LedSvc Observable"` |
 | `EventQueue<T, N>` | `Start()` creates FreeRTOS task | CommandDispatcher async queue |
 | `ObservableSensor` | Base class creates sensor reading task | `"sensor_0"` |
 | `esp_timer` | ESP-IDF timer task fires callbacks | TimerServiceImpl periodic tick |
@@ -272,7 +282,7 @@ Controller::run()
 Gets singleton references and connects Observable pointers between services:
 
 ```
-mTimer   = &TimerServiceImpl::getInstance()     // allocates BaseTimer Observable
+mTimer   = &TimerServiceImpl::getInstance()     // allocates FastTimer + BaseTimer Observables
 mSensor  = &SensorServiceImpl::getInstance()    // allocates DataEvents, ErrorEvents
 mLed     = &LedServiceImpl::getInstance()       // allocates LedObservable
 mBle     = &BleTransportServiceImpl::getInstance()
@@ -281,7 +291,7 @@ mBridge  = &CommandBridgeServiceImpl::getInstance()
 mCommand = &CommandService::Instance()
 
 // Wire dependencies via Input structs
-mLed->input.TimerEvents      = mTimer->output.BaseTimer
+mLed->input.TimerEvents      = mTimer->output.FastTimer
 mBle->input.SensorDataEvents = mSensor->output.DataEvents
 mCommand->input.Sensor        = mSensor->output.Sensor
 ```
@@ -301,7 +311,7 @@ mMqtt->init_HAL()      // reads Kconfig topic
 ### Phase 2: initServices()
 
 ```
-mTimer->init()         // (no-op, no rate dividers yet)
+mTimer->init()         // computes base divider (base_ms / fast_ms)
 mSensor->init()        // subscribes DhtSensor events -> service Observables
 mBle->init()           // subscribes to SensorDataEvents for GATT notifications
 mCommand->init()       // creates KeyExchangeManager, Factory, Dispatcher
@@ -325,7 +335,7 @@ mMqtt->init()          // (no-op)
 ### Phase 3: startServices()
 
 ```
-mTimer->start()        // esp_timer_start_periodic (CONFIG_TIMER_BASE_INTERVAL_MS)
+mTimer->start()        // esp_timer_start_periodic (CONFIG_TIMER_FAST_INTERVAL_MS = 100ms)
 mSensor->start()       // ObservableSensor FreeRTOS task starts reading
 mBle->start()          // BLE advertising begins
 mCommand->Start()      // CommandDispatcher async queue task starts
@@ -340,14 +350,16 @@ mMqtt->start()         // MQTT client connects to broker
 ### Timer -> LED Cycling
 
 ```
-esp_timer periodic callback (timer task context)
+esp_timer periodic callback (every 100ms, timer task context)
   -> TimerServiceImpl::periodic_timer_callback()
-    -> output.BaseTimer->Notify(TimerTick)          [async: "TimerSvc BaseTimer"]
+    -> output.FastTimer->Notify(TimerTick)           [async: "TimerSvc FastTimer" 3072B]
       -> LedServiceImpl (subscribed in init)
         -> if mRunning: build LedFrame, cycle color index
-        -> output.LedObservable->Notify(frame)      [async: "LedSvc Observable"]
+        -> output.LedObservable->Notify(frame)       [async: "LedSvc Observable" 3072B]
           -> LedServiceImpl self-subscription
-            -> RgbLed::SetColor() per LED + Show()   [RMT peripheral]
+            -> RgbLed::SetColor() per LED + Show()    [RMT peripheral]
+    -> every 10th tick: output.BaseTimer->Notify()   [sync: "TimerSvc BaseTimer"]
+      -> (future subscribers at 1000ms rate)
 ```
 
 ### Sensor -> BLE Notifications
@@ -870,11 +882,12 @@ IModel (interface, runtime type ID without RTTI)
 
 | Task | Stack | Priority | Owner | Created By |
 |------|-------|----------|-------|------------|
+| `"TimerSvc FastTimer"` | 3072 | 5 | Observable | TimerServiceImpl constructor |
 | `"TimerSvc BaseTimer"` | 2048 | 5 | Observable | TimerServiceImpl constructor |
 | `"sensor_0"` | 4096 (Kconfig) | 5 | ObservableSensor | ObservableSensor::Start() |
 | `"SensorSvc DataEvents"` | 2048 | 5 | Observable | SensorServiceImpl constructor |
 | `"SensorSvc ErrorEvents"` | 2048 | 5 | Observable | SensorServiceImpl constructor |
-| `"LedSvc Observable"` | 2048 | 5 | Observable | LedServiceImpl constructor |
+| `"LedSvc Observable"` | 3072 | 5 | Observable | LedServiceImpl constructor |
 | `"MqttSvc CommandEvents"` | 2048 | 5 | Observable | MqttTransportServiceImpl constructor |
 | `"MqttSvc ConnStatus"` | 2048 | 5 | Observable | MqttTransportServiceImpl constructor |
 | CommandDispatcher | 4096 (Kconfig) | 5 | EventQueue | CommandService::Start() |
@@ -917,7 +930,8 @@ idf.py menuconfig
 
 | Menu | Option | Default |
 |------|--------|---------|
-| **Arcana Timer** | Base Interval | 1000 ms |
+| **Arcana Timer** | Fast Interval | 100 ms |
+| | Base Interval | 1000 ms |
 | **RGB LED** | GPIO Pin | 26 |
 | | Number of LEDs | 3 |
 | | Cycle Interval | 1000 ms |
@@ -1058,7 +1072,7 @@ case Cluster::Sensor:
 ## Verification
 
 1. **Build**: `idf.py build`
-2. **LED Cycling**: 3 WS2812B LEDs cycle colors at 1-second intervals (timer-driven)
+2. **LED Cycling**: 3 WS2812B LEDs cycle colors at 100ms intervals via FastTimer (timer-driven)
 3. **BLE Sensor**: Use nRF Connect to scan for `ARCANA-ESP32`, subscribe to Temperature/Humidity notifications
 4. **BLE Command**: Write framed binary to 0xFF10, receive framed response on 0xFF11
 5. **MQTT Command**: Publish framed binary to `arcana/cmd`, subscribe to `arcana/rsp`

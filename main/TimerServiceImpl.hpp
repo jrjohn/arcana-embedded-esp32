@@ -24,6 +24,8 @@ private:
     static void periodic_timer_callback(void* arg);
 
     esp_timer_handle_t mTimer = nullptr;
+    uint32_t mBaseDivider = 1;
+    uint32_t mTickCount = 0;
 };
 
 } // namespace Timer

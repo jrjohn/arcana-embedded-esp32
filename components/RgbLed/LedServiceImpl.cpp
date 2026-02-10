@@ -21,7 +21,7 @@ namespace Arcana {
 namespace Led {
 
 LedServiceImpl::LedServiceImpl() {
-    output.LedObservable = new Observable<LedFrame>("LedSvc Observable");
+    output.LedObservable = new Observable<LedFrame>("LedSvc Observable", 20, 3072);
 
     ESP_LOGI(TAG, "Created (output Observable allocated)");
 }

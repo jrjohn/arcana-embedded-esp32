@@ -434,6 +434,7 @@ CONFIG_PARTITION_TABLE_MD5=y
 #
 # Arcana Timer Configuration
 #
+CONFIG_TIMER_FAST_INTERVAL_MS=100
 CONFIG_TIMER_BASE_INTERVAL_MS=1000
 # end of Arcana Timer Configuration
 

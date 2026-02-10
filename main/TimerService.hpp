@@ -10,6 +10,7 @@ namespace Timer {
 class TimerService {
 public:
     struct Output {
+        Observable<TimerTick>* FastTimer = nullptr;
         Observable<TimerTick>* BaseTimer = nullptr;
     };
 

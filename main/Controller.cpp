@@ -52,8 +52,8 @@ void Controller::wireServices() {
     mBridge  = &CommandBridgeServiceImpl::getInstance();
     mCommand = &Command::CommandService::Instance();
 
-    // Wire LED <- Timer
-    mLed->input.TimerEvents = mTimer->output.BaseTimer;
+    // Wire LED <- Timer (fast tick for smooth cycling)
+    mLed->input.TimerEvents = mTimer->output.FastTimer;
 
     // Wire BLE <- Sensor
     mBle->input.SensorDataEvents = mSensor->output.DataEvents;

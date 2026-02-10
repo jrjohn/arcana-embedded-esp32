@@ -1,12 +1,22 @@
 menu "Arcana Timer Configuration"
 
+    config TIMER_FAST_INTERVAL_MS
+        int "Fast timer interval (ms)"
+        default 100
+        range 10 1000
+        help
+            Interval in milliseconds for the fast periodic timer.
+            This is the esp_timer period. Services needing high-frequency
+            ticks (e.g. LED cycling) subscribe to FastTimer.
+
     config TIMER_BASE_INTERVAL_MS
         int "Base timer interval (ms)"
         default 1000
-        range 50 10000
+        range 100 10000
         help
             Interval in milliseconds for the base periodic timer.
-            All timer-driven services (e.g. LED cycling) subscribe to this tick.
+            Derived from the fast timer via a counter divider.
+            Must be a multiple of TIMER_FAST_INTERVAL_MS.
 
 endmenu
 
