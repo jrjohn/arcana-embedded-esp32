@@ -741,7 +741,8 @@ sequenceDiagram
     Note left of Server: payload = [server_pub:64][auth_tag:32]
     Note over Server: Install session key
 
-    Client<->>Server: Session-key encrypted commands
+    Client->>Server: Session-key encrypted commands
+    Server->>Client: Session-key encrypted responses
 ```
 
 ### Session Management
