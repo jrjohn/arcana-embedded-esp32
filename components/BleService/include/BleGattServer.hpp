@@ -5,6 +5,7 @@
 #include "Observable.hpp"
 
 #include "esp_gatts_api.h"
+#include "freertos/semphr.h"
 #include <vector>
 #include <utility>
 
@@ -52,6 +53,8 @@ private:
     esp_gatt_if_t mGattsIf;
     uint16_t mHandleTable[ATTR_COUNT];
     ServerClientInfo mClients[kMaxServerConnections];
+
+    mutable SemaphoreHandle_t mClientsMutex;
 
     int16_t mTemperature;   // Celsius * 100
     uint16_t mHumidity;     // Percent * 100

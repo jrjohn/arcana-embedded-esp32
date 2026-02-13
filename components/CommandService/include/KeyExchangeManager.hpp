@@ -35,7 +35,20 @@ public:
     bool InstallPendingSession(CommandSource source, uint16_t connId);
 
     // Lookup active session CryptoEngine (nullptr if none)
+    // WARNING: returned pointer is only safe if caller holds its own lock or
+    //          guarantees no concurrent RemoveSession/InstallPendingSession.
+    //          Prefer DecryptWithSession / EncryptWithSession for thread safety.
     CryptoEngine* GetSession(CommandSource source, uint16_t connId);
+
+    // Thread-safe decrypt/encrypt: holds mutex during the crypto operation.
+    // Returns false if no session found (caller should fall back to PSK).
+    bool DecryptWithSession(CommandSource source, uint16_t connId,
+                            const uint8_t* in, size_t inLen,
+                            uint8_t* plain, size_t plainBufSize, size_t& plainLen);
+
+    bool EncryptWithSession(CommandSource source, uint16_t connId,
+                            const uint8_t* plain, size_t plainLen,
+                            uint8_t* out, size_t outBufSize, size_t& outLen);
 
     // Remove session on disconnect
     void RemoveSession(CommandSource source, uint16_t connId);

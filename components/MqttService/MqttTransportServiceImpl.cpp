@@ -160,9 +160,15 @@ void MqttTransportServiceImpl::handleEvent(esp_mqtt_event_handle_t event) {
         if (event->topic_len > 0 && event->data_len > 0 &&
             strncmp(event->topic, mCmdTopic, event->topic_len) == 0 &&
             static_cast<size_t>(event->topic_len) == strlen(mCmdTopic)) {
-            MqttCommandEvent cmdEvt;
-            cmdEvt.Data = reinterpret_cast<const uint8_t*>(event->data);
-            cmdEvt.Len = static_cast<size_t>(event->data_len);
+            MqttCommandEvent cmdEvt{};
+            size_t dataLen = static_cast<size_t>(event->data_len);
+            if (dataLen > MqttCommandEvent::kMaxDataLen) {
+                ESP_LOGW(TAG, "MQTT cmd data too large: %zu > %zu, dropping",
+                         dataLen, MqttCommandEvent::kMaxDataLen);
+                break;
+            }
+            memcpy(cmdEvt.Data, event->data, dataLen);
+            cmdEvt.Len = dataLen;
             output.CommandEvents->Notify(cmdEvt);
         }
         break;

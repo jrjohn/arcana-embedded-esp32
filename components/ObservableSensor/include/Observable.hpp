@@ -205,7 +205,10 @@ public:
     void Notify(const T& Data) {
         if (mQueue) {
             // Async mode: post to queue, task will dispatch
-            xQueueSend(mQueue, &Data, 0);
+            if (xQueueSend(mQueue, &Data, 0) != pdTRUE) {
+                ESP_LOGW("Observable", "Event dropped: queue full (%s)",
+                         mName ? mName : "unnamed");
+            }
             return;
         }
 

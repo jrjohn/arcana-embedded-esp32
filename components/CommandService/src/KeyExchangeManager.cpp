@@ -88,6 +88,28 @@ bool KeyExchangeManager::HkdfSha256(const uint8_t* ikm, size_t ikmLen,
 bool KeyExchangeManager::PerformKeyExchange(CommandSource source, uint16_t connId,
                                              const uint8_t clientPub[64],
                                              uint8_t serverPub[64], uint8_t authTag[32]) {
+    // Reject if session already active or pending for this source/connId
+    xSemaphoreTake(mMutex, portMAX_DELAY);
+    for (int i = 0; i < kMaxSessions; ++i) {
+        if (mSessions[i].Active &&
+            mSessions[i].Source == source &&
+            mSessions[i].ConnId == connId) {
+            xSemaphoreGive(mMutex);
+            ESP_LOGW(TAG, "Session already active for source=%d connId=%u, rejecting KE",
+                     static_cast<int>(source), connId);
+            return false;
+        }
+    }
+    if (mPending.Valid &&
+        mPending.Source == source &&
+        mPending.ConnId == connId) {
+        xSemaphoreGive(mMutex);
+        ESP_LOGW(TAG, "KeyExchange already pending for source=%d connId=%u",
+                 static_cast<int>(source), connId);
+        return false;
+    }
+    xSemaphoreGive(mMutex);
+
     // Initialize RNG
     mbedtls_entropy_context entropy;
     mbedtls_ctr_drbg_context ctrDrbg;
@@ -284,6 +306,44 @@ CryptoEngine* KeyExchangeManager::GetSession(CommandSource source, uint16_t conn
 
     xSemaphoreGive(mMutex);
     return nullptr;
+}
+
+bool KeyExchangeManager::DecryptWithSession(CommandSource source, uint16_t connId,
+                                             const uint8_t* in, size_t inLen,
+                                             uint8_t* plain, size_t plainBufSize, size_t& plainLen) {
+    xSemaphoreTake(mMutex, portMAX_DELAY);
+
+    for (int i = 0; i < kMaxSessions; ++i) {
+        if (mSessions[i].Active &&
+            mSessions[i].Source == source &&
+            mSessions[i].ConnId == connId) {
+            bool ok = mSessions[i].Engine.Decrypt(in, inLen, plain, plainBufSize, plainLen);
+            xSemaphoreGive(mMutex);
+            return ok;
+        }
+    }
+
+    xSemaphoreGive(mMutex);
+    return false;
+}
+
+bool KeyExchangeManager::EncryptWithSession(CommandSource source, uint16_t connId,
+                                             const uint8_t* plain, size_t plainLen,
+                                             uint8_t* out, size_t outBufSize, size_t& outLen) {
+    xSemaphoreTake(mMutex, portMAX_DELAY);
+
+    for (int i = 0; i < kMaxSessions; ++i) {
+        if (mSessions[i].Active &&
+            mSessions[i].Source == source &&
+            mSessions[i].ConnId == connId) {
+            bool ok = mSessions[i].Engine.Encrypt(plain, plainLen, out, outBufSize, outLen);
+            xSemaphoreGive(mMutex);
+            return ok;
+        }
+    }
+
+    xSemaphoreGive(mMutex);
+    return false;
 }
 
 void KeyExchangeManager::RemoveSession(CommandSource source, uint16_t connId) {

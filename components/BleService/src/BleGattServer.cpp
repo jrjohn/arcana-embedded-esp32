@@ -210,10 +210,13 @@ BleGattServer::BleGattServer()
     : mGattsIf(ESP_GATT_IF_NONE)
     , mHandleTable{}
     , mClients{}
+    , mClientsMutex(nullptr)
     , mTemperature(0)
     , mHumidity(0)
     , mSensorStatus(0)
 {
+    mClientsMutex = xSemaphoreCreateMutex();
+    configASSERT(mClientsMutex != nullptr);
 }
 
 esp_err_t BleGattServer::Init() {
@@ -262,6 +265,7 @@ void BleGattServer::HandleGattsEvent(esp_gatts_cb_event_t event, esp_gatt_if_t g
             param->connect.remote_bda[2], param->connect.remote_bda[3],
             param->connect.remote_bda[4], param->connect.remote_bda[5]);
 
+        xSemaphoreTake(mClientsMutex, portMAX_DELAY);
         ServerClientInfo* slot = FindFreeSlot();
         if (slot) {
             slot->Connected = true;
@@ -273,6 +277,7 @@ void BleGattServer::HandleGattsEvent(esp_gatts_cb_event_t event, esp_gatt_if_t g
         } else {
             ESP_LOGW(TAG, "Max clients reached, no slot available");
         }
+        xSemaphoreGive(mClientsMutex);
 
         // Update connection parameters
         esp_ble_conn_update_params_t connParams = {};
@@ -296,7 +301,9 @@ void BleGattServer::HandleGattsEvent(esp_gatts_cb_event_t event, esp_gatt_if_t g
         ESP_LOGI(TAG, "Client disconnected, conn_id=%d, reason=0x%x",
             param->disconnect.conn_id, param->disconnect.reason);
 
+        xSemaphoreTake(mClientsMutex, portMAX_DELAY);
         RemoveClient(param->disconnect.conn_id);
+        xSemaphoreGive(mClientsMutex);
 
         BleConnectionEvent evt;
         evt.Role = BleRole::Server;
@@ -317,49 +324,75 @@ void BleGattServer::HandleGattsEvent(esp_gatts_cb_event_t event, esp_gatt_if_t g
         if (handle == mHandleTable[ATTR_TEMP_CCCD]) {
             if (param->write.len == 2) {
                 uint16_t cccdVal = param->write.value[0] | (param->write.value[1] << 8);
+                xSemaphoreTake(mClientsMutex, portMAX_DELAY);
                 ServerClientInfo* client = FindClient(param->write.conn_id);
                 if (client) {
                     client->TempCccdEnabled = (cccdVal == 0x0001);
                     ESP_LOGI(TAG, "Temperature CCCD: conn_id=%d enabled=%d",
                         param->write.conn_id, client->TempCccdEnabled);
                 }
+                xSemaphoreGive(mClientsMutex);
             }
         }
         // Check if writing to Humidity CCCD
         else if (handle == mHandleTable[ATTR_HUMID_CCCD]) {
             if (param->write.len == 2) {
                 uint16_t cccdVal = param->write.value[0] | (param->write.value[1] << 8);
+                xSemaphoreTake(mClientsMutex, portMAX_DELAY);
                 ServerClientInfo* client = FindClient(param->write.conn_id);
                 if (client) {
                     client->HumidCccdEnabled = (cccdVal == 0x0001);
                     ESP_LOGI(TAG, "Humidity CCCD: conn_id=%d enabled=%d",
                         param->write.conn_id, client->HumidCccdEnabled);
                 }
+                xSemaphoreGive(mClientsMutex);
             }
         }
         // Check if writing to Response CCCD
         else if (handle == mHandleTable[ATTR_RSP_CCCD]) {
             if (param->write.len == 2) {
                 uint16_t cccdVal = param->write.value[0] | (param->write.value[1] << 8);
+                xSemaphoreTake(mClientsMutex, portMAX_DELAY);
                 ServerClientInfo* client = FindClient(param->write.conn_id);
                 if (client) {
                     client->RspCccdEnabled = (cccdVal == 0x0001);
                     ESP_LOGI(TAG, "Response CCCD: conn_id=%d enabled=%d",
                         param->write.conn_id, client->RspCccdEnabled);
                 }
+                xSemaphoreGive(mClientsMutex);
             }
         }
         // Check if writing to Command characteristic
         else if (handle == mHandleTable[ATTR_CMD_VAL]) {
+            // Reject BLE Prepare Write (partial/queued writes)
+            if (param->write.is_prep) {
+                ESP_LOGW(TAG, "Prepare write rejected on CMD: conn_id=%d",
+                    param->write.conn_id);
+                if (param->write.need_rsp) {
+                    esp_ble_gatts_send_response(gattsIf, param->write.conn_id,
+                        param->write.trans_id, ESP_GATT_REQ_NOT_SUPPORTED, nullptr);
+                }
+                break;
+            }
+
+            // Reject zero-length writes
+            if (param->write.len == 0 || !param->write.value) {
+                ESP_LOGW(TAG, "Zero-length CMD write rejected: conn_id=%d",
+                    param->write.conn_id);
+                if (param->write.need_rsp) {
+                    esp_ble_gatts_send_response(gattsIf, param->write.conn_id,
+                        param->write.trans_id, ESP_GATT_INVALID_ATTR_LEN, nullptr);
+                }
+                break;
+            }
+
             ESP_LOGI(TAG, "Command write: conn_id=%d len=%d",
                 param->write.conn_id, param->write.len);
 
-            if (param->write.len > 0 && param->write.value) {
-                std::vector<uint8_t> data(param->write.value,
-                                           param->write.value + param->write.len);
-                BleCommandWriteEvent evt = std::make_pair(param->write.conn_id, std::move(data));
-                mCommandWriteEvents.Notify(evt);
-            }
+            std::vector<uint8_t> data(param->write.value,
+                                       param->write.value + param->write.len);
+            BleCommandWriteEvent evt = std::make_pair(param->write.conn_id, std::move(data));
+            mCommandWriteEvents.Notify(evt);
 
             // Send write response for RSP_BY_APP
             if (param->write.need_rsp) {
@@ -421,26 +454,33 @@ void BleGattServer::UpdateSensorStatus(uint8_t status) {
 void BleGattServer::SendCommandResponse(uint16_t connId, const uint8_t* data, uint16_t len) {
     if (mGattsIf == ESP_GATT_IF_NONE) return;
 
+    xSemaphoreTake(mClientsMutex, portMAX_DELAY);
     ServerClientInfo* client = FindClient(connId);
-    if (client && client->RspCccdEnabled) {
+    bool shouldSend = (client && client->RspCccdEnabled);
+    xSemaphoreGive(mClientsMutex);
+
+    if (shouldSend) {
         esp_ble_gatts_send_indicate(mGattsIf, connId,
             mHandleTable[ATTR_RSP_VAL], len, const_cast<uint8_t*>(data), false);
     }
 }
 
 uint8_t BleGattServer::GetConnectionCount() const {
+    xSemaphoreTake(mClientsMutex, portMAX_DELAY);
     uint8_t count = 0;
     for (const auto& client : mClients) {
         if (client.Connected) {
             ++count;
         }
     }
+    xSemaphoreGive(mClientsMutex);
     return count;
 }
 
 void BleGattServer::NotifyTemperature() {
     if (mGattsIf == ESP_GATT_IF_NONE) return;
 
+    xSemaphoreTake(mClientsMutex, portMAX_DELAY);
     for (auto& client : mClients) {
         if (client.Connected && client.TempCccdEnabled) {
             esp_ble_gatts_send_indicate(mGattsIf, client.ConnId,
@@ -448,11 +488,13 @@ void BleGattServer::NotifyTemperature() {
                 sizeof(mTemperature), (uint8_t*)&mTemperature, false);
         }
     }
+    xSemaphoreGive(mClientsMutex);
 }
 
 void BleGattServer::NotifyHumidity() {
     if (mGattsIf == ESP_GATT_IF_NONE) return;
 
+    xSemaphoreTake(mClientsMutex, portMAX_DELAY);
     for (auto& client : mClients) {
         if (client.Connected && client.HumidCccdEnabled) {
             esp_ble_gatts_send_indicate(mGattsIf, client.ConnId,
@@ -460,6 +502,7 @@ void BleGattServer::NotifyHumidity() {
                 sizeof(mHumidity), (uint8_t*)&mHumidity, false);
         }
     }
+    xSemaphoreGive(mClientsMutex);
 }
 
 ServerClientInfo* BleGattServer::FindClient(uint16_t connId) {

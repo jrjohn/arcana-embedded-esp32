@@ -16,6 +16,7 @@ public:
     static constexpr size_t   kHeaderLen = 7;   // magic(2) + ver(1) + flags(1) + sid(1) + len(2)
     static constexpr size_t   kCrcLen    = 2;
     static constexpr size_t   kOverhead  = kHeaderLen + kCrcLen; // 9
+    static constexpr size_t   kMaxPayloadLen = 300; // Max encrypted response: 277 (pb) + 12 (crypto) = 289
 
     // Flags
     static constexpr uint8_t  kFlagFin  = 0x01; // Bit 0: last frame in stream
@@ -89,6 +90,18 @@ public:
         // Read length (LE uint16)
         uint16_t len = static_cast<uint16_t>(frame[5]) |
                        (static_cast<uint16_t>(frame[6]) << 8);
+
+        // Reject zero-length payload
+        if (len == 0) {
+            ESP_LOGW(kTag, "Zero-length payload");
+            return false;
+        }
+
+        // Reject oversized payload
+        if (len > kMaxPayloadLen) {
+            ESP_LOGW(kTag, "Payload exceeds max: %u > %zu", len, kMaxPayloadLen);
+            return false;
+        }
 
         // Validate total frame size
         const size_t expectedLen = kHeaderLen + len + kCrcLen;

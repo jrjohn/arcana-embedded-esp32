@@ -42,6 +42,8 @@ private:
     mbedtls_ccm_context mCtx{};
     uint8_t mNoncePrefix[kNoncePrefixLen]{};
     uint32_t mTxCounter = 0;
+    uint32_t mRxCounter = 0;         // Highest accepted RX counter
+    bool mRxCounterInitialized = false; // First RX sets baseline
     bool mInitialized = false;
 
     void BuildNonce(uint32_t counter, uint8_t nonce[kNonceLen]) const;

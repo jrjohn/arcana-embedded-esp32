@@ -28,9 +28,6 @@ private:
     bool mEncryptionEnabled = false;
     CryptoEngine mCrypto;                       // PSK-based engine
     KeyExchangeManager* mKeyExchangeMgr = nullptr;
-
-    // Returns session CryptoEngine if available, else nullptr (falls back to PSK)
-    CryptoEngine* SelectEngine(CommandSource source, uint16_t connId);
 };
 
 } // namespace Command

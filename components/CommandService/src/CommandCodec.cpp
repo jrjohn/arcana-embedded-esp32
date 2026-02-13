@@ -12,6 +12,10 @@ static const char* TAG = "CommandCodec";
 namespace Arcana {
 namespace Command {
 
+// Compile-time: ensure FrameCodec payload limit accommodates max encrypted response
+static_assert(FrameCodec::kMaxPayloadLen >= arcana_CmdResponse_size + CryptoEngine::kOverhead,
+              "kMaxPayloadLen must accommodate max encrypted response");
+
 esp_err_t CommandCodec::Init() {
 #ifdef CONFIG_CMD_ENCRYPTION_ENABLED
     mEncryptionEnabled = true;
@@ -37,14 +41,6 @@ esp_err_t CommandCodec::Init() {
     return ESP_OK;
 }
 
-CryptoEngine* CommandCodec::SelectEngine(CommandSource source, uint16_t connId) {
-    if (mKeyExchangeMgr) {
-        CryptoEngine* session = mKeyExchangeMgr->GetSession(source, connId);
-        if (session) return session;
-    }
-    return nullptr; // caller should fall back to PSK
-}
-
 bool CommandCodec::DecodeRequest(CommandSource source, uint16_t connId,
                                   const uint8_t* data, size_t len,
                                   CommandRequest& out) {
@@ -66,11 +62,11 @@ bool CommandCodec::DecodeRequest(CommandSource source, uint16_t connId,
         size_t plainLen = 0;
         bool decrypted = false;
 
-        // Try session key first
-        CryptoEngine* session = SelectEngine(source, connId);
-        if (session) {
-            decrypted = session->Decrypt(framePayload, framePayloadLen,
-                                         plainBuf, sizeof(plainBuf), plainLen);
+        // Try session key first (mutex-protected, no dangling pointer)
+        if (mKeyExchangeMgr) {
+            decrypted = mKeyExchangeMgr->DecryptWithSession(
+                source, connId, framePayload, framePayloadLen,
+                plainBuf, sizeof(plainBuf), plainLen);
         }
 
         // Fallback to PSK
@@ -91,6 +87,16 @@ bool CommandCodec::DecodeRequest(CommandSource source, uint16_t connId,
     pb_istream_t stream = pb_istream_from_buffer(pbData, pbLen);
     if (!pb_decode(&stream, arcana_CmdRequest_fields, &msg)) {
         ESP_LOGW(TAG, "Protobuf decode failed: %s", PB_GET_ERROR(&stream));
+        return false;
+    }
+
+    // Validate cluster and command range before narrowing cast
+    if (msg.cluster > 0xFF) {
+        ESP_LOGW(TAG, "Cluster out of range: 0x%x", (unsigned)msg.cluster);
+        return false;
+    }
+    if (msg.command > 0xFF) {
+        ESP_LOGW(TAG, "Command out of range: 0x%x", (unsigned)msg.command);
         return false;
     }
 
@@ -146,18 +152,22 @@ bool CommandCodec::EncodeResponse(const CommandResponse& rsp,
                                 rsp.Command == SecurityCmd::KeyExchange &&
                                 rsp.Status == kStatusOk);
 
+        bool encrypted = false;
+
         // KeyExchange response ALWAYS uses PSK (session not yet installed)
-        CryptoEngine* engine = nullptr;
-        if (!isKeyExchangeOk) {
-            engine = SelectEngine(rsp.Source, rsp.ConnectionId);
-        }
-        if (!engine) {
-            engine = &mCrypto; // PSK fallback
+        // Otherwise try session key first (mutex-protected, no dangling pointer)
+        if (!isKeyExchangeOk && mKeyExchangeMgr) {
+            encrypted = mKeyExchangeMgr->EncryptWithSession(
+                rsp.Source, rsp.ConnectionId,
+                pbBuf, pbLen, innerBuf, sizeof(innerBuf), innerLen);
         }
 
-        if (!engine->Encrypt(pbBuf, pbLen, innerBuf, sizeof(innerBuf), innerLen)) {
-            ESP_LOGW(TAG, "Encryption failed");
-            return false;
+        // PSK fallback
+        if (!encrypted) {
+            if (!mCrypto.Encrypt(pbBuf, pbLen, innerBuf, sizeof(innerBuf), innerLen)) {
+                ESP_LOGW(TAG, "Encryption failed");
+                return false;
+            }
         }
 
         // After encrypting a successful KeyExchange response, install the session

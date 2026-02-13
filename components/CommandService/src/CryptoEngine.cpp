@@ -42,6 +42,8 @@ esp_err_t CryptoEngine::Init(const uint8_t key[kKeyLen]) {
     memcpy(mNoncePrefix, hash, kNoncePrefixLen);
 
     mTxCounter = 0;
+    mRxCounter = 0;
+    mRxCounterInitialized = false;
     mInitialized = true;
 
     ESP_LOGI(TAG, "Initialized (tag=%zu bytes, nonce=%zu bytes)", kTagLen, kNonceLen);
@@ -66,6 +68,11 @@ bool CryptoEngine::Encrypt(const uint8_t* plain, size_t plainLen,
     size_t needed = kCounterLen + plainLen + kTagLen;
     if (outBufSize < needed) {
         ESP_LOGW(TAG, "Output buffer too small: need %zu, have %zu", needed, outBufSize);
+        return false;
+    }
+
+    if (mTxCounter == UINT32_MAX) {
+        ESP_LOGE(TAG, "TX counter exhausted, refusing encryption (nonce reuse risk)");
         return false;
     }
 
@@ -121,6 +128,14 @@ bool CryptoEngine::Decrypt(const uint8_t* in, size_t inLen,
                      | (static_cast<uint32_t>(in[2]) << 16)
                      | (static_cast<uint32_t>(in[3]) << 24);
 
+    // Replay protection: reject if counter not strictly increasing
+    if (mRxCounterInitialized && counter <= mRxCounter) {
+        ESP_LOGW(TAG, "Replay detected: counter=%lu <= last=%lu",
+                 static_cast<unsigned long>(counter),
+                 static_cast<unsigned long>(mRxCounter));
+        return false;
+    }
+
     uint8_t nonce[kNonceLen];
     BuildNonce(counter, nonce);
 
@@ -137,6 +152,10 @@ bool CryptoEngine::Decrypt(const uint8_t* in, size_t inLen,
                  static_cast<unsigned long>(counter));
         return false;
     }
+
+    // Update RX counter watermark only after successful decrypt+auth
+    mRxCounter = counter;
+    mRxCounterInitialized = true;
 
     plainLen = ciphertextLen;
     return true;

@@ -41,7 +41,7 @@
 | 2 | **Task ownership rule** | ServiceImpl never calls `xTaskCreate`. Observable owns dispatch tasks; `esp_timer` owns periodic behavior. Concurrency management is centralized, not scattered across services |
 | 3 | **Dual-rate TimerService** | Single `esp_timer` at 100ms with counter divider for 1000ms. Services choose FastTimer or BaseTimer based on their needs. Adding a new rate is one divider counter away |
 | 4 | **Unified command pipeline** | BLE and MQTT share identical wire format (Frame + protobuf + AES-256-CCM). Single CommandCodec handles both transports |
-| 5 | **Perfect Forward Secrecy** | ECDH P-256 session keys are independent of PSK; compromised PSK does not expose past sessions. Per-connection isolation (4 slots) |
+| 5 | **Perfect Forward Secrecy** | ECDH P-256 session keys are independent of PSK; compromised PSK does not expose past sessions. Per-connection isolation (4 slots). Duplicate KeyExchange requests rejected (prevents CPU exhaustion and session overwrite) |
 | 6 | **Two-stage event pipelines** | Sensor/Timer events flow: sync Observable (producer task) -> async Observable (dedicated dispatch task), cleanly decoupling producers from consumers |
 | 7 | **4-phase Controller lifecycle** | `wireServices -> initHAL -> initServices -> startServices` with SNTP init between WiFi and service start. Late-wiring pattern for bridge inputs ensures dependencies are initialized first |
 | 8 | **Protocol layering** | Frame (magic + CRC) / Encryption (AES-CCM) / Serialization (protobuf) -- each layer is independently testable and transport-agnostic |
@@ -49,19 +49,26 @@
 | 10 | **Sensor data fan-out** | Single `SensorDataEvents` Observable feeds 3 subscribers (BLE GATT notify, LCD display, MQTT JSON publish) with zero coupling between consumers. Adding a new subscriber is one `input.SensorDataEvents` wire |
 | 11 | **Credentials separation** | WiFi SSID/password and MQTT broker IP stored in gitignored `sdkconfig.credentials`, auto-layered via CMake `SDKCONFIG_DEFAULTS`. No secrets in repository; `sdkconfig.credentials.example` provides template |
 | 12 | **NTP time sync** | SNTP initialized after WiFi, before MQTT start. Non-blocking background sync ensures MQTT sensor payloads carry Unix epoch timestamps instead of boot-relative milliseconds |
+| 13 | **Replay protection** | CryptoEngine tracks RX counter watermark per session; decrypted frames with counter <= last accepted are rejected. Prevents replay of intercepted encrypted commands |
+| 14 | **Defense-in-depth frame validation** | FrameCodec rejects zero-length payloads and payloads exceeding `kMaxPayloadLen` (300 bytes) before CRC check. Compile-time `static_assert` ensures limit accommodates max encrypted response (289 bytes). Rejects garbage at the earliest layer |
+| 15 | **Value-semantic async events** | All types passed through async Observable queues are POD/value types. `MqttCommandEvent` uses fixed-size `uint8_t[298]` array (not pointer), eliminating use-after-free risk from MQTT buffer recycling |
+| 16 | **Nonce exhaustion guard** | TX counter checked against `UINT32_MAX` before encryption; refuses to encrypt when counter exhausted, preventing nonce reuse that would break AES-CCM confidentiality |
+| 17 | **Mutex-protected crypto sessions** | `DecryptWithSession` / `EncryptWithSession` hold `KeyExchangeManager` mutex during the entire crypto operation. Eliminates raw-pointer use-after-free when `RemoveSession` races with decrypt/encrypt on another task |
+| 18 | **BLE client slot thread safety** | `BleGattServer::mClientsMutex` serializes all `mClients[]` access across BTC task (GATTS events), sensor task (`NotifyTemperature`/`NotifyHumidity`), and command response task (`SendCommandResponse`). Prevents cross-core cache incoherence on dual-core ESP32 |
+| 19 | **BLE Prepare Write rejection** | Command characteristic rejects `is_prep` writes with `ESP_GATT_REQ_NOT_SUPPORTED` and zero-length writes with `ESP_GATT_INVALID_ATTR_LEN`, preventing partial frame injection and protocol confusion |
+| 20 | **Compile-time wire size validation** | `static_assert(kMaxPayloadLen >= arcana_CmdResponse_size + CryptoEngine::kOverhead)` in CommandCodec catches payload size mismatches at compile time. Guarantees FrameCodec limit always accommodates the largest legal encrypted response |
+| 21 | **Protobuf field range validation** | Cluster and command values validated `<= 0xFF` after protobuf decode, before narrowing `static_cast`. Prevents attacker from sending `cluster=0x100` to truncate to `0x00` and bypass command dispatch |
 
 ### Cons
 
 | # | Issue | Severity | Details | Location |
 |---|-------|----------|---------|----------|
-| 1 | **`MqttCommandEvent` raw pointer** | **High** | `MqttCommandEvent` stores `const uint8_t* Data` pointing into MQTT event buffer. The Observable is async (queue), but `xQueueSend` does `memcpy` of the struct -- copying the pointer, not the data. If dispatch happens after MQTT recycles the buffer: **use-after-free**. Fix: replace with `uint8_t Data[298]` and `memcpy` in handler | `MqttTypes.hpp:10` |
-| 2 | **`SensorError` contains `std::string`** | **High** | `SensorError::Message` is `std::string`. Passing through FreeRTOS queue (`xQueueSend` does raw `memcpy`) would bypass copy constructor, causing double-free. Latent bug -- fires when sensor errors actually occur. `SensorErrorV` (variant version with `char[64]`) exists but is not used. Fix: switch to `SensorErrorV` | `SensorTypes.hpp:107` |
-| 3 | **7 async Observables = 7 FreeRTOS tasks** | Medium | Each named Observable creates a task + queue. 7 Observables consume ~21 KB DRAM (stacks + TCBs + queues). On ESP32 with ~200 KB free DRAM this is ~10% just for event dispatch | All `new Observable<T>("name")` calls |
-| 4 | **Silent event drops on queue full** | Medium | `xQueueSend(mQueue, &Data, 0)` uses timeout=0: if queue (depth=20) is full, events are silently dropped with no log or metric. At 100ms fast timer rate, a slow subscriber could miss ticks | `Observable.hpp:208` |
-| 5 | **LED double queue hop** | Low | Each LED frame traverses two async queues: `esp_timer -> FastTimer queue -> LED callback -> LedObservable queue -> hardware callback`. Adds ~2ms latency per hop. Acceptable for LED cycling but would matter for latency-sensitive subscribers | `LedServiceImpl.cpp` |
-| 6 | **`CommandService` naming inconsistency** | Low | Uses `Instance()` / `Start()` / `Stop()` (PascalCase) while all other services use `getInstance()` / `start()` / `stop()` (camelCase). Controller calls `mCommand->Start()` vs `mLed->start()` | `CommandService.hpp`, `Controller.cpp` |
-| 7 | **Unnecessary `static_cast`** | Low | Controller casts `*mBle` to `BleTransportServiceImpl&` to call `server()`, but `server()` is already `virtual` on the abstract base `BleTransportService` | `Controller.cpp` |
-| 8 | **Duplicate Kconfig MQTT topics** | Low | `CommandService/Kconfig` defines `CMD_MQTT_CMD_TOPIC` / `CMD_MQTT_RSP_TOPIC`. `MqttService/Kconfig` defines `MQTT_SVC_CMD_TOPIC` / `MQTT_SVC_RSP_TOPIC`. Only the latter are used in code. The former are dead config | `CommandService/Kconfig` |
+| 1 | **`SensorError` contains `std::string`** | **High** | `SensorError::Message` is `std::string`. Passing through FreeRTOS queue (`xQueueSend` does raw `memcpy`) would bypass copy constructor, causing double-free. Latent bug -- fires when sensor errors actually occur. `SensorErrorV` (variant version with `char[64]`) exists but is not used. Fix: switch to `SensorErrorV` | `SensorTypes.hpp:107` |
+| 2 | **8 async Observables = 8 FreeRTOS tasks** | Medium | Each named Observable creates a task + queue. 8 Observables consume ~22 KB DRAM (stacks + TCBs + queues). On ESP32 with ~200 KB free DRAM this is ~11% just for event dispatch | All `new Observable<T>("name")` calls |
+| 3 | **LED double queue hop** | Low | Each LED frame traverses two async queues: `esp_timer -> FastTimer queue -> LED callback -> LedObservable queue -> hardware callback`. Adds ~2ms latency per hop. Acceptable for LED cycling but would matter for latency-sensitive subscribers | `LedServiceImpl.cpp` |
+| 4 | **`CommandService` naming inconsistency** | Low | Uses `Instance()` / `Start()` / `Stop()` (PascalCase) while all other services use `getInstance()` / `start()` / `stop()` (camelCase). Controller calls `mCommand->Start()` vs `mLed->start()` | `CommandService.hpp`, `Controller.cpp` |
+| 5 | **Unnecessary `static_cast`** | Low | Controller casts `*mBle` to `BleTransportServiceImpl&` to call `server()`, but `server()` is already `virtual` on the abstract base `BleTransportService` | `Controller.cpp` |
+| 6 | **Duplicate Kconfig MQTT topics** | Low | `CommandService/Kconfig` defines `CMD_MQTT_CMD_TOPIC` / `CMD_MQTT_RSP_TOPIC`. `MqttService/Kconfig` defines `MQTT_SVC_CMD_TOPIC` / `MQTT_SVC_RSP_TOPIC`. Only the latter are used in code. The former are dead config | `CommandService/Kconfig` |
 
 ### Resolved Issues
 
@@ -70,6 +77,19 @@
 | 1 | Controller skips Bridge lifecycle | Bridge `init()` now called in `initServices()`. `init_HAL()` and `start()` intentionally skipped -- Bridge is purely reactive with no hardware or async tasks |
 | 2 | MQTT demo code auto-disconnects | Removed all demo topics, unsubscribe-triggered disconnect, and dummy credentials. Clean MQTT5 client with auto-reconnect |
 | 3 | Hardcoded WiFi/MQTT credentials | Moved to gitignored `sdkconfig.credentials` with CMake overlay |
+| 4 | `MqttCommandEvent` use-after-free | Replaced raw pointer `const uint8_t* Data` with fixed-size value array `uint8_t Data[298]`. Handler validates `data_len <= kMaxDataLen` and `memcpy` into struct before async queue dispatch |
+| 5 | No replay protection on encrypted commands | Added RX counter watermark in `CryptoEngine`. `Decrypt()` rejects frames with `counter <= mRxCounter`. Watermark updated only after successful decrypt+auth verify |
+| 6 | KeyExchange duplicate request accepted | `PerformKeyExchange()` now checks for existing active session and pending session for same source/connId before ECDH computation. Prevents CPU exhaustion DoS and session overwrite race |
+| 7 | Frame length field unbounded | Added `kMaxPayloadLen` constant and explicit bounds check in `FrameCodec::Deframe()`. Tightened from 512 to 300 bytes (max encrypted response = 289). `static_assert` validates at compile time |
+| 8 | Zero-length payload accepted by FrameCodec | Added `len == 0` rejection in `Deframe()` before CRC validation |
+| 9 | Silent event drops on Observable queue full | `Notify()` now checks `xQueueSend` return value and logs `ESP_LOGW` with Observable name when queue is full |
+| 10 | TX counter overflow causes nonce reuse | `Encrypt()` rejects when `mTxCounter == UINT32_MAX`, preventing AES-CCM nonce reuse after 2^32 messages |
+| 11 | `GetSession` returns dangling `CryptoEngine*` | Added `DecryptWithSession` / `EncryptWithSession` to `KeyExchangeManager` -- hold mutex during crypto operation. `CommandCodec` no longer uses raw pointer from `GetSession`; `SelectEngine` removed |
+| 12 | BLE Prepare Write accepted as complete frame | Command write handler checks `param->write.is_prep` and rejects with `ESP_GATT_REQ_NOT_SUPPORTED`. Prevents BLE partial write from being processed as full command frame |
+| 13 | Protobuf cluster/cmd truncation bypass | `CommandCodec::DecodeRequest` validates `msg.cluster <= 0xFF` and `msg.command <= 0xFF` after protobuf decode, before narrowing `static_cast`. Prevents silent truncation of out-of-range values |
+| 14 | `mClients` cross-thread access without mutex | Added `mClientsMutex` to `BleGattServer`. All `mClients` access (CONNECT/DISCONNECT/CCCD handlers, `NotifyTemperature`, `NotifyHumidity`, `SendCommandResponse`, `GetConnectionCount`) protected by mutex |
+| 15 | Zero-length BLE CMD write returns GATT_OK | Command write handler rejects `len==0` with `ESP_GATT_INVALID_ATTR_LEN` error response instead of silently acknowledging |
+| 16 | `kMaxPayloadLen` too generous (512 bytes) | Tightened to 300 bytes. Max legitimate encrypted payload = 289 bytes (277 protobuf + 12 crypto overhead). Added `static_assert` in `CommandCodec.cpp` for compile-time validation |
 
 ### Trade-offs
 
