@@ -8,6 +8,7 @@
 #include "CommandBridgeServiceImpl.hpp"
 #include "protocol_examples_common.h"
 #include "esp_log.h"
+#include "esp_netif_sntp.h"
 
 static const char* TAG = "Controller";
 
@@ -38,6 +39,11 @@ void Controller::run() {
     // Wi-Fi must be up before MQTT
     ESP_ERROR_CHECK(example_connect());
 
+    // Sync time via SNTP (non-blocking, runs in background)
+    esp_sntp_config_t sntp_cfg = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
+    ESP_ERROR_CHECK(esp_netif_sntp_init(&sntp_cfg));
+    ESP_LOGI(TAG, "SNTP initialized (pool.ntp.org)");
+
     startServices();
 
     ESP_LOGI(TAG, "All services running");
@@ -62,6 +68,9 @@ void Controller::wireServices() {
 
     // Wire BLE <- Sensor
     mBle->input.SensorDataEvents = mSensor->output.DataEvents;
+
+    // Wire MQTT <- Sensor (publish temperature/humidity)
+    mMqtt->input.SensorDataEvents = mSensor->output.DataEvents;
 
     // Wire Command <- Sensor
     mCommand->input.Sensor = mSensor->output.Sensor;
@@ -114,7 +123,7 @@ void Controller::initServices() {
     // LCD init (subscribes to sensor data)
     ESP_ERROR_CHECK(mLcd->init());
 
-    // MQTT init (no dependencies)
+    // MQTT init (subscribes to sensor data)
     ESP_ERROR_CHECK(mMqtt->init());
 
     ESP_LOGI(TAG, "Services initialized");

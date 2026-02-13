@@ -239,7 +239,7 @@ private:
 | **TimerService** | (none) | `FastTimer` (100ms), `BaseTimer` (1000ms) | `esp_timer` fires at fast rate; counter divider produces base rate |
 | **SensorService** | (none) | `DataEvents`, `ErrorEvents`, `Sensor*` | ObservableSensor creates FreeRTOS task |
 | **BleTransportService** | `SensorDataEvents` | `ConnectionEvents`, `CommandWriteEvents` | Bluedroid stack tasks |
-| **MqttTransportService** | (none) | `CommandEvents`, `ConnectionStatus` | esp_mqtt_client task |
+| **MqttTransportService** | `SensorDataEvents` | `CommandEvents`, `ConnectionStatus` | esp_mqtt_client task |
 | **LedService** | `TimerEvents` | `LedObservable` | No own task; timer-driven |
 | **CommandService** | `Sensor*` | `ResponseEvents`, `KeyExchangeMgr`, `Factory` | EventQueue creates async task |
 | **CommandBridgeService** | 8 fields (BLE+MQTT+Command) | (none) | Purely reactive (subscription callbacks) |
@@ -915,12 +915,29 @@ cd arcana-embedded-esp32
 # Set up ESP-IDF environment
 source ~/.espressif/v5.5.2/esp-idf/export.sh
 
+# Configure credentials (required on first clone)
+cp sdkconfig.credentials.example sdkconfig.credentials
+# Edit sdkconfig.credentials with your Wi-Fi and MQTT settings
+
 # Build
 idf.py build
 
 # Flash and monitor
 idf.py -p /dev/ttyUSB0 flash monitor
 ```
+
+### Credentials
+
+Wi-Fi and MQTT broker settings are stored in `sdkconfig.credentials` which is **gitignored**.
+
+| File | Purpose | Git |
+|------|---------|-----|
+| `sdkconfig.defaults` | Base config (BT, partition, etc.) | Committed |
+| `sdkconfig.credentials.example` | Template for credentials | Committed |
+| `sdkconfig.credentials` | **Your Wi-Fi SSID/password, MQTT broker IP** | **Gitignored** |
+| `sdkconfig` | Full generated config (build output) | Gitignored |
+
+`CMakeLists.txt` loads `sdkconfig.defaults` then overlays `sdkconfig.credentials` automatically. Values in credentials override the placeholder defaults in Kconfig.
 
 ### Configuration
 
@@ -944,7 +961,8 @@ idf.py menuconfig
 | | PSK (64 hex chars) | `0011...EEFF` |
 | **MQTT Service** | Cmd Topic | `arcana/cmd` |
 | | Rsp Topic | `arcana/rsp` |
-| **MQTT Configuration** | Broker URL | `mqtt://mqtt.eclipse.org` |
+| **MQTT Configuration** | Broker URL | (via `sdkconfig.credentials`) |
+| **WiFi** | SSID / Password | (via `sdkconfig.credentials`) |
 
 ---
 
@@ -1026,7 +1044,10 @@ arcana-embedded-esp32/
 |   +-- CMakeLists.txt / Kconfig.projbuild / idf_component.yml
 |
 +-- partitions.csv                       # Custom partition table (~4MB app)
-+-- sdkconfig
++-- sdkconfig.defaults                   # Base config (committed)
++-- sdkconfig.credentials.example        # Credentials template (committed)
++-- sdkconfig.credentials                # Your Wi-Fi/MQTT secrets (gitignored)
++-- sdkconfig                            # Generated full config (gitignored)
 +-- CMakeLists.txt                       # Project config (MINIMAL_BUILD)
 +-- README.md
 ```

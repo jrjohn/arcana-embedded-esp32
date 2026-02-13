@@ -1,6 +1,7 @@
 #pragma once
 
 #include "MqttTypes.hpp"
+#include "SensorTypes.hpp"
 #include "Observable.hpp"
 #include "mqtt_client.h"
 #include "esp_err.h"
@@ -10,7 +11,9 @@ namespace Mqtt {
 
 class MqttTransportService {
 public:
-    struct Input {};
+    struct Input {
+        Observable<Sensor::SensorData>* SensorDataEvents = nullptr;
+    };
 
     struct Output {
         Observable<MqttCommandEvent>* CommandEvents = nullptr;

@@ -10,6 +10,8 @@ sdkconfig.old
 *~
 
 # ESP-IDF
+sdkconfig
+sdkconfig.credentials
 managed_components/
 dependencies.lock
 
