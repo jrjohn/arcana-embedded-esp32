@@ -5,6 +5,7 @@
 #include "LedServiceImpl.hpp"
 #include "LcdServiceImpl.hpp"
 #include "TimerServiceImpl.hpp"
+#include "DiagnosticServiceImpl.hpp"
 #include "CommandBridgeServiceImpl.hpp"
 #include "protocol_examples_common.h"
 #include "esp_log.h"
@@ -59,9 +60,13 @@ void Controller::wireServices() {
     mLcd     = &Lcd::LcdServiceImpl::getInstance();
     mBridge  = &CommandBridgeServiceImpl::getInstance();
     mCommand = &Command::CommandService::Instance();
+    mDiag    = &Diagnostic::DiagnosticServiceImpl::getInstance();
 
     // Wire LED <- Timer (base tick for 1-second cycling)
     mLed->input.TimerEvents = mTimer->output.BaseTimer;
+
+    // Wire Diagnostic <- Timer (base tick for 10-second interval)
+    mDiag->input.TimerEvents = mTimer->output.BaseTimer;
 
     // Wire LCD <- Sensor (display temperature/humidity)
     mLcd->input.SensorDataEvents = mSensor->output.DataEvents;
@@ -126,6 +131,9 @@ void Controller::initServices() {
     // MQTT init (subscribes to sensor data)
     ESP_ERROR_CHECK(mMqtt->init());
 
+    // Diagnostic init (subscribes to timer for periodic logging)
+    ESP_ERROR_CHECK(mDiag->init());
+
     ESP_LOGI(TAG, "Services initialized");
 }
 
@@ -137,6 +145,7 @@ void Controller::startServices() {
     ESP_ERROR_CHECK(mLed->start());
     ESP_ERROR_CHECK(mLcd->start());
     ESP_ERROR_CHECK(mMqtt->start());
+    ESP_ERROR_CHECK(mDiag->start());
 
     ESP_LOGI(TAG, "Services started");
 }

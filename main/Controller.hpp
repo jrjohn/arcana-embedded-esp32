@@ -8,6 +8,7 @@
 #include "CommandService.hpp"
 #include "TimerService.hpp"
 #include "LcdService.hpp"
+#include "DiagnosticService.hpp"
 
 namespace Arcana {
 
@@ -36,6 +37,7 @@ private:
     CommandBridgeService* mBridge = nullptr;
     Lcd::LcdService* mLcd = nullptr;
     Command::CommandService* mCommand = nullptr;
+    Diagnostic::DiagnosticService* mDiag = nullptr;
 };
 
 } // namespace Arcana
