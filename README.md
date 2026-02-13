@@ -101,15 +101,15 @@
 ```mermaid
 graph TB
     subgraph APP["APPLICATION LAYER"]
-        Timer["TimerService\n(Arcana::Timer)\nesp_timer →\nFastTimer 100ms\nBaseTimer 1000ms"]
-        Sensor["SensorService\n(Arcana::Sensor)\nDhtSensor →\nDataEvents · ErrorEvents\n[RTOS Task]"]
-        Led["LedService\n(Arcana::Led)\nInput: TimerEvents\nOutput: LedObservable"]
-        Lcd["LcdService\n(Arcana::Lcd)\nSSD1306 OLED I2C"]
-        Ble["BleTransportService\n(Arcana::Ble)\nBleGap · GattServer · GattClient"]
-        Mqtt["MqttTransportService\n(Arcana::Mqtt)\nMQTT5 Client\nSensorData → JSON\nCommandEvents · ConnectionStatus"]
+        Timer["TimerService<br/>(Arcana::Timer)<br/>esp_timer →<br/>FastTimer 100ms<br/>BaseTimer 1000ms"]
+        Sensor["SensorService<br/>(Arcana::Sensor)<br/>DhtSensor →<br/>DataEvents · ErrorEvents<br/>[RTOS Task]"]
+        Led["LedService<br/>(Arcana::Led)<br/>Input: TimerEvents<br/>Output: LedObservable"]
+        Lcd["LcdService<br/>(Arcana::Lcd)<br/>SSD1306 OLED I2C"]
+        Ble["BleTransportService<br/>(Arcana::Ble)<br/>BleGap · GattServer · GattClient"]
+        Mqtt["MqttTransportService<br/>(Arcana::Mqtt)<br/>MQTT5 Client<br/>SensorData → JSON<br/>CommandEvents · ConnectionStatus"]
         RgbLed["RgbLed (WS2812B)"]
-        Bridge["CommandBridgeService\nBLE cmds + MQTT cmds\nResponses + Connections"]
-        Command["CommandService\n(Arcana::Command)\nCommandDispatcher EventQueue‹10›\nCommandFactory 9 ICommand impls\nCommandCodec Frame+PB+AES-256\nKeyExchangeManager ECDH P-256"]
+        Bridge["CommandBridgeService<br/>BLE cmds + MQTT cmds<br/>Responses + Connections"]
+        Command["CommandService<br/>(Arcana::Command)<br/>CommandDispatcher EventQueue‹10›<br/>CommandFactory 9 ICommand impls<br/>CommandCodec Frame+PB+AES-256<br/>KeyExchangeManager ECDH P-256"]
     end
 
     Timer -->|BaseTimer| Led
@@ -117,31 +117,31 @@ graph TB
     Sensor -->|DataEvents| Ble
     Sensor -->|DataEvents| Lcd
     Sensor -->|DataEvents| Mqtt
-    Ble -->|"ConnectionEvents\nCommandWriteEvents"| Bridge
-    Mqtt -->|"CommandEvents\nConnectionStatus"| Bridge
+    Ble -->|"ConnectionEvents<br/>CommandWriteEvents"| Bridge
+    Mqtt -->|"CommandEvents<br/>ConnectionStatus"| Bridge
     Bridge --> Command
     Command -->|ResponseEvents| Bridge
 
     subgraph PROTO["PROTOCOL LAYER"]
         direction LR
-        P1["Application\nCommandRequest / CommandResponse"] --> P2["Serialization\nnanopb protobuf"]
-        P2 --> P3["Encryption\nAES-256-CCM\ncounter:4 · cipher · tag:8"]
-        P3 --> P4["Framing\nmagic:2 · ver:1 · flags:1\nsid:1 · len:2 · payload · crc:2"]
-        P4 --> P5["Transport\nBLE / MQTT / UART / TCP"]
+        P1["Application<br/>CommandRequest / CommandResponse"] --> P2["Serialization<br/>nanopb protobuf"]
+        P2 --> P3["Encryption<br/>AES-256-CCM<br/>counter:4 · cipher · tag:8"]
+        P3 --> P4["Framing<br/>magic:2 · ver:1 · flags:1<br/>sid:1 · len:2 · payload · crc:2"]
+        P4 --> P5["Transport<br/>BLE / MQTT / UART / TCP"]
     end
 
     Command --> P1
 
     subgraph SYS["SYSTEM LAYER"]
         WiFi["WiFi (esp_wifi)"]
-        BT["Bluedroid BLE Stack\nGAP · GATTS · GATTC"]
+        BT["Bluedroid BLE Stack<br/>GAP · GATTS · GATTC"]
         Coex["WiFi + BLE Coexistence"]
     end
 
     WiFi --> Coex
     BT --> Coex
 
-    subgraph HW["FreeRTOS KERNEL + ESP32 HARDWARE\n520KB SRAM / 4MB Flash / RMT / GPIO"]
+    subgraph HW["FreeRTOS KERNEL + ESP32 HARDWARE<br/>520KB SRAM / 4MB Flash / RMT / GPIO"]
         RTOS["FreeRTOS Kernel"]
         ESP32["ESP32 Hardware"]
     end
@@ -166,28 +166,28 @@ graph TB
 
 ```mermaid
 graph TD
-    Main["main\nController, TimerService, CommandBridge"] --> esp_timer
+    Main["main<br/>Controller, TimerService, CommandBridge"] --> esp_timer
     Main --> CS["CommandService"]
     Main --> RGB["RgbLed"]
     Main --> MQTT["MqttService"]
-    Main --> PEC["protocol_examples_common\nWiFi helpers"]
+    Main --> PEC["protocol_examples_common<br/>WiFi helpers"]
 
-    CS --> mbedtls["mbedtls\nAES-256-CCM, ECDH, HMAC, SHA-256"]
-    CS --> esp_hw["esp_hw_support\nCRC-16 ROM acceleration"]
+    CS --> mbedtls["mbedtls<br/>AES-256-CCM, ECDH, HMAC, SHA-256"]
+    CS --> esp_hw["esp_hw_support<br/>CRC-16 ROM acceleration"]
     CS --> BLE["BleService"]
     CS --> OS_r1["ObservableSensor (reused)"]
-    CS --> nanopb["nanopb\nmanaged component"]
+    CS --> nanopb["nanopb<br/>managed component"]
 
     BLE --> bt["bt (Bluedroid)"]
     BLE --> nvs["nvs_flash"]
     BLE --> evt["esp_event"]
-    BLE --> OS["ObservableSensor\nfoundation component"]
+    BLE --> OS["ObservableSensor<br/>foundation component"]
 
     OS --> freertos
     OS --> et2["esp_timer"]
     OS --> drv["driver"]
 
-    RGB --> drv2["driver\nRMT for WS2812B"]
+    RGB --> drv2["driver<br/>RMT for WS2812B"]
     RGB --> et3["esp_timer"]
     RGB --> OS_r2["ObservableSensor (reused)"]
 
@@ -264,12 +264,12 @@ flowchart TD
     B --> C["esp_netif_init()"]
     C --> D["esp_event_loop_create_default()"]
     D --> E["Controller::getInstance().run()"]
-    E --> F["wireServices()\nPhase 0: get singletons, wire I/O pointers"]
-    F --> G["initHAL()\nPhase 1: hardware peripherals"]
-    G --> H["initServices()\nPhase 2: subscriptions + logic"]
-    H --> I["example_connect()\nWiFi must be up before MQTT"]
-    I --> J["esp_netif_sntp_init\nSNTP time sync, non-blocking"]
-    J --> K["startServices()\nPhase 3: activate all services"]
+    E --> F["wireServices()<br/>Phase 0: get singletons, wire I/O pointers"]
+    F --> G["initHAL()<br/>Phase 1: hardware peripherals"]
+    G --> H["initServices()<br/>Phase 2: subscriptions + logic"]
+    H --> I["example_connect()<br/>WiFi must be up before MQTT"]
+    I --> J["esp_netif_sntp_init<br/>SNTP time sync, non-blocking"]
+    J --> K["startServices()<br/>Phase 3: activate all services"]
 ```
 
 ### Phase 0: wireServices()
@@ -351,16 +351,16 @@ mMqtt->start()         // MQTT5 client connects to broker
 
 ```mermaid
 flowchart TD
-    A["esp_timer periodic callback\nevery 100ms, timer task context"] --> B["TimerServiceImpl::\nperiodic_timer_callback()"]
-    B --> C["output.FastTimer→Notify\nasync: TimerSvc FastTimer 3072B"]
-    C --> D["LedServiceImpl\nsubscribed in init"]
+    A["esp_timer periodic callback<br/>every 100ms, timer task context"] --> B["TimerServiceImpl::<br/>periodic_timer_callback()"]
+    B --> C["output.FastTimer→Notify<br/>async: TimerSvc FastTimer 3072B"]
+    C --> D["LedServiceImpl<br/>subscribed in init"]
     D --> E{"mRunning?"}
-    E -->|Yes| F["build LedFrame\ncycle color index"]
-    F --> G["output.LedObservable→Notify\nasync: LedSvc Observable 3072B"]
+    E -->|Yes| F["build LedFrame<br/>cycle color index"]
+    F --> G["output.LedObservable→Notify<br/>async: LedSvc Observable 3072B"]
     G --> H["LedServiceImpl self-subscription"]
-    H --> I["RgbLed::SetColor + Show\nRMT peripheral"]
+    H --> I["RgbLed::SetColor + Show<br/>RMT peripheral"]
     B --> J["every 10th tick"]
-    J --> K["output.BaseTimer→Notify\nsync: TimerSvc BaseTimer"]
+    J --> K["output.BaseTimer→Notify<br/>sync: TimerSvc BaseTimer"]
     K --> L["future subscribers at 1000ms rate"]
 ```
 
@@ -368,19 +368,19 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A["ObservableSensor task\nperiodic ReadHardware"] --> B["DhtSensor::ReadHardware\nGPIO bit-banging, critical section"]
-    B --> C["mDataObservable.Notify\nsync, sensor task"]
-    C --> D["SensorServiceImpl\nsubscribed in init"]
-    D --> E["output.DataEvents→Notify\nasync: SensorSvc DataEvents"]
+    A["ObservableSensor task<br/>periodic ReadHardware"] --> B["DhtSensor::ReadHardware<br/>GPIO bit-banging, critical section"]
+    B --> C["mDataObservable.Notify<br/>sync, sensor task"]
+    C --> D["SensorServiceImpl<br/>subscribed in init"]
+    D --> E["output.DataEvents→Notify<br/>async: SensorSvc DataEvents"]
     E --> F["BleTransportServiceImpl"]
     E --> G["LcdServiceImpl"]
     E --> H["MqttTransportServiceImpl"]
-    F --> F1["BleGattServer::\nUpdateTemperature / UpdateHumidity"]
-    F1 --> F2["esp_ble_gatts_send_indicate\nper client"]
-    G --> G1["Ssd1306::DrawStringAt\ntemperature + humidity"]
+    F --> F1["BleGattServer::<br/>UpdateTemperature / UpdateHumidity"]
+    F1 --> F2["esp_ble_gatts_send_indicate<br/>per client"]
+    G --> G1["Ssd1306::DrawStringAt<br/>temperature + humidity"]
     G1 --> G2["Ssd1306::Display (I2C)"]
-    H --> H1["snprintf JSON\ntemperature, humidity, timestamp"]
-    H1 --> H2["esp_mqtt_client_publish\narcana/sensor"]
+    H --> H1["snprintf JSON<br/>temperature, humidity, timestamp"]
+    H1 --> H2["esp_mqtt_client_publish<br/>arcana/sensor"]
 ```
 
 ### BLE Command -> Response
@@ -430,8 +430,8 @@ sequenceDiagram
 ```mermaid
 flowchart LR
     A["BLE disconnect event"] --> B["ConnectionEvents→Notify"]
-    B --> C["CommandBridgeServiceImpl\nsubscribed in init"]
-    C --> D["KeyExchangeManager::\nRemoveSession(BLE, connId)"]
+    B --> C["CommandBridgeServiceImpl<br/>subscribed in init"]
+    C --> D["KeyExchangeManager::<br/>RemoveSession(BLE, connId)"]
 ```
 
 ---
@@ -542,12 +542,12 @@ flowchart TB
     BLE["BLE Write (0xFF10)"] --> Deframe
     MQTT["MQTT (arcana/cmd)"] --> Deframe
 
-    Deframe["FrameCodec::Deframe\nverify magic + version + CRC-16"]
-    Deframe --> Decode["CommandCodec.DecodeRequest\ncounter:4 · ciphertext:N · tag:8 → protobuf\nsession key → PSK fallback"]
-    Decode --> Dispatch["CommandDispatcher (EventQueue)\nCommandFactory.Create()"]
-    Dispatch --> Execute["ICommand.Execute()\n→ CommandResponse"]
-    Execute --> Encode["CommandCodec.EncodeResponse\nprotobuf → counter:4 · ciphertext:N · tag:8"]
-    Encode --> Frame["FrameCodec::Frame\nwrap with magic + version + length + CRC-16"]
+    Deframe["FrameCodec::Deframe<br/>verify magic + version + CRC-16"]
+    Deframe --> Decode["CommandCodec.DecodeRequest<br/>counter:4 · ciphertext:N · tag:8 → protobuf<br/>session key → PSK fallback"]
+    Decode --> Dispatch["CommandDispatcher (EventQueue)<br/>CommandFactory.Create()"]
+    Dispatch --> Execute["ICommand.Execute()<br/>→ CommandResponse"]
+    Execute --> Encode["CommandCodec.EncodeResponse<br/>protobuf → counter:4 · ciphertext:N · tag:8"]
+    Encode --> Frame["FrameCodec::Frame<br/>wrap with magic + version + length + CRC-16"]
 
     Frame --> BLEOut["BLE Notify (0xFF11)"]
     Frame --> MQTTOut["MQTT (arcana/rsp)"]
@@ -688,17 +688,17 @@ flowchart TB
     subgraph RX["RECEIVE (Decode)"]
         direction TB
         R1["Raw bytes from BLE/MQTT/UART"]
-        R1 --> R2["FrameCodec::Deframe()\nCheck magic 0xAC 0xDA · version 0x01\nRead flags + stream ID + length\nVerify CRC-16"]
+        R1 --> R2["FrameCodec::Deframe()<br/>Check magic 0xAC 0xDA · version 0x01<br/>Read flags + stream ID + length<br/>Verify CRC-16"]
         R2 --> R3["payload pointer + length + flags + streamId"]
-        R3 --> R4["CommandCodec::DecodeRequest()\nEncrypted: session key → PSK fallback\nStrip counter:4, decrypt, verify tag:8\nDecode protobuf"]
+        R3 --> R4["CommandCodec::DecodeRequest()<br/>Encrypted: session key → PSK fallback<br/>Strip counter:4, decrypt, verify tag:8<br/>Decode protobuf"]
         R4 --> R5["CommandRequest struct"]
     end
 
     subgraph TX["SEND (Encode)"]
         direction TB
         S1["CommandResponse struct"]
-        S1 --> S2["CommandCodec::EncodeResponse()\nEncode protobuf\nIf encrypted: AES-256-CCM\n→ counter:4 · ciphertext:N · tag:8"]
-        S2 --> S3["FrameCodec::Frame()\nHeader: 0xAC 0xDA · 0x01 · flags · SID · length\nCopy payload · Append CRC-16"]
+        S1 --> S2["CommandCodec::EncodeResponse()<br/>Encode protobuf<br/>If encrypted: AES-256-CCM<br/>→ counter:4 · ciphertext:N · tag:8"]
+        S2 --> S3["FrameCodec::Frame()<br/>Header: 0xAC 0xDA · 0x01 · flags · SID · length<br/>Copy payload · Append CRC-16"]
         S3 --> S4["Send framed bytes via BLE/MQTT/UART"]
     end
 ```
@@ -847,11 +847,11 @@ Asynchronous mode is used for all service-level Observables (decouples producers
 
 ```mermaid
 graph TD
-    IModel["IModel\ninterface, runtime type ID without RTTI"]
-    IModel --> SensorData["SensorData\nValue, Temperature, Humidity, Quality, Timestamp"]
-    IModel --> SensorError["SensorError\nErrorCode, Message"]
-    IModel --> ThresholdEvent["ThresholdEvent\nHigh/Low, Value, Threshold"]
-    IModel --> LifecycleEvent["LifecycleEvent\nStarted/Stopped/Initialized/Deinitialized"]
+    IModel["IModel<br/>interface, runtime type ID without RTTI"]
+    IModel --> SensorData["SensorData<br/>Value, Temperature, Humidity, Quality, Timestamp"]
+    IModel --> SensorError["SensorError<br/>ErrorCode, Message"]
+    IModel --> ThresholdEvent["ThresholdEvent<br/>High/Low, Value, Threshold"]
+    IModel --> LifecycleEvent["LifecycleEvent<br/>Started/Stopped/Initialized/Deinitialized"]
 ```
 
 ---
