@@ -37,30 +37,39 @@
 
 | # | Strength | Details |
 |---|----------|---------|
-| 1 | **Service pattern with Input/Output wiring** | Services declare typed dependencies as struct fields; Controller wires Observable pointers at startup, achieving compile-time dependency injection without a DI framework |
+| 1 | **Service pattern with Input/Output wiring** | Services declare typed dependencies as struct fields; Controller wires Observable pointers at startup, achieving compile-time dependency injection without a DI framework. All 8 services (Timer, Sensor, BLE, MQTT, LED, LCD, Command, Bridge) follow this pattern consistently |
 | 2 | **Task ownership rule** | ServiceImpl never calls `xTaskCreate`. Observable owns dispatch tasks; `esp_timer` owns periodic behavior. Concurrency management is centralized, not scattered across services |
 | 3 | **Dual-rate TimerService** | Single `esp_timer` at 100ms with counter divider for 1000ms. Services choose FastTimer or BaseTimer based on their needs. Adding a new rate is one divider counter away |
 | 4 | **Unified command pipeline** | BLE and MQTT share identical wire format (Frame + protobuf + AES-256-CCM). Single CommandCodec handles both transports |
 | 5 | **Perfect Forward Secrecy** | ECDH P-256 session keys are independent of PSK; compromised PSK does not expose past sessions. Per-connection isolation (4 slots) |
 | 6 | **Two-stage event pipelines** | Sensor/Timer events flow: sync Observable (producer task) -> async Observable (dedicated dispatch task), cleanly decoupling producers from consumers |
-| 7 | **4-phase Controller lifecycle** | `wireServices -> initHAL -> initServices -> startServices` with explicit ordering rationale. Late-wiring pattern for bridge inputs ensures dependencies are initialized first |
+| 7 | **4-phase Controller lifecycle** | `wireServices -> initHAL -> initServices -> startServices` with SNTP init between WiFi and service start. Late-wiring pattern for bridge inputs ensures dependencies are initialized first |
 | 8 | **Protocol layering** | Frame (magic + CRC) / Encryption (AES-CCM) / Serialization (protobuf) -- each layer is independently testable and transport-agnostic |
 | 9 | **Extensibility** | Adding a command = 1 header-only class + 1 factory switch case. Adding a service = abstract base + singleton impl + wire in Controller |
+| 10 | **Sensor data fan-out** | Single `SensorDataEvents` Observable feeds 3 subscribers (BLE GATT notify, LCD display, MQTT JSON publish) with zero coupling between consumers. Adding a new subscriber is one `input.SensorDataEvents` wire |
+| 11 | **Credentials separation** | WiFi SSID/password and MQTT broker IP stored in gitignored `sdkconfig.credentials`, auto-layered via CMake `SDKCONFIG_DEFAULTS`. No secrets in repository; `sdkconfig.credentials.example` provides template |
+| 12 | **NTP time sync** | SNTP initialized after WiFi, before MQTT start. Non-blocking background sync ensures MQTT sensor payloads carry Unix epoch timestamps instead of boot-relative milliseconds |
 
 ### Cons
 
 | # | Issue | Severity | Details | Location |
 |---|-------|----------|---------|----------|
-| 1 | **7 async Observables = 7 FreeRTOS tasks** | Medium | Each named Observable creates a task + queue. 7 Observables consume ~16 KB stack RAM (2x3072 + 5x2048) + 7 TCBs (~504B) + 7 queues. On ESP32 with ~200 KB free DRAM this is ~9% just for event dispatch | All `new Observable<T>("name")` calls |
-| 2 | **LED double queue hop** | Low | Each LED frame traverses two async queues: `esp_timer -> FastTimer queue -> LED callback -> LedObservable queue -> hardware callback`. Adds ~2ms latency per hop. Acceptable for LED cycling but would matter for latency-sensitive subscribers | `LedServiceImpl.cpp:61,70,79` |
-| 3 | **`MqttCommandEvent` raw pointer** | **High** | `MqttCommandEvent` stores `const uint8_t* Data` pointing into MQTT event buffer. The Observable is async (queue), but `xQueueSend` does `memcpy` of the struct -- copying the pointer, not the data. If dispatch happens after MQTT recycles the buffer: **use-after-free** | `MqttTypes.hpp:10` |
-| 4 | **`SensorError` contains `std::string`** | **High** | `SensorError::Message` is `std::string`. Passing through FreeRTOS queue (`xQueueSend` does raw `memcpy`) would bypass copy constructor, causing double-free. Latent bug -- fires when sensor errors actually occur. `SensorErrorV` (variant version with `char[64]`) exists but is not used | `SensorTypes.hpp:107` |
-| 5 | **`CommandService` naming inconsistency** | Low | Uses `Instance()` / `Start()` / `Stop()` (PascalCase) while all other services use `getInstance()` / `start()` / `stop()` (camelCase). Controller calls `mCommand->Start()` vs `mLed->start()` | `CommandService.hpp:29,33-34`, `Controller.cpp:118` |
-| 6 | **Controller skips Bridge lifecycle** | Low | `mBridge->init_HAL()` and `mBridge->start()` are never called. Harmless (both are no-ops) but breaks the pattern symmetry of calling all 4 lifecycle methods on every service | `Controller.cpp:67-76,114-122` |
-| 7 | **Unnecessary `static_cast`** | Low | Controller casts `*mBle` to `BleTransportServiceImpl&` to call `server()`, but `server()` is already `virtual` on the abstract base `BleTransportService` | `Controller.cpp:100` |
-| 8 | **Silent event drops on queue full** | Medium | `xQueueSend(mQueue, &Data, 0)` uses timeout=0: if queue (depth=20) is full, events are silently dropped with no log or metric. At 100ms fast timer rate, a slow subscriber could miss ticks | `Observable.hpp:208` |
-| 9 | **`CONFIG_RGB_LED_CYCLE_INTERVAL_MS` orphaned** | Low | Still defined in `RgbLed/Kconfig` and present in sdkconfig, but never referenced in code after timer refactor. Dead config | `RgbLed/Kconfig:17` |
-| 10 | **Duplicate Kconfig MQTT topics** | Low | `CommandService/Kconfig` defines `CMD_MQTT_CMD_TOPIC` / `CMD_MQTT_RSP_TOPIC`. `MqttService/Kconfig` defines `MQTT_SVC_CMD_TOPIC` / `MQTT_SVC_RSP_TOPIC`. Only the latter are used in code. The former are dead config | `CommandService/Kconfig:10,16` |
+| 1 | **`MqttCommandEvent` raw pointer** | **High** | `MqttCommandEvent` stores `const uint8_t* Data` pointing into MQTT event buffer. The Observable is async (queue), but `xQueueSend` does `memcpy` of the struct -- copying the pointer, not the data. If dispatch happens after MQTT recycles the buffer: **use-after-free**. Fix: replace with `uint8_t Data[298]` and `memcpy` in handler | `MqttTypes.hpp:10` |
+| 2 | **`SensorError` contains `std::string`** | **High** | `SensorError::Message` is `std::string`. Passing through FreeRTOS queue (`xQueueSend` does raw `memcpy`) would bypass copy constructor, causing double-free. Latent bug -- fires when sensor errors actually occur. `SensorErrorV` (variant version with `char[64]`) exists but is not used. Fix: switch to `SensorErrorV` | `SensorTypes.hpp:107` |
+| 3 | **7 async Observables = 7 FreeRTOS tasks** | Medium | Each named Observable creates a task + queue. 7 Observables consume ~21 KB DRAM (stacks + TCBs + queues). On ESP32 with ~200 KB free DRAM this is ~10% just for event dispatch | All `new Observable<T>("name")` calls |
+| 4 | **Silent event drops on queue full** | Medium | `xQueueSend(mQueue, &Data, 0)` uses timeout=0: if queue (depth=20) is full, events are silently dropped with no log or metric. At 100ms fast timer rate, a slow subscriber could miss ticks | `Observable.hpp:208` |
+| 5 | **LED double queue hop** | Low | Each LED frame traverses two async queues: `esp_timer -> FastTimer queue -> LED callback -> LedObservable queue -> hardware callback`. Adds ~2ms latency per hop. Acceptable for LED cycling but would matter for latency-sensitive subscribers | `LedServiceImpl.cpp` |
+| 6 | **`CommandService` naming inconsistency** | Low | Uses `Instance()` / `Start()` / `Stop()` (PascalCase) while all other services use `getInstance()` / `start()` / `stop()` (camelCase). Controller calls `mCommand->Start()` vs `mLed->start()` | `CommandService.hpp`, `Controller.cpp` |
+| 7 | **Unnecessary `static_cast`** | Low | Controller casts `*mBle` to `BleTransportServiceImpl&` to call `server()`, but `server()` is already `virtual` on the abstract base `BleTransportService` | `Controller.cpp` |
+| 8 | **Duplicate Kconfig MQTT topics** | Low | `CommandService/Kconfig` defines `CMD_MQTT_CMD_TOPIC` / `CMD_MQTT_RSP_TOPIC`. `MqttService/Kconfig` defines `MQTT_SVC_CMD_TOPIC` / `MQTT_SVC_RSP_TOPIC`. Only the latter are used in code. The former are dead config | `CommandService/Kconfig` |
+
+### Resolved Issues
+
+| # | Issue | Resolution |
+|---|-------|------------|
+| 1 | Controller skips Bridge lifecycle | Bridge `init()` now called in `initServices()`. `init_HAL()` and `start()` intentionally skipped -- Bridge is purely reactive with no hardware or async tasks |
+| 2 | MQTT demo code auto-disconnects | Removed all demo topics, unsubscribe-triggered disconnect, and dummy credentials. Clean MQTT5 client with auto-reconnect |
+| 3 | Hardcoded WiFi/MQTT credentials | Moved to gitignored `sdkconfig.credentials` with CMake overlay |
 
 ### Trade-offs
 
@@ -74,6 +83,7 @@
 | Custom Frame (not COBS/SLIP) | 9 bytes overhead | Includes version + flags + stream ID + magic for protocol detection; CRC covers entire frame |
 | 1 task per async Observable | 2-3 KB RAM per Observable | Clean decoupling; alternative would be shared thread pool with priority inversion risk |
 | TimerTypes in ObservableSensor | Foundation component grows | Avoids circular dependency between `main/` and component layer |
+| MQTT5 (not 3.1.1) | Slightly larger client | Supports user properties, reason codes, topic aliases for future use |
 
 ### Transport Compatibility
 
@@ -97,38 +107,39 @@
 |  | (Arcana::Timer)  |  | (Arcana::Sensor)  |  |  (Arcana::Led)       |   |
 |  |                  |  |                   |  |                      |   |
 |  | esp_timer ------>|  | DhtSensor ------->|  | Input: TimerEvents   |   |
-|  |  FastTimer 100ms |  |  DataEvents       |  | Output: LedObservable|   |
-|  |  BaseTimer 1000ms|  |                   |  |                      |   |
-|  +--------+---------+  |  ErrorEvents      |  +----------+-----------+   |
-|           |             |  [RTOS Task]      |             |              |
-|           |             +---+---------------+             |              |
-|           |                 |                             |              |
-|           |  +--------------v-----------+                 v              |
-|           |  |   BleTransportService    |        RgbLed (WS2812B)       |
-|           |  |   (Arcana::Ble)          |        RMT peripheral         |
-|           |  |                          |                               |
-|           |  |   BleGap (ADV/Scan)      |                               |
-|           |  |   BleGattServer (0x181A) |                               |
-|           |  |   BleGattClient          |                               |
-|           |  +-----+----+--------------+                                |
-|           |        |    |                                               |
-|  +--------+--------v----v-------------------------------------------+   |
-|  |              CommandBridgeService (main/)                        |   |
-|  |  Subscribes: BLE cmds + MQTT cmds + Responses + Connections      |   |
-|  |  Decodes/Encodes via CommandCodec, routes to/from transports     |   |
-|  +---------------------+-------------------------------------------+   |
-|                         |                                               |
-|  +---------------------v-------------------+  +---------------------+   |
-|  |        CommandService                   |  | MqttTransportService|   |
-|  |        (Arcana::Command)                |  | (Arcana::Mqtt)      |   |
-|  |                                         |  |                     |   |
-|  |  CommandDispatcher (EventQueue<10>)     |  | MQTT5 Client        |   |
-|  |  CommandFactory (9 ICommand impls)      |  | CommandEvents       |   |
-|  |  CommandCodec (Frame+PB+AES-256)        |  | ConnectionStatus    |   |
-|  |  KeyExchangeManager (ECDH P-256)        |  +---------------------+   |
-|  +------------------------------------------+                           |
-|                                                                          |
-+--------------------------------------------------------------------------+
+|  |  FastTimer 100ms |  |  DataEvents ------+->| Output: LedObservable|   |
+|  |  BaseTimer 1000ms|  |                   |  +----------+-----------+   |
+|  +--------+---------+  |  ErrorEvents      |             |              |
+|           |             |  [RTOS Task]      |             v              |
+|           |             +---+-----+---------+     RgbLed (WS2812B)      |
+|           |                 |     |                                      |
+|           |  +--------------v--+  |  +-------------------+              |
+|           |  | BleTransport   |  |  | LcdService        |              |
+|           |  | Service        |  +->| (Arcana::Lcd)     |              |
+|           |  | (Arcana::Ble)  |  |  | SSD1306 OLED I2C  |              |
+|           |  |                |  |  +-------------------+              |
+|           |  | BleGap         |  |                                      |
+|           |  | BleGattServer  |  |  +---------------------+            |
+|           |  | BleGattClient  |  +->| MqttTransportService|            |
+|           |  +-----+----+----+     | (Arcana::Mqtt)      |            |
+|           |        |    |          |                     |            |
+|  +--------+--------v----v---------+| MQTT5 Client        |            |
+|  |        CommandBridgeService    || SensorData -> JSON   |            |
+|  |  BLE cmds + MQTT cmds +       || CommandEvents        |            |
+|  |  Responses + Connections       || ConnectionStatus     |            |
+|  +---------------------+---------++-----------+----------+            |
+|                         |                      |                       |
+|  +---------------------v-------------------+   |                       |
+|  |        CommandService                   |   |                       |
+|  |        (Arcana::Command)                |   |                       |
+|  |                                         |   |                       |
+|  |  CommandDispatcher (EventQueue<10>)     |   |                       |
+|  |  CommandFactory (9 ICommand impls)      |   |                       |
+|  |  CommandCodec (Frame+PB+AES-256)        |   |                       |
+|  |  KeyExchangeManager (ECDH P-256)        |   |                       |
+|  +------------------------------------------+   |                       |
+|                                                  |                       |
++--------------------------------------------------+-----------------------+
 |                          PROTOCOL LAYER                                   |
 |                                                                          |
 |  Application     CommandRequest / CommandResponse                        |
@@ -170,7 +181,8 @@
 | `CommandService` | `Arcana::Command` | `CommandService` | Command pattern with protobuf + AES-256-CCM + ECDH |
 | `MqttService` | `Arcana::Mqtt` | `MqttTransportService` | MQTT5 client transport layer |
 | `RgbLed` | `Arcana::Led` | `LedService` | WS2812B RGB LED strip via RMT peripheral |
-| `main/` | `Arcana` / `Arcana::Timer` | `TimerService`, `CommandBridgeService`, `Controller` | App entry, wiring, timer, command bridge |
+| `OledDisplay` | `Arcana::Lcd` | `LcdService` | SSD1306 OLED I2C display for sensor data |
+| `main/` | `Arcana` / `Arcana::Timer` | `TimerService`, `CommandBridgeService`, `Controller` | App entry, wiring, timer, command bridge, SNTP |
 
 ### Component Dependency Graph
 
@@ -241,6 +253,7 @@ private:
 | **BleTransportService** | `SensorDataEvents` | `ConnectionEvents`, `CommandWriteEvents` | Bluedroid stack tasks |
 | **MqttTransportService** | `SensorDataEvents` | `CommandEvents`, `ConnectionStatus` | esp_mqtt_client task |
 | **LedService** | `TimerEvents` | `LedObservable` | No own task; timer-driven |
+| **LcdService** | `SensorDataEvents` | (none) | No own task; sensor-driven display |
 | **CommandService** | `Sensor*` | `ResponseEvents`, `KeyExchangeMgr`, `Factory` | EventQueue creates async task |
 | **CommandBridgeService** | 8 fields (BLE+MQTT+Command) | (none) | Purely reactive (subscription callbacks) |
 
@@ -274,6 +287,7 @@ Controller::run()
   initHAL()           Phase 1: hardware peripherals
   initServices()      Phase 2: subscriptions + logic
   example_connect()   WiFi must be up before MQTT
+  esp_netif_sntp_init SNTP time sync (non-blocking, background)
   startServices()     Phase 3: activate all services
 ```
 
@@ -291,9 +305,11 @@ mBridge  = &CommandBridgeServiceImpl::getInstance()
 mCommand = &CommandService::Instance()
 
 // Wire dependencies via Input structs
-mLed->input.TimerEvents      = mTimer->output.FastTimer
-mBle->input.SensorDataEvents = mSensor->output.DataEvents
-mCommand->input.Sensor        = mSensor->output.Sensor
+mLed->input.TimerEvents       = mTimer->output.BaseTimer
+mLcd->input.SensorDataEvents  = mSensor->output.DataEvents
+mBle->input.SensorDataEvents  = mSensor->output.DataEvents
+mMqtt->input.SensorDataEvents = mSensor->output.DataEvents
+mCommand->input.Sensor         = mSensor->output.Sensor
 ```
 
 Output Observables are allocated in constructors (`new Observable<T>("name")`), so pointers are valid here. Bridge wiring happens later (Phase 2) because its inputs depend on `init_HAL()` / `init()` populating BLE/MQTT/Command outputs.
@@ -305,6 +321,7 @@ mTimer->init_HAL()     // esp_timer_create(periodic callback)
 mSensor->init_HAL()    // DhtSensor static instance, output.Sensor = &dht
 mBle->init_HAL()       // BleService::Init(), sets output Observable pointers
 mLed->init_HAL()       // RgbLed RMT channel setup
+mLcd->init_HAL()       // SSD1306 OLED I2C initialization
 mMqtt->init_HAL()      // reads Kconfig topic
 ```
 
@@ -329,7 +346,8 @@ mBridge->input.BleServer              = &mBle->server()
 
 mBridge->init()        // subscribes to all 5 input event streams
 mLed->init()           // subscribes to TimerEvents + own LedObservable
-mMqtt->init()          // (no-op)
+mLcd->init()           // subscribes to SensorDataEvents for OLED display
+mMqtt->init()          // subscribes to SensorDataEvents, publishes JSON to arcana/sensor
 ```
 
 ### Phase 3: startServices()
@@ -340,7 +358,8 @@ mSensor->start()       // ObservableSensor FreeRTOS task starts reading
 mBle->start()          // BLE advertising begins
 mCommand->Start()      // CommandDispatcher async queue task starts
 mLed->start()          // sets mRunning=true (timer ticks now produce LED frames)
-mMqtt->start()         // MQTT client connects to broker
+mLcd->start()          // sets mRunning=true, shows startup screen
+mMqtt->start()         // MQTT5 client connects to broker
 ```
 
 ---
@@ -362,7 +381,7 @@ esp_timer periodic callback (every 100ms, timer task context)
       -> (future subscribers at 1000ms rate)
 ```
 
-### Sensor -> BLE Notifications
+### Sensor -> BLE + LCD + MQTT (Fan-out)
 
 ```
 ObservableSensor task (periodic ReadHardware)
@@ -371,8 +390,14 @@ ObservableSensor task (periodic ReadHardware)
     -> SensorServiceImpl (subscribed in init)
       -> output.DataEvents->Notify(data)             [async: "SensorSvc DataEvents"]
         -> BleTransportServiceImpl (subscribed in init)
-          -> BleGattServer::UpdateTemperature/UpdateHumidity
-          -> esp_ble_gatts_send_indicate() per client
+        |    -> BleGattServer::UpdateTemperature/UpdateHumidity
+        |    -> esp_ble_gatts_send_indicate() per client
+        -> LcdServiceImpl (subscribed in init)
+        |    -> Ssd1306::DrawStringAt() temperature + humidity
+        |    -> Ssd1306::Display() [I2C]
+        -> MqttTransportServiceImpl (subscribed in init)
+             -> snprintf JSON {"temperature":..,"humidity":..,"timestamp":..}
+             -> esp_mqtt_client_publish("arcana/sensor", json)
 ```
 
 ### BLE Command -> Response
