@@ -35,14 +35,14 @@ static const uint8_t sCharPropWrite      = ESP_GATT_CHAR_PROP_BIT_WRITE;
 static const uint8_t sCharPropNotify     = ESP_GATT_CHAR_PROP_BIT_NOTIFY;
 
 // Default CCCD value (notifications disabled)
-static uint16_t sCccdDefaultVal = 0x0000;
+static const uint16_t sCccdDefaultVal = 0x0000;
 
 // Default characteristic values
-static int16_t  sTempDefaultVal   = 0;
-static uint16_t sHumidDefaultVal  = 0;
-static uint8_t  sStatusDefaultVal = 0;
-static uint8_t  sCmdDefaultVal    = 0;
-static uint8_t  sRspDefaultVal    = 0;
+static const int16_t  sTempDefaultVal   = 0;
+static const uint16_t sHumidDefaultVal  = 0;
+static const uint8_t  sStatusDefaultVal = 0;
+static const uint8_t  sCmdDefaultVal    = 0;
+static const uint8_t  sRspDefaultVal    = 0;
 
 // Maximum command/response value length
 static constexpr uint16_t kCmdMaxLen = 131;  // 1 + 2 + 128 (funccode + len + payload)
@@ -430,7 +430,7 @@ void BleGattServer::UpdateTemperature(int16_t tempCenti) {
 
     // Update attribute value in local database
     esp_ble_gatts_set_attr_value(mHandleTable[ATTR_TEMP_VAL],
-        sizeof(mTemperature), (uint8_t*)&mTemperature);
+        sizeof(mTemperature), reinterpret_cast<uint8_t*>(&mTemperature));
 
     NotifyTemperature();
 }
@@ -439,7 +439,7 @@ void BleGattServer::UpdateHumidity(uint16_t humidCenti) {
     mHumidity = humidCenti;
 
     esp_ble_gatts_set_attr_value(mHandleTable[ATTR_HUMID_VAL],
-        sizeof(mHumidity), (uint8_t*)&mHumidity);
+        sizeof(mHumidity), reinterpret_cast<uint8_t*>(&mHumidity));
 
     NotifyHumidity();
 }
@@ -485,7 +485,7 @@ void BleGattServer::NotifyTemperature() {
         if (client.Connected && client.TempCccdEnabled) {
             esp_ble_gatts_send_indicate(mGattsIf, client.ConnId,
                 mHandleTable[ATTR_TEMP_VAL],
-                sizeof(mTemperature), (uint8_t*)&mTemperature, false);
+                sizeof(mTemperature), reinterpret_cast<uint8_t*>(&mTemperature), false);
         }
     }
     xSemaphoreGive(mClientsMutex);
@@ -499,7 +499,7 @@ void BleGattServer::NotifyHumidity() {
         if (client.Connected && client.HumidCccdEnabled) {
             esp_ble_gatts_send_indicate(mGattsIf, client.ConnId,
                 mHandleTable[ATTR_HUMID_VAL],
-                sizeof(mHumidity), (uint8_t*)&mHumidity, false);
+                sizeof(mHumidity), reinterpret_cast<uint8_t*>(&mHumidity), false);
         }
     }
     xSemaphoreGive(mClientsMutex);

@@ -25,19 +25,7 @@ static constexpr uint16_t kT1H = 9;   // 0.9µs
 static constexpr uint16_t kT1L = 3;   // 0.3µs
 static constexpr uint16_t kResetTicks = 2800;  // 280µs reset
 
-// Color table for cycling
-static constexpr Arcana::Led::Rgb kColors[] = {
-    {255,   0,   0},   // Red
-    {  0, 255,   0},   // Green
-    {  0,   0, 255},   // Blue
-    {255, 255,   0},   // Yellow
-    {  0, 255, 255},   // Cyan
-    {255,   0, 255},   // Magenta
-    {255, 128,   0},   // Orange
-    {128,   0, 255},   // Purple
-    {255, 255, 255},   // White
-};
-static constexpr size_t kColorCount = sizeof(kColors) / sizeof(kColors[0]);
+// Use shared color table from RgbLed.hpp (Arcana::Led::kCycleColors)
 
 /*******************************************************************************
  * Custom WS2812 RMT Encoder (bytes data + reset code)
@@ -78,7 +66,7 @@ static size_t ws2812_encode(rmt_encoder_t* encoder,
             return encoded_symbols;
         }
     }
-    // fall through
+    [[fallthrough]];
     case 1: {
         // Emit reset code (one symbol: LOW for ≥280µs)
         encoded_symbols += ws->copy_encoder->encode(
@@ -335,12 +323,12 @@ void RgbLed::CycleLoop() {
 
     while (!mShouldStop.load()) {
         for (uint16_t i = 0; i < mNumLeds; i++) {
-            const Rgb& c = kColors[(idx + i) % kColorCount];
+            const Rgb& c = kCycleColors[(idx + i) % kCycleColorCount];
             SetColor(c, i);
         }
         Show();
 
-        const Rgb& c0 = kColors[idx % kColorCount];
+        const Rgb& c0 = kCycleColors[idx % kCycleColorCount];
         ESP_LOGI(TAG, "LED[0]: R=%d G=%d B=%d", c0.R, c0.G, c0.B);
 
         idx++;

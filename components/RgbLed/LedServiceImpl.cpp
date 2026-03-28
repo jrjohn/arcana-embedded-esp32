@@ -3,19 +3,7 @@
 
 static const char* TAG = "LedService";
 
-// Color table for cycling
-static constexpr Arcana::Led::Rgb kColors[] = {
-    {255,   0,   0},   // Red
-    {  0, 255,   0},   // Green
-    {  0,   0, 255},   // Blue
-    {255, 255,   0},   // Yellow
-    {  0, 255, 255},   // Cyan
-    {255,   0, 255},   // Magenta
-    {255, 128,   0},   // Orange
-    {128,   0, 255},   // Purple
-    {255, 255, 255},   // White
-};
-static constexpr size_t kColorCount = sizeof(kColors) / sizeof(kColors[0]);
+// Use shared color table from RgbLed.hpp (Arcana::Led::kCycleColors)
 
 namespace Arcana {
 namespace Led {
@@ -65,7 +53,7 @@ esp_err_t LedServiceImpl::init() {
         LedFrame frame;
         frame.Count = numLeds;
         for (uint16_t i = 0; i < numLeds; i++) {
-            frame.Colors[i] = kColors[(mColorIndex + i) % kColorCount];
+            frame.Colors[i] = kCycleColors[(mColorIndex + i) % kCycleColorCount];
         }
         output.LedObservable->Notify(frame);
 

@@ -26,6 +26,20 @@ struct Rgb {
     constexpr Rgb(uint8_t r, uint8_t g, uint8_t b) : R(r), G(g), B(b) {}
 };
 
+// Predefined color table for cycling
+static constexpr Rgb kCycleColors[] = {
+    {255,   0,   0},   // Red
+    {  0, 255,   0},   // Green
+    {  0,   0, 255},   // Blue
+    {255, 255,   0},   // Yellow
+    {  0, 255, 255},   // Cyan
+    {255,   0, 255},   // Magenta
+    {255, 128,   0},   // Orange
+    {128,   0, 255},   // Purple
+    {255, 255, 255},   // White
+};
+static constexpr size_t kCycleColorCount = sizeof(kCycleColors) / sizeof(kCycleColors[0]);
+
 /**
  * @brief WS2812B RGB LED controller using RMT peripheral
  *

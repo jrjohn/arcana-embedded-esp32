@@ -7,15 +7,17 @@
 
 static const char* TAG = "MqttService";
 
-static void log_error_if_nonzero(const char *message, int error_code)
+namespace Arcana {
+namespace Mqtt {
+
+namespace {
+void log_error_if_nonzero(const char *message, int error_code)
 {
     if (error_code != 0) {
         ESP_LOGE(TAG, "Last error %s: 0x%x", message, error_code);
     }
 }
-
-namespace Arcana {
-namespace Mqtt {
+} // anonymous namespace
 
 MqttTransportServiceImpl::MqttTransportServiceImpl() {
     output.CommandEvents = new Observable<MqttCommandEvent>("MqttSvc CommandEvents");
@@ -121,20 +123,18 @@ void MqttTransportServiceImpl::eventHandler(void* handlerArgs, esp_event_base_t 
 }
 
 void MqttTransportServiceImpl::handleEvent(esp_mqtt_event_handle_t event) {
-    esp_mqtt_client_handle_t client = event->client;
-    int msg_id;
-
     switch (static_cast<esp_mqtt_event_id_t>(event->event_id)) {
-    case MQTT_EVENT_CONNECTED:
+    case MQTT_EVENT_CONNECTED: {
         ESP_LOGI(TAG, "MQTT_EVENT_CONNECTED");
 
         // Subscribe to command topic
-        msg_id = esp_mqtt_client_subscribe(client, mCmdTopic, 1);
+        int msg_id = esp_mqtt_client_subscribe(event->client, mCmdTopic, 1);
         ESP_LOGI(TAG, "Subscribed to command topic '%s', msg_id=%d", mCmdTopic, msg_id);
 
         // Notify connection status
         output.ConnectionStatus->Notify(MqttConnectionStatus{true});
         break;
+    }
 
     case MQTT_EVENT_DISCONNECTED:
         ESP_LOGI(TAG, "MQTT_EVENT_DISCONNECTED");

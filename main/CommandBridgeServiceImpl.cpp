@@ -1,13 +1,17 @@
 #include "CommandBridgeServiceImpl.hpp"
 #include "commands/GetMqttStatusCommand.hpp"
+#include "FrameCodec.hpp"
 #include "esp_log.h"
 
 static const char* TAG = "CommandBridge";
 
+// Max encoded response: protobuf + crypto overhead + frame overhead
+static constexpr size_t kMaxEncodedResponseLen = FrameCodec::kMaxPayloadLen + FrameCodec::kOverhead;
+
 #ifdef CONFIG_MQTT_SVC_RSP_TOPIC
-static const char* sRspTopic = CONFIG_MQTT_SVC_RSP_TOPIC;
+static constexpr const char* sRspTopic = CONFIG_MQTT_SVC_RSP_TOPIC;
 #else
-static const char* sRspTopic = "arcana/rsp";
+static constexpr const char* sRspTopic = "arcana/rsp";
 #endif
 
 namespace Arcana {
@@ -94,7 +98,7 @@ esp_err_t CommandBridgeServiceImpl::init() {
     if (input.CommandResponseEvents) {
         input.CommandResponseEvents->Subscribe(
             [this](const Command::CommandResponse& rsp) {
-                uint8_t buf[320];
+                uint8_t buf[kMaxEncodedResponseLen];
                 size_t outLen = 0;
                 if (!mCodec.EncodeResponse(rsp, buf, sizeof(buf), outLen)) return;
 

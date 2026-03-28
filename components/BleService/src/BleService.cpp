@@ -113,8 +113,9 @@ esp_err_t BleService::Init() {
         return ret;
     }
 
-    // Set preferred MTU
-    ret = esp_ble_gatt_set_local_mtu(517);
+    // Set preferred MTU (BLE 4.2+ max: 512 payload + 5 ATT header = 517)
+    static constexpr uint16_t kPreferredMtu = 517;
+    ret = esp_ble_gatt_set_local_mtu(kPreferredMtu);
     if (ret != ESP_OK) {
         ESP_LOGW(TAG, "Set local MTU failed: %s", esp_err_to_name(ret));
     }

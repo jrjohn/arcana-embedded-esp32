@@ -171,8 +171,8 @@ struct LifecycleEvent : public IModel {
             case State::Stopped: return "Stopped";
             case State::Initialized: return "Initialized";
             case State::Deinitialized: return "Deinitialized";
-            default: return "Unknown";
         }
+        return "Unknown";
     }
 };
 
@@ -346,8 +346,8 @@ struct LifecycleEventV {
             case State::Stopped: return "Stopped";
             case State::Initialized: return "Initialized";
             case State::Deinitialized: return "Deinitialized";
-            default: return "Unknown";
         }
+        return "Unknown";
     }
 };
 

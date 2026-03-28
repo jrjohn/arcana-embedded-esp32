@@ -274,7 +274,7 @@ void BleGattClient::SearchService(esp_gatt_if_t gattcIf, uint16_t connId) {
     }
 }
 
-void BleGattClient::RegisterForNotify(esp_gatt_if_t gattcIf, uint16_t connId, uint16_t charHandle) {
+void BleGattClient::RegisterForNotify(esp_gatt_if_t gattcIf, uint16_t /*connId*/, uint16_t charHandle) {
     esp_err_t ret = esp_ble_gattc_register_for_notify(gattcIf, mRemoteAddr, charHandle);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Register for notify failed: %s", esp_err_to_name(ret));
@@ -285,7 +285,7 @@ void BleGattClient::WriteCccd(esp_gatt_if_t gattcIf, uint16_t connId, uint16_t c
     uint16_t cccdVal = enable ? 0x0001 : 0x0000;
     esp_err_t ret = esp_ble_gattc_write_char_descr(
         gattcIf, connId, cccdHandle,
-        sizeof(cccdVal), (uint8_t*)&cccdVal,
+        sizeof(cccdVal), reinterpret_cast<uint8_t*>(&cccdVal),
         ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Write CCCD failed: %s", esp_err_to_name(ret));
