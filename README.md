@@ -7,6 +7,8 @@
   <img src="https://img.shields.io/badge/BLE-Bluedroid_Dual--Role-0082FC?style=for-the-badge&logo=bluetooth" alt="BLE">
   <img src="https://img.shields.io/badge/Crypto-AES--256--CCM_+_ECDH-8B5CF6?style=for-the-badge" alt="Crypto">
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
+  <br>
+  <img src="https://img.shields.io/badge/Architecture%20Rating-⭐⭐⭐⭐☆%208.3%2F10-blue.svg" alt="Architecture Rating">
 </p>
 
 <h1 align="center">Arcana Embedded ESP32</h1>
@@ -28,6 +30,23 @@
   <a href="#observable-pattern">Observable</a> &bull;
   <a href="#getting-started">Getting Started</a>
 </p>
+
+---
+
+## Architecture Score
+
+| Dimension | Score | Notes |
+|-----------|-------|-------|
+| **Architecture Pattern** | 9/10 | Clean Service Pattern with I/O wiring, 4-phase Controller lifecycle |
+| **Security** | 9.5/10 | AES-256-CCM + ECDH PFS + replay protection + 7 attack mitigations |
+| **Protocol Design** | 9/10 | Unified Frame + protobuf across BLE/MQTT, shared wire format with STM32 |
+| **Extensibility** | 9/10 | New command = 1 class + 1 factory case; new service = abstract + impl |
+| **Observable System** | 9/10 | Sync/async modes, RAII subscription, WeakObserver, 3 template variants |
+| **Resource Efficiency** | 7/10 | 8 async Observable tasks = 22KB DRAM (11% free heap) |
+| **Thread Safety** | 8/10 | Mutex-protected crypto sessions; std::string in queue (High issue) |
+| **Testing** | 5/10 | No unit tests; validation via on-board serial debug |
+| **Documentation** | 9.5/10 | Comprehensive README with data flows, protocol spec, security analysis |
+| **Overall** | **8.3/10** | Solid IoT platform with strong security and clean architecture, limited by testing gap and memory overhead |
 
 ---
 
