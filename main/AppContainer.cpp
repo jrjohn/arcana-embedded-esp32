@@ -1,26 +1,26 @@
-#include "Controller.hpp"
-#include "SensorServiceImpl.hpp"
-#include "BleTransportServiceImpl.hpp"
-#include "MqttTransportServiceImpl.hpp"
-#include "LedServiceImpl.hpp"
-#include "LcdServiceImpl.hpp"
-#include "TimerServiceImpl.hpp"
-#include "DiagnosticServiceImpl.hpp"
-#include "CommandBridgeServiceImpl.hpp"
+#include "AppContainer.hpp"
+#include "impl/SensorServiceImpl.hpp"
+#include "impl/BleTransportServiceImpl.hpp"
+#include "impl/MqttTransportServiceImpl.hpp"
+#include "impl/LedServiceImpl.hpp"
+#include "impl/LcdServiceImpl.hpp"
+#include "impl/TimerServiceImpl.hpp"
+#include "impl/DiagnosticServiceImpl.hpp"
+#include "impl/CommandBridgeServiceImpl.hpp"
 #include "protocol_examples_common.h"
 #include "esp_log.h"
 #include "esp_netif_sntp.h"
 
-static const char* TAG = "Controller";
+static const char* TAG = "AppContainer";
 
 namespace Arcana {
 
-Controller& Controller::getInstance() {
-    static Controller sInstance;
+AppContainer& AppContainer::getInstance() {
+    static AppContainer sInstance;
     return sInstance;
 }
 
-void Controller::run() {
+void AppContainer::run() {
     ESP_LOGI(TAG, "[APP] Startup..");
     ESP_LOGI(TAG, "[APP] Free memory: %" PRIu32 " bytes", esp_get_free_heap_size());
     ESP_LOGI(TAG, "[APP] IDF version: %s", esp_get_idf_version());
@@ -50,7 +50,7 @@ void Controller::run() {
     ESP_LOGI(TAG, "All services running");
 }
 
-void Controller::wireServices() {
+void AppContainer::wireServices() {
     // Get service singletons
     mTimer   = &Timer::TimerServiceImpl::getInstance();
     mSensor  = &Sensor::SensorServiceImpl::getInstance();
@@ -83,7 +83,7 @@ void Controller::wireServices() {
     ESP_LOGI(TAG, "Services wired");
 }
 
-void Controller::initHAL() {
+void AppContainer::initHAL() {
     // Phase 1: Hardware initialization (order matters)
     ESP_ERROR_CHECK(mTimer->init_HAL());
     ESP_ERROR_CHECK(mSensor->init_HAL());
@@ -95,7 +95,7 @@ void Controller::initHAL() {
     ESP_LOGI(TAG, "HAL initialized");
 }
 
-void Controller::initServices() {
+void AppContainer::initServices() {
     // Phase 2: Logic + subscriptions
     ESP_ERROR_CHECK(mTimer->init());
 
@@ -137,7 +137,7 @@ void Controller::initServices() {
     ESP_LOGI(TAG, "Services initialized");
 }
 
-void Controller::startServices() {
+void AppContainer::startServices() {
     ESP_ERROR_CHECK(mTimer->start());
     ESP_ERROR_CHECK(mSensor->start());
     ESP_ERROR_CHECK(mBle->start());

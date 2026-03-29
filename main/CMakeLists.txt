@@ -1,5 +1,5 @@
 idf_component_register(SRCS "app_main.cpp"
-                            "Controller.cpp"
+                            "AppContainer.cpp"
                             "CommandBridgeServiceImpl.cpp"
                             "TimerServiceImpl.cpp"
                             "DiagnosticServiceImpl.cpp"

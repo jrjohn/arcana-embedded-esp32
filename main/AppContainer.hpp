@@ -12,17 +12,17 @@
 
 namespace Arcana {
 
-class Controller {
+class AppContainer {
 public:
-    static Controller& getInstance();
+    static AppContainer& getInstance();
 
     void run();
 
 private:
-    Controller() = default;
-    ~Controller() = default;
-    Controller(const Controller&) = delete;
-    Controller& operator=(const Controller&) = delete;
+    AppContainer() = default;
+    ~AppContainer() = default;
+    AppContainer(const AppContainer&) = delete;
+    AppContainer& operator=(const AppContainer&) = delete;
 
     void wireServices();
     void initHAL();

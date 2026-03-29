@@ -1,4 +1,4 @@
-#include "CommandBridgeServiceImpl.hpp"
+#include "impl/CommandBridgeServiceImpl.hpp"
 #include "commands/GetMqttStatusCommand.hpp"
 #include "FrameCodec.hpp"
 #include "esp_log.h"
