@@ -184,7 +184,10 @@ bool RegistrationServiceImpl::loadCredentials() {
     if (unpackCreds(data, mCreds)) {
         if (strncmp(mCreds.mqttUser, mDeviceId, 12) == 0) {
             mCreds.valid = true;
-            ESP_LOGI(TAG, "Credentials loaded from device.ats (user=%s)", mCreds.mqttUser);
+            ESP_LOGI(TAG, "Credentials loaded from device.ats (user=%s broker=%s:%u)",
+                     mCreds.mqttUser, mCreds.mqttBroker, mCreds.mqttPort);
+            ESP_LOGI(TAG, "  uploadToken=%.60s...", mCreds.uploadToken);
+            ESP_LOGI(TAG, "  topicPrefix=%s", mCreds.topicPrefix);
             return true;
         }
         ESP_LOGW(TAG, "Stored credentials device mismatch");
@@ -423,6 +426,7 @@ bool RegistrationServiceImpl::httpRegister() {
 
     ESP_LOGI(TAG, "Registration successful: user=%s broker=%s:%u",
              mCreds.mqttUser, mCreds.mqttBroker, mCreds.mqttPort);
+    ESP_LOGI(TAG, "  uploadToken=%.60s...", mCreds.uploadToken);
     return true;
 }
 

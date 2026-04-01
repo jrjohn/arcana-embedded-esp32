@@ -197,13 +197,27 @@ bool HttpUploadServiceImpl::uploadFile(const char* filename, const char* deviceI
             ok = false; break;
         }
 
-        int written = send(sock, buf, br, 0);
-        if (written <= 0) {
-            ESP_LOGE(TAG, "Send failed at %lu (err=%d)", (unsigned long)(resumeOffset + sent), errno);
-            ok = false; break;
+        // Send with retry on EAGAIN (TCP buffer full — wait and retry)
+        {
+            size_t toSend = br;
+            size_t bufOff = 0;
+            while (toSend > 0) {
+                int w = send(sock, buf + bufOff, toSend, 0);
+                if (w > 0) {
+                    bufOff += w;
+                    toSend -= w;
+                } else if (w < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                    vTaskDelay(pdMS_TO_TICKS(10));
+                } else {
+                    ESP_LOGE(TAG, "Send failed at %lu (errno=%d)",
+                             (unsigned long)(resumeOffset + sent + bufOff), errno);
+                    ok = false;
+                    break;
+                }
+            }
+            if (!ok) break;
+            sent += br;
         }
-
-        sent += written;
         mProgress.bytesSent = resumeOffset + sent;
 
         if (sent % (CHUNK_SIZE * 10) == 0 || sent >= remainSize) {
