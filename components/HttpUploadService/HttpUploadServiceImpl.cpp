@@ -220,11 +220,12 @@ bool HttpUploadServiceImpl::uploadFile(const char* filename, const char* deviceI
         }
         mProgress.bytesSent = resumeOffset + sent;
 
-        if (sent % (CHUNK_SIZE * 10) == 0 || sent >= remainSize) {
+        // Progress every chunk (notify LCD) + log every 100KB
+        notifyProgress();
+        if (sent % (CHUNK_SIZE * 50) == 0 || sent >= remainSize) {
             uint8_t pct = (uint8_t)((mProgress.bytesSent * 100ULL) / fileSize);
             ESP_LOGI(TAG, "%s: %u%% (%lu/%lu)", filename, pct,
                      (unsigned long)mProgress.bytesSent, (unsigned long)fileSize);
-            notifyProgress();
         }
 
         if (Io::IoServiceImpl::getInstance().isCancelRequested()) {
