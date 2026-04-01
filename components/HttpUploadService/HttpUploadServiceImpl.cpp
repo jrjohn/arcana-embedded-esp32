@@ -168,7 +168,7 @@ bool HttpUploadServiceImpl::uploadFile(const char* filename, const char* deviceI
     esp_http_client_config_t cfg = {};
     cfg.url = url;
     cfg.method = HTTP_METHOD_POST;
-    cfg.timeout_ms = 30000;
+    cfg.timeout_ms = 600000;  // 10 minutes — large files need time
 
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
     esp_http_client_set_header(client, "Content-Type", "application/octet-stream");

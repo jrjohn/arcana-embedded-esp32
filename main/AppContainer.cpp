@@ -93,16 +93,28 @@ void AppContainer::run() {
 
     ESP_LOGI(TAG, "All services running");
 
-    // Upload monitor task — checks Button A press, triggers file upload
-    // Like STM32: disconnect MQTT before upload, reconnect after
-    static struct {
-        Io::IoService* io;
-        Upload::HttpUploadService* upload;
-        Mqtt::MqttTransportService* mqtt;
-    } sUploadCtx;
-    sUploadCtx = {mIo, mUpload, mMqtt};
-
-    xTaskCreate(uploadMonTask, "upload_mon", 8192, &sUploadCtx, tskIDLE_PRIORITY + 1, nullptr);
+    // Upload monitor — reuse main task (app_main doesn't return, so we loop here)
+    // Like STM32: MQTT task handles upload. Here: main task polls button + uploads.
+    {
+        auto* io = mIo;
+        auto* upload = mUpload;
+        auto* mqtt = mMqtt;
+        for (;;) {
+            vTaskDelay(pdMS_TO_TICKS(500));
+            if (io && io->isUploadRequested()) {
+                io->clearUploadRequest();
+                ESP_LOGI(TAG, "Button A: upload — disconnecting MQTT...");
+                if (mqtt) mqtt->stop();
+                vTaskDelay(pdMS_TO_TICKS(500));
+                if (upload) {
+                    uint8_t n = upload->uploadPendingFiles();
+                    ESP_LOGI(TAG, "Upload complete: %u files", n);
+                }
+                ESP_LOGI(TAG, "Reconnecting MQTT...");
+                if (mqtt) mqtt->start();
+            }
+        }
+    }
 }
 
 void AppContainer::wireServices() {
