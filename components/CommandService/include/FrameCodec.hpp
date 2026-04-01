@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
-#include "esp_crc.h"
 #include "esp_log.h"
 
 namespace Arcana {
@@ -11,6 +10,19 @@ namespace Command {
 
 class FrameCodec {
 public:
+    /// CRC-16 CCITT reflected (polynomial 0x8408) — matches STM32 + server
+    static uint16_t crc16(const uint8_t* data, size_t len, uint16_t init = 0) {
+        uint16_t crc = init;
+        for (size_t i = 0; i < len; i++) {
+            crc ^= data[i];
+            for (int b = 0; b < 8; b++) {
+                if (crc & 1) crc = (crc >> 1) ^ 0x8408;
+                else crc >>= 1;
+            }
+        }
+        return crc;
+    }
+
     static constexpr uint8_t  kMagic[2] = {0xAC, 0xDA};
     static constexpr uint8_t  kVersion  = 0x01;
     static constexpr size_t   kHeaderLen = 7;   // magic(2) + ver(1) + flags(1) + sid(1) + len(2)
@@ -53,7 +65,7 @@ public:
 
         // CRC-16 over magic..payload
         const size_t crcDataLen = kHeaderLen + payloadLen;
-        uint16_t crc = esp_crc16_le(0, out, crcDataLen);
+        uint16_t crc = crc16(out, crcDataLen);
         out[crcDataLen]     = static_cast<uint8_t>(crc & 0xFF);
         out[crcDataLen + 1] = static_cast<uint8_t>((crc >> 8) & 0xFF);
 
@@ -112,7 +124,7 @@ public:
 
         // Verify CRC-16
         const size_t crcDataLen = kHeaderLen + len;
-        uint16_t expectedCrc = esp_crc16_le(0, frame, crcDataLen);
+        uint16_t expectedCrc = crc16(frame, crcDataLen);
         uint16_t receivedCrc = static_cast<uint16_t>(frame[crcDataLen]) |
                                (static_cast<uint16_t>(frame[crcDataLen + 1]) << 8);
         if (receivedCrc != expectedCrc) {

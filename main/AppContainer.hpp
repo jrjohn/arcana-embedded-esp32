@@ -8,7 +8,15 @@
 #include "CommandService.hpp"
 #include "TimerService.hpp"
 #include "LcdService.hpp"
+#include "LcdViewModel.hpp"
+#include "MainView.hpp"
 #include "DiagnosticService.hpp"
+#include "AtsStorageService.hpp"
+#include "IoService.hpp"
+#include "OtaService.hpp"
+#include "RegistrationService.hpp"
+#include "HttpUploadService.hpp"
+#include "WifiService.hpp"
 
 namespace Arcana {
 
@@ -25,6 +33,7 @@ private:
     AppContainer& operator=(const AppContainer&) = delete;
 
     void wireServices();
+    void wireViews();
     void initHAL();
     void initServices();
     void startServices();
@@ -38,6 +47,12 @@ private:
     Lcd::LcdService* mLcd = nullptr;
     Command::CommandService* mCommand = nullptr;
     Diagnostic::DiagnosticService* mDiag = nullptr;
+    Storage::AtsStorageService* mStorage = nullptr;
+    Io::IoService* mIo = nullptr;
+    OtaService* mOta = nullptr;
+    Registration::RegistrationService* mReg = nullptr;
+    Upload::HttpUploadService* mUpload = nullptr;
+    Wifi::WifiService* mWifi = nullptr;
 };
 
 } // namespace Arcana

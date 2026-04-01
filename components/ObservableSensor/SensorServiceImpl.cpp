@@ -7,8 +7,8 @@ namespace Arcana {
 namespace Sensor {
 
 SensorServiceImpl::SensorServiceImpl() {
-    output.DataEvents = new Observable<SensorData>("SensorSvc DataEvents");
-    output.ErrorEvents = new Observable<SensorError>("SensorSvc ErrorEvents");
+    output.DataEvents = new Observable<SensorData>("SensorSvc DataEvents", 20, 4096);
+    output.ErrorEvents = new Observable<SensorError>("SensorSvc ErrorEvents", 20, 4096);
 
     ESP_LOGI(TAG, "Created (output Observables allocated)");
 }

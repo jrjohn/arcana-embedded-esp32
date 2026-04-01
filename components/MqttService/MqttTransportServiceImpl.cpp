@@ -75,6 +75,16 @@ esp_err_t MqttTransportServiceImpl::start() {
     cfg.broker.address.uri = CONFIG_BROKER_URL;
     cfg.session.protocol_ver = MQTT_PROTOCOL_V_5;
     cfg.network.disable_auto_reconnect = false;
+#ifdef CONFIG_MQTT_SVC_USERNAME
+    if (strlen(CONFIG_MQTT_SVC_USERNAME) > 0) {
+        cfg.credentials.username = CONFIG_MQTT_SVC_USERNAME;
+    }
+#endif
+#ifdef CONFIG_MQTT_SVC_PASSWORD
+    if (strlen(CONFIG_MQTT_SVC_PASSWORD) > 0) {
+        cfg.credentials.authentication.password = CONFIG_MQTT_SVC_PASSWORD;
+    }
+#endif
 
     mClient = esp_mqtt_client_init(&cfg);
     if (!mClient) {

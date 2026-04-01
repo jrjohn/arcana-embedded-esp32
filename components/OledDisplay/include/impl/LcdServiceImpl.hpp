@@ -1,8 +1,6 @@
 #pragma once
 
 #include "LcdService.hpp"
-#include "Ssd1306.hpp"
-#include <atomic>
 
 namespace Arcana {
 namespace Lcd {
@@ -16,6 +14,8 @@ public:
     esp_err_t start() override;
     void stop() override;
 
+    Ssd1306& getDisplay() override { return *mOled; }
+
 private:
     LcdServiceImpl();
     ~LcdServiceImpl() override = default;
@@ -23,7 +23,6 @@ private:
     LcdServiceImpl& operator=(const LcdServiceImpl&) = delete;
 
     Ssd1306* mOled = nullptr;
-    std::atomic<bool> mRunning{false};
 };
 
 } // namespace Lcd

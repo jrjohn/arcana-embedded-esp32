@@ -1,6 +1,5 @@
 #include "impl/LcdServiceImpl.hpp"
 #include "esp_log.h"
-#include <cstdio>
 
 static const char* TAG = "LcdService";
 
@@ -35,54 +34,17 @@ esp_err_t LcdServiceImpl::init_HAL() {
 }
 
 esp_err_t LcdServiceImpl::init() {
-    // Subscribe to sensor data events and update display
-    input.SensorDataEvents->Subscribe([this](const Sensor::SensorData& data) {
-        if (!mRunning.load() || !mOled) return;
-
-        char line[22]; // 21 chars max for 128px / 6px per char
-
-        mOled->Clear();
-
-        // Title line
-        mOled->DrawStringAt(0, 0, "  Arcana ESP32");
-
-        // Separator
-        mOled->DrawStringAt(0, 2, "--------------------");
-
-        // Temperature
-        snprintf(line, sizeof(line), " Temp:  %5.1f C", data.Temperature);
-        mOled->DrawStringAt(0, 4, line);
-
-        // Humidity
-        snprintf(line, sizeof(line), " Humi:  %5.1f %%", data.Humidity);
-        mOled->DrawStringAt(0, 6, line);
-
-        mOled->Display();
-    });
-
+    // Hardware-only service — no subscriptions
     ESP_LOGI(TAG, "Initialized");
     return ESP_OK;
 }
 
 esp_err_t LcdServiceImpl::start() {
-    if (!mOled) return ESP_ERR_INVALID_STATE;
-
-    mRunning.store(true);
-
-    // Show startup screen
-    mOled->Clear();
-    mOled->DrawStringAt(0, 0, "  Arcana ESP32");
-    mOled->DrawStringAt(0, 2, "--------------------");
-    mOled->DrawStringAt(0, 4, " Temp:   --.- C");
-    mOled->DrawStringAt(0, 6, " Humi:   --.- %");
-    mOled->Display();
-
     ESP_LOGI(TAG, "Started");
     return ESP_OK;
 }
 
 void LcdServiceImpl::stop() {
-    mRunning.store(false);
     if (mOled) {
         mOled->Clear();
         mOled->Display();

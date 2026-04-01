@@ -7,13 +7,43 @@
 #include "impl/TimerServiceImpl.hpp"
 #include "impl/DiagnosticServiceImpl.hpp"
 #include "impl/CommandBridgeServiceImpl.hpp"
-#include "protocol_examples_common.h"
+#include "impl/AtsStorageServiceImpl.hpp"
+#include "impl/IoServiceImpl.hpp"
+#include "impl/OtaServiceImpl.hpp"
+#include "impl/RegistrationServiceImpl.hpp"
+#include "impl/HttpUploadServiceImpl.hpp"
+#include "impl/WifiServiceImpl.hpp"
 #include "esp_log.h"
-#include "esp_netif_sntp.h"
 
 static const char* TAG = "AppContainer";
 
+// Upload monitor task function (static, outside class)
+static void uploadMonTask(void* param) {
+    struct Ctx { Arcana::Io::IoService* io; Arcana::Upload::HttpUploadService* upload; Arcana::Mqtt::MqttTransportService* mqtt; };
+    auto* ctx = static_cast<Ctx*>(param);
+    ESP_LOGI("UploadMon", "Task started");
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(500));
+        if (ctx->io && ctx->io->isUploadRequested()) {
+            ctx->io->clearUploadRequest();
+            ESP_LOGI("UploadMon", "Upload — disconnecting MQTT...");
+            if (ctx->mqtt) ctx->mqtt->stop();
+            vTaskDelay(pdMS_TO_TICKS(500));
+            if (ctx->upload) {
+                uint8_t n = ctx->upload->uploadPendingFiles();
+                ESP_LOGI("UploadMon", "Upload complete: %u files", n);
+            }
+            ESP_LOGI("UploadMon", "Reconnecting MQTT...");
+            if (ctx->mqtt) ctx->mqtt->start();
+        }
+    }
+}
+
 namespace Arcana {
+
+// Static MVVM instances (same lifetime as AppContainer)
+static Lcd::LcdViewModel sViewModel;
+static Lcd::MainView sMainView;
 
 AppContainer& AppContainer::getInstance() {
     static AppContainer sInstance;
@@ -35,19 +65,44 @@ void AppContainer::run() {
 
     wireServices();
     initHAL();
+    wireViews();   // after initHAL — display hardware must exist before wiring
     initServices();
 
-    // Wi-Fi must be up before MQTT
-    ESP_ERROR_CHECK(example_connect());
-
-    // Sync time via SNTP (non-blocking, runs in background)
-    esp_sntp_config_t sntp_cfg = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
-    ESP_ERROR_CHECK(esp_netif_sntp_init(&sntp_cfg));
-    ESP_LOGI(TAG, "SNTP initialized (pool.ntp.org)");
+    // Wi-Fi connect + NTP sync (via WifiService)
+    ESP_ERROR_CHECK(mWifi->connect());
+    mWifi->syncNtp(10000);
 
     startServices();
 
+    // Wait for AtsStorage to be ready (device.ats needed for credential persistence)
+    if (mStorage) {
+        auto& storageImpl = static_cast<Storage::AtsStorageServiceImpl&>(*mStorage);
+        for (int i = 0; i < 20 && !storageImpl.isReady(); i++) {
+            vTaskDelay(pdMS_TO_TICKS(500));
+        }
+    }
+
+    // Device registration (TOFU) — after AtsStorage ready
+    if (mStorage && mReg->doRegistration()) {
+        ESP_LOGI(TAG, "Device registered: %s -> %s:%u",
+                 mReg->deviceId(), mReg->credentials().mqttBroker,
+                 mReg->credentials().mqttPort);
+    } else {
+        ESP_LOGW(TAG, "Registration failed — using hardcoded MQTT config");
+    }
+
     ESP_LOGI(TAG, "All services running");
+
+    // Upload monitor task — checks Button A press, triggers file upload
+    // Like STM32: disconnect MQTT before upload, reconnect after
+    static struct {
+        Io::IoService* io;
+        Upload::HttpUploadService* upload;
+        Mqtt::MqttTransportService* mqtt;
+    } sUploadCtx;
+    sUploadCtx = {mIo, mUpload, mMqtt};
+
+    xTaskCreate(uploadMonTask, "upload_mon", 8192, &sUploadCtx, tskIDLE_PRIORITY + 1, nullptr);
 }
 
 void AppContainer::wireServices() {
@@ -61,15 +116,21 @@ void AppContainer::wireServices() {
     mBridge  = &CommandBridgeServiceImpl::getInstance();
     mCommand = &Command::CommandService::Instance();
     mDiag    = &Diagnostic::DiagnosticServiceImpl::getInstance();
+    mStorage = &Storage::AtsStorageServiceImpl::getInstance();
+    mIo      = &Io::IoServiceImpl::getInstance();
+    mOta     = &OtaServiceImpl::getInstance();
+    mReg     = &Registration::RegistrationServiceImpl::getInstance();
+    mUpload  = &Upload::HttpUploadServiceImpl::getInstance();
+    mWifi    = &Wifi::WifiServiceImpl::getInstance();
+
+    // Wire Storage <- Sensor (record sensor data to SD)
+    mStorage->input.SensorDataEvents = mSensor->output.DataEvents;
 
     // Wire LED <- Timer (base tick for 1-second cycling)
     mLed->input.TimerEvents = mTimer->output.BaseTimer;
 
     // Wire Diagnostic <- Timer (base tick for 10-second interval)
     mDiag->input.TimerEvents = mTimer->output.BaseTimer;
-
-    // Wire LCD <- Sensor (display temperature/humidity)
-    mLcd->input.SensorDataEvents = mSensor->output.DataEvents;
 
     // Wire BLE <- Sensor
     mBle->input.SensorDataEvents = mSensor->output.DataEvents;
@@ -83,6 +144,19 @@ void AppContainer::wireServices() {
     ESP_LOGI(TAG, "Services wired");
 }
 
+void AppContainer::wireViews() {
+    // ViewModel subscribes to Service outputs (not the View!)
+    sViewModel.input.SensorData = mSensor->output.DataEvents;
+    sViewModel.input.StorageStats = mStorage ? mStorage->output.StatsEvents : nullptr;
+    sViewModel.input.BaseTimer = mTimer->output.BaseTimer;
+
+    // View receives ViewModel + display hardware
+    sMainView.input.viewModel = &sViewModel;
+    sMainView.input.display = &mLcd->getDisplay();
+
+    ESP_LOGI(TAG, "Views wired");
+}
+
 void AppContainer::initHAL() {
     // Phase 1: Hardware initialization (order matters)
     ESP_ERROR_CHECK(mTimer->init_HAL());
@@ -91,6 +165,11 @@ void AppContainer::initHAL() {
     ESP_ERROR_CHECK(mLed->init_HAL());
     ESP_ERROR_CHECK(mLcd->init_HAL());
     ESP_ERROR_CHECK(mMqtt->init_HAL());
+    if (mStorage->init_HAL() != ESP_OK) {
+        ESP_LOGW(TAG, "SD card unavailable — storage disabled");
+        mStorage = nullptr;
+    }
+    ESP_ERROR_CHECK(mIo->init_HAL());
 
     ESP_LOGI(TAG, "HAL initialized");
 }
@@ -125,7 +204,7 @@ void AppContainer::initServices() {
     // LED init (no dependencies)
     ESP_ERROR_CHECK(mLed->init());
 
-    // LCD init (subscribes to sensor data)
+    // LCD init (hardware only, no subscriptions)
     ESP_ERROR_CHECK(mLcd->init());
 
     // MQTT init (subscribes to sensor data)
@@ -133,6 +212,12 @@ void AppContainer::initServices() {
 
     // Diagnostic init (subscribes to timer for periodic logging)
     ESP_ERROR_CHECK(mDiag->init());
+
+    // Storage init (semaphore + mutex)
+    if (mStorage) ESP_ERROR_CHECK(mStorage->init());
+
+    // IO init
+    ESP_ERROR_CHECK(mIo->init());
 
     ESP_LOGI(TAG, "Services initialized");
 }
@@ -146,6 +231,12 @@ void AppContainer::startServices() {
     ESP_ERROR_CHECK(mLcd->start());
     ESP_ERROR_CHECK(mMqtt->start());
     ESP_ERROR_CHECK(mDiag->start());
+    if (mStorage) ESP_ERROR_CHECK(mStorage->start());
+    ESP_ERROR_CHECK(mIo->start());
+
+    // Start MVVM: View render task first, then ViewModel subscribes + notifies
+    sMainView.start();
+    sViewModel.init(sMainView.taskHandle());
 
     ESP_LOGI(TAG, "Services started");
 }

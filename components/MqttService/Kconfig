@@ -12,4 +12,16 @@ menu "MQTT Service Configuration"
         help
             MQTT topic for publishing responses.
 
+    config MQTT_SVC_USERNAME
+        string "MQTT username"
+        default ""
+        help
+            MQTT broker username. Leave empty for anonymous.
+
+    config MQTT_SVC_PASSWORD
+        string "MQTT password"
+        default ""
+        help
+            MQTT broker password.
+
 endmenu
