@@ -16,6 +16,7 @@ enum DirtyFlag : uint8_t {
     DIRTY_SENSOR  = 0x01,
     DIRTY_STORAGE = 0x02,
     DIRTY_TIME    = 0x04,
+    DIRTY_TOAST   = 0x08,
     DIRTY_ALL     = 0xFF,
 };
 
@@ -26,6 +27,11 @@ struct LcdOutput {
     uint32_t records = 0;
     uint16_t rate = 0;        ///< records/sec
     uint32_t uptimeSec = 0;
+
+    // Toast overlay
+    char toastMsg[22] = {};   ///< Toast message (max 21 chars + null)
+    uint32_t toastExpiry = 0; ///< Tick when toast expires (0 = no toast)
+
     uint8_t dirty = DIRTY_ALL;
 };
 
@@ -77,6 +83,25 @@ public:
 
     /// Access current output (read by View)
     LcdOutput& output() { return mOutput; }
+
+    /// Show a toast message for durationMs (0 = indefinite)
+    void showToast(const char* msg, uint32_t durationMs = 5000) {
+        strncpy(mOutput.toastMsg, msg, sizeof(mOutput.toastMsg) - 1);
+        mOutput.toastMsg[sizeof(mOutput.toastMsg) - 1] = '\0';
+        mOutput.toastExpiry = (durationMs == 0)
+            ? 0xFFFFFFFF  // indefinite
+            : xTaskGetTickCount() + pdMS_TO_TICKS(durationMs);
+        mOutput.dirty |= DIRTY_TOAST;
+        notifyRender();
+    }
+
+    /// Dismiss current toast
+    void dismissToast() {
+        mOutput.toastMsg[0] = '\0';
+        mOutput.toastExpiry = 0;
+        mOutput.dirty |= DIRTY_TOAST | DIRTY_ALL;  // redraw everything
+        notifyRender();
+    }
 
 private:
     void notifyRender() {

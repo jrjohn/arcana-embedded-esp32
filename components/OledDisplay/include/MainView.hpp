@@ -38,6 +38,31 @@ public:
     void render(Ssd1306& display, LcdOutput& out) override {
         char line[22];
 
+        // Toast active → show full-screen toast (like STM32)
+        if (out.toastExpiry > 0) {
+            // Check expiry
+            if (out.toastExpiry != 0xFFFFFFFF &&
+                xTaskGetTickCount() >= out.toastExpiry) {
+                // Toast expired → clear and redraw normal view
+                out.toastMsg[0] = '\0';
+                out.toastExpiry = 0;
+                out.dirty = DIRTY_ALL;
+                onEnter(display);
+                return;
+            }
+
+            if (out.dirty & DIRTY_TOAST) {
+                display.Clear();
+                display.DrawStringAt(0, 0, "====================");
+                display.DrawStringAt(0, 3, out.toastMsg);
+                display.DrawStringAt(0, 7, "====================");
+                display.Display();
+            }
+            out.dirty = 0;
+            return;
+        }
+
+        // Normal view
         if (out.dirty & DIRTY_SENSOR) {
             snprintf(line, sizeof(line), "Temp:  %5.1f C", out.temperature);
             display.DrawStringAt(0, 2, line);

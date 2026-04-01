@@ -16,9 +16,15 @@ struct UploadProgress {
  * HTTPS file upload service.
  * Uploads .ats files to cloud server with Bearer token + Content-Range resume.
  */
+/// Progress callback: (currentFile, totalFiles, bytesSent, totalBytes)
+using UploadProgressCallback = void (*)(uint8_t, uint8_t, uint32_t, uint32_t, void* ctx);
+
 class HttpUploadService {
 public:
     virtual ~HttpUploadService() = default;
+
+    /// Set progress callback (called from upload write loop)
+    virtual void setProgressCallback(UploadProgressCallback cb, void* ctx) = 0;
 
     /// Upload all pending .ats files + device.ats. Returns count of files uploaded.
     virtual uint8_t uploadPendingFiles() = 0;

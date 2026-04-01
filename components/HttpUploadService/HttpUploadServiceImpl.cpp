@@ -4,9 +4,10 @@
 #include "impl/IoServiceImpl.hpp"
 #include "esp_log.h"
 #include "esp_http_client.h"
-#include "esp_mac.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "lwip/sockets.h"
+#include "lwip/netdb.h"
 #include <cstdio>
 #include <cstring>
 
@@ -47,16 +48,13 @@ uint8_t HttpUploadServiceImpl::uploadPendingFiles() {
     const char* token = regSvc.isRegistered()
                         ? regSvc.credentials().uploadToken : "";
 
-    // Pause ATS recording (FatFS not thread-safe)
     storage.pauseRecording();
     vTaskDelay(pdMS_TO_TICKS(500));
 
-    // List pending files
     Storage::AtsStorageServiceImpl::PendingFile pending[Storage::AtsStorageServiceImpl::MAX_PENDING];
     uint8_t count = storage.listPendingUploads(pending, Storage::AtsStorageServiceImpl::MAX_PENDING);
 
-    // Always upload sensor.ats (current day) + device.ats + any rotated files
-    uint8_t totalFiles = count + 2;  // pending + sensor.ats + device.ats
+    uint8_t totalFiles = count + 2;
     ESP_LOGI(TAG, "%u pending + sensor.ats + device.ats = %u files", count, totalFiles);
 
     mProgress.totalFiles = totalFiles;
@@ -66,16 +64,13 @@ uint8_t HttpUploadServiceImpl::uploadPendingFiles() {
 
     uint8_t uploaded = 0;
 
-    // 1. Upload rotated YYYYMMDD.ats files
     for (uint8_t i = 0; i < count; i++) {
         mProgress.currentFile = uploaded + 1;
         ESP_LOGI(TAG, "Uploading %s (%u/%u)", pending[i].name, uploaded + 1, totalFiles);
-
         if (uploadFile(pending[i].name, deviceId, token)) {
             storage.markUploaded(pending[i].date);
             uploaded++;
         } else {
-            ESP_LOGW(TAG, "Upload failed: %s", pending[i].name);
             if (Io::IoServiceImpl::getInstance().isCancelRequested()) {
                 Io::IoServiceImpl::getInstance().disarmCancel();
                 goto done;
@@ -85,30 +80,25 @@ uint8_t HttpUploadServiceImpl::uploadPendingFiles() {
         vTaskDelay(pdMS_TO_TICKS(500));
     }
 
-    // 2. Upload current day sensor.ats
+    // Upload current sensor.ats
     mProgress.currentFile = uploaded + 1;
-    ESP_LOGI(TAG, "Uploading sensor.ats (current day)");
-    if (uploadFile("sensor.ats", deviceId, token)) {
-        uploaded++;
-    }
+    ESP_LOGI(TAG, "Uploading sensor.ats");
+    if (uploadFile("sensor.ats", deviceId, token)) uploaded++;
     vTaskDelay(pdMS_TO_TICKS(500));
 
-    // 3. Upload device.ats (lifecycle/config/credentials)
+    // Upload device.ats
     mProgress.currentFile = uploaded + 1;
     ESP_LOGI(TAG, "Uploading device.ats");
-    if (uploadFile("device.ats", deviceId, token)) {
-        uploaded++;
-    }
+    if (uploadFile("device.ats", deviceId, token)) uploaded++;
 
 done:
     mProgress.currentFile = 0;
     storage.resumeRecording();
-
     return uploaded;
 }
 
 // ---------------------------------------------------------------------------
-// Upload single file
+// Upload single file — raw TCP socket (like STM32 transparent mode)
 // ---------------------------------------------------------------------------
 
 bool HttpUploadServiceImpl::uploadFile(const char* filename, const char* deviceId,
@@ -117,129 +107,140 @@ bool HttpUploadServiceImpl::uploadFile(const char* filename, const char* deviceI
     snprintf(filepath, sizeof(filepath), "%s/%s", MOUNT_POINT, filename);
 
     FILE* fp = fopen(filepath, "rb");
-    if (!fp) {
-        ESP_LOGW(TAG, "Cannot open %s", filepath);
-        return false;
-    }
+    if (!fp) { ESP_LOGW(TAG, "Cannot open %s", filepath); return false; }
 
-    // Get file size
     fseek(fp, 0, SEEK_END);
     uint32_t fileSize = (uint32_t)ftell(fp);
     fseek(fp, 0, SEEK_SET);
-
     if (fileSize == 0) { fclose(fp); return false; }
 
     mProgress.totalBytes = fileSize;
     mProgress.bytesSent = 0;
 
-    // Query server for resume offset
     uint32_t resumeOffset = queryServerOffset(filename, deviceId);
     if (resumeOffset >= fileSize) {
-        ESP_LOGI(TAG, "%s already uploaded (%lu bytes)", filename, (unsigned long)fileSize);
-        fclose(fp);
-        return true;
+        ESP_LOGI(TAG, "%s already uploaded", filename);
+        fclose(fp); return true;
     }
-
     if (resumeOffset > 0) {
-        ESP_LOGI(TAG, "Resuming %s from %lu/%lu", filename,
-                 (unsigned long)resumeOffset, (unsigned long)fileSize);
+        ESP_LOGI(TAG, "Resuming from %lu/%lu", (unsigned long)resumeOffset, (unsigned long)fileSize);
         fseek(fp, resumeOffset, SEEK_SET);
     }
 
     uint32_t remainSize = fileSize - resumeOffset;
+    mProgress.bytesSent = resumeOffset;
 
-    // Build URL
-    char url[128];
-    snprintf(url, sizeof(url), "http://%s:%d/upload/%s/%s",
-             CONFIG_UPLOAD_SERVER_HOST, CONFIG_UPLOAD_SERVER_PORT,
-             deviceId, filename);
+    // --- Raw TCP connect (like STM32 AT+CIPSTART) ---
+    struct addrinfo hints = {}, *res = nullptr;
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    char portStr[8];
+    snprintf(portStr, sizeof(portStr), "%d", CONFIG_UPLOAD_SERVER_PORT);
 
-    // Build Content-Range header
-    char rangeHeader[64];
-    snprintf(rangeHeader, sizeof(rangeHeader), "bytes %lu-%lu/%lu",
-             (unsigned long)resumeOffset,
-             (unsigned long)(fileSize - 1),
-             (unsigned long)fileSize);
-
-    // Build Authorization header
-    char authHeader[128];
-    snprintf(authHeader, sizeof(authHeader), "Bearer %s", token);
-
-    esp_http_client_config_t cfg = {};
-    cfg.url = url;
-    cfg.method = HTTP_METHOD_POST;
-    cfg.timeout_ms = 600000;  // 10 minutes — large files need time
-
-    esp_http_client_handle_t client = esp_http_client_init(&cfg);
-    esp_http_client_set_header(client, "Content-Type", "application/octet-stream");
-    esp_http_client_set_header(client, "Authorization", authHeader);
-    esp_http_client_set_header(client, "Content-Range", rangeHeader);
-
-    esp_err_t err = esp_http_client_open(client, (int)remainSize);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "HTTP open failed: %s", esp_err_to_name(err));
-        esp_http_client_cleanup(client);
-        fclose(fp);
-        return false;
+    if (getaddrinfo(CONFIG_UPLOAD_SERVER_HOST, portStr, &hints, &res) != 0 || !res) {
+        ESP_LOGE(TAG, "DNS failed: %s", CONFIG_UPLOAD_SERVER_HOST);
+        fclose(fp); return false;
     }
 
-    // Stream file body
+    int sock = socket(res->ai_family, res->ai_socktype, 0);
+    if (sock < 0) {
+        ESP_LOGE(TAG, "Socket failed");
+        freeaddrinfo(res); fclose(fp); return false;
+    }
+
+    struct timeval tv = { .tv_sec = 30, .tv_usec = 0 };
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
+    if (connect(sock, res->ai_addr, res->ai_addrlen) != 0) {
+        ESP_LOGE(TAG, "TCP connect failed");
+        close(sock); freeaddrinfo(res); fclose(fp); return false;
+    }
+    freeaddrinfo(res);
+    ESP_LOGI(TAG, "TCP connected");
+
+    // --- Build raw HTTP header (like STM32) ---
+    char header[448];
+    uint32_t rangeEnd = resumeOffset + remainSize - 1;
+    int hLen = snprintf(header, sizeof(header),
+        "POST /upload/%s/%s HTTP/1.1\r\n"
+        "Host: %s\r\n"
+        "Authorization: Bearer %s\r\n"
+        "Content-Length: %lu\r\n"
+        "Content-Range: bytes %lu-%lu/%lu\r\n"
+        "Content-Type: application/octet-stream\r\n"
+        "Connection: close\r\n"
+        "\r\n",
+        deviceId, filename, CONFIG_UPLOAD_SERVER_HOST,
+        token,
+        (unsigned long)remainSize,
+        (unsigned long)resumeOffset, (unsigned long)rangeEnd,
+        (unsigned long)fileSize);
+
+    ESP_LOGI(TAG, "POST %s (%lu bytes, offset=%lu)", filename,
+             (unsigned long)remainSize, (unsigned long)resumeOffset);
+
+    if (send(sock, header, hLen, 0) != hLen) {
+        ESP_LOGE(TAG, "Header send failed");
+        close(sock); fclose(fp); return false;
+    }
+
+    // --- Stream file body ---
     uint8_t buf[CHUNK_SIZE];
     uint32_t sent = 0;
     bool ok = true;
 
     while (sent < remainSize) {
-        uint32_t remaining = remainSize - sent;
-        size_t chunkLen = (remaining > CHUNK_SIZE) ? CHUNK_SIZE : (size_t)remaining;
-
+        size_t chunkLen = (remainSize - sent > CHUNK_SIZE) ? CHUNK_SIZE : (remainSize - sent);
         size_t br = fread(buf, 1, chunkLen, fp);
         if (br == 0) {
-            ESP_LOGE(TAG, "File read error at %lu", (unsigned long)(resumeOffset + sent));
-            ok = false;
-            break;
+            ESP_LOGE(TAG, "Read error at %lu", (unsigned long)(resumeOffset + sent));
+            ok = false; break;
         }
 
-        int written = esp_http_client_write(client, (const char*)buf, (int)br);
+        int written = send(sock, buf, br, 0);
         if (written <= 0) {
-            ESP_LOGE(TAG, "HTTP write failed at %lu", (unsigned long)(resumeOffset + sent));
-            ok = false;
-            break;
+            ESP_LOGE(TAG, "Send failed at %lu (err=%d)", (unsigned long)(resumeOffset + sent), errno);
+            ok = false; break;
         }
 
         sent += written;
         mProgress.bytesSent = resumeOffset + sent;
 
-        // Progress log every ~20KB
         if (sent % (CHUNK_SIZE * 10) == 0 || sent >= remainSize) {
             uint8_t pct = (uint8_t)((mProgress.bytesSent * 100ULL) / fileSize);
             ESP_LOGI(TAG, "%s: %u%% (%lu/%lu)", filename, pct,
                      (unsigned long)mProgress.bytesSent, (unsigned long)fileSize);
+            notifyProgress();
         }
 
-        // Cancel check
         if (Io::IoServiceImpl::getInstance().isCancelRequested()) {
-            ESP_LOGI(TAG, "Upload cancelled");
-            ok = false;
-            break;
+            ESP_LOGI(TAG, "Cancelled");
+            ok = false; break;
         }
     }
 
-    // Read response
+    // --- Read HTTP response ---
     if (ok) {
-        int contentLen = esp_http_client_fetch_headers(client);
-        int status = esp_http_client_get_status_code(client);
-        ok = (status >= 200 && status < 300);
-        ESP_LOGI(TAG, "%s: HTTP %d, content=%d", filename, status, contentLen);
+        tv.tv_sec = 10;
+        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        char resp[256];
+        int rLen = recv(sock, resp, sizeof(resp) - 1, 0);
+        if (rLen > 0) {
+            resp[rLen] = '\0';
+            ok = (strstr(resp, "200") != nullptr);
+            ESP_LOGI(TAG, "%s: %s", filename, ok ? "OK (200)" : "FAILED");
+        } else {
+            ESP_LOGW(TAG, "No response received");
+        }
     }
 
-    esp_http_client_cleanup(client);
+    close(sock);
     fclose(fp);
-
     return ok;
 }
 
 // ---------------------------------------------------------------------------
-// Query server for resume offset
+// Query resume offset (still uses esp_http_client — small GET, no body)
 // ---------------------------------------------------------------------------
 
 uint32_t HttpUploadServiceImpl::queryServerOffset(const char* filename,

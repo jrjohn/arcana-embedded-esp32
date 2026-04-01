@@ -93,8 +93,7 @@ void AppContainer::run() {
 
     ESP_LOGI(TAG, "All services running");
 
-    // Upload monitor — reuse main task (app_main doesn't return, so we loop here)
-    // Like STM32: MQTT task handles upload. Here: main task polls button + uploads.
+    // Upload monitor — reuse main task with toast + cancel support
     {
         auto* io = mIo;
         auto* upload = mUpload;
@@ -103,13 +102,36 @@ void AppContainer::run() {
             vTaskDelay(pdMS_TO_TICKS(500));
             if (io && io->isUploadRequested()) {
                 io->clearUploadRequest();
+
+                // Show toast + arm cancel (Button A again = cancel)
+                sViewModel.showToast("Uploading...", 0);
+                io->armCancel();
+
                 ESP_LOGI(TAG, "Button A: upload — disconnecting MQTT...");
                 if (mqtt) mqtt->stop();
                 vTaskDelay(pdMS_TO_TICKS(500));
+
                 if (upload) {
+                    // Set progress callback → updates LCD toast
+                    upload->setProgressCallback(
+                        [](uint8_t curFile, uint8_t totalFiles,
+                           uint32_t bytesSent, uint32_t totalBytes, void*) {
+                            char msg[22];
+                            uint8_t pct = totalBytes > 0
+                                ? (uint8_t)(bytesSent * 100ULL / totalBytes) : 0;
+                            snprintf(msg, sizeof(msg), "Upload %u/%u  %u%%",
+                                     curFile, totalFiles, pct);
+                            sViewModel.showToast(msg, 0);
+                        }, nullptr);
+
                     uint8_t n = upload->uploadPendingFiles();
+                    upload->setProgressCallback(nullptr, nullptr);
                     ESP_LOGI(TAG, "Upload complete: %u files", n);
                 }
+
+                io->disarmCancel();
+                sViewModel.showToast("Upload done!", 3000);
+
                 ESP_LOGI(TAG, "Reconnecting MQTT...");
                 if (mqtt) mqtt->start();
             }
