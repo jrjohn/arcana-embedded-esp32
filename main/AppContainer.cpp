@@ -107,13 +107,34 @@ void AppContainer::run() {
 
     ESP_LOGI(TAG, "All services running");
 
-    // Upload monitor — reuse main task with toast + cancel support
+    // Upload monitor + WiFi watchdog — reuse main task
     {
         auto* io = mIo;
         auto* upload = mUpload;
         auto* mqtt = mMqtt;
+        uint32_t lastWifiCheck = xTaskGetTickCount();
+        static const uint32_t WIFI_CHECK_INTERVAL = pdMS_TO_TICKS(5 * 60 * 1000); // 5 min
+
         for (;;) {
             vTaskDelay(pdMS_TO_TICKS(500));
+
+            // WiFi watchdog: check every 5 minutes, reconnect if needed
+            if ((xTaskGetTickCount() - lastWifiCheck) >= WIFI_CHECK_INTERVAL) {
+                lastWifiCheck = xTaskGetTickCount();
+                if (mWifi && !mWifi->isConnected()) {
+                    ESP_LOGW(TAG, "WiFi disconnected — reconnecting...");
+                    for (int i = 1; i <= 5; i++) {
+                        if (mWifi->connect() == ESP_OK) {
+                            ESP_LOGI(TAG, "WiFi reconnected");
+                            mWifi->syncNtp(10000);
+                            break;
+                        }
+                        ESP_LOGW(TAG, "WiFi reconnect retry %d/5...", i);
+                        vTaskDelay(pdMS_TO_TICKS(3000));
+                    }
+                }
+            }
+
             if (io && io->isUploadRequested()) {
                 io->clearUploadRequest();
 
