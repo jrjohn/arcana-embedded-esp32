@@ -140,10 +140,15 @@ void AppContainer::run() {
                         [](uint8_t curFile, uint8_t totalFiles,
                            uint32_t bytesSent, uint32_t totalBytes, void*) {
                             char msg[22];
-                            uint8_t pct = totalBytes > 0
-                                ? (uint8_t)(bytesSent * 100ULL / totalBytes) : 0;
-                            snprintf(msg, sizeof(msg), "Upload %u/%u  %u%%",
-                                     curFile, totalFiles, pct);
+                            if (totalBytes > 0) {
+                                uint32_t pctX10 = (uint32_t)(bytesSent * 1000ULL / totalBytes);
+                                snprintf(msg, sizeof(msg), "%u/%u  %u.%u%%",
+                                         curFile, totalFiles,
+                                         (unsigned)(pctX10 / 10),
+                                         (unsigned)(pctX10 % 10));
+                            } else {
+                                snprintf(msg, sizeof(msg), "%u/%u", curFile, totalFiles);
+                            }
                             sViewModel.showToast(msg, 0);
                         }, nullptr);
 
