@@ -71,9 +71,20 @@ void AppContainer::run() {
     wireViews();   // after initHAL — display hardware must exist before wiring
     initServices();
 
-    // Wi-Fi connect + NTP sync (via WifiService)
-    ESP_ERROR_CHECK(mWifi->connect());
-    mWifi->syncNtp(10000);
+    // Wi-Fi connect with retry (don't crash on temporary AP failure)
+    for (int attempt = 1; attempt <= 5; attempt++) {
+        esp_err_t wifiErr = mWifi->connect();
+        if (wifiErr == ESP_OK) break;
+        ESP_LOGW(TAG, "WiFi connect failed (%s), retry %d/5...",
+                 esp_err_to_name(wifiErr), attempt);
+        if (attempt == 5) {
+            ESP_LOGE(TAG, "WiFi connect failed after 5 attempts — continuing without network");
+        }
+        vTaskDelay(pdMS_TO_TICKS(3000));
+    }
+    if (mWifi->isConnected()) {
+        mWifi->syncNtp(10000);
+    }
 
     startServices();
 
