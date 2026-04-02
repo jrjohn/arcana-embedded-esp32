@@ -1,7 +1,7 @@
 /*
  * Arcana ESP32 Application Entry Point
  *
- * All service wiring is handled by Controller.
+ * All service wiring is handled by AppContainer.
  */
 
 #include "nvs_flash.h"

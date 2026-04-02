@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/Architecture-Service_+_Observable_+_Timer-gold?style=for-the-badge" alt="Architecture">
+  <img src="https://img.shields.io/badge/Architecture-Service_+_MVVM_+_Storage-gold?style=for-the-badge" alt="Architecture">
   <img src="https://img.shields.io/badge/MCU-ESP32-E7352C?style=for-the-badge&logo=espressif" alt="ESP32">
   <img src="https://img.shields.io/badge/RTOS-FreeRTOS-00A86B?style=for-the-badge" alt="FreeRTOS">
   <img src="https://img.shields.io/badge/Language-C++23-00599C?style=for-the-badge&logo=cplusplus" alt="C++">
@@ -8,7 +8,7 @@
   <img src="https://img.shields.io/badge/Crypto-AES--256--CCM_+_ECDH-8B5CF6?style=for-the-badge" alt="Crypto">
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
   <br>
-  <img src="https://img.shields.io/badge/Architecture%20Rating-⭐⭐⭐⭐☆%208.3%2F10-blue.svg" alt="Architecture Rating">
+  <img src="https://img.shields.io/badge/Architecture%20Rating-⭐⭐⭐⭐☆%208.6%2F10-blue.svg" alt="Architecture Rating">
 </p>
 
 <h1 align="center">Arcana Embedded ESP32</h1>
@@ -37,16 +37,17 @@
 
 | Dimension | Score | Notes |
 |-----------|-------|-------|
-| **Architecture Pattern** | 9/10 | Clean Service Pattern with I/O wiring, 4-phase Controller lifecycle |
+| **Architecture Pattern** | 9.5/10 | 5-phase AppContainer lifecycle; MVVM display layer; TOFU provisioning; graceful storage degradation |
 | **Security** | 9.5/10 | AES-256-CCM + ECDH PFS + replay protection + 7 attack mitigations |
 | **Protocol Design** | 9/10 | Unified Frame + protobuf across BLE/MQTT, shared wire format with STM32 |
 | **Extensibility** | 9/10 | New command = 1 class + 1 factory case; new service = abstract + impl |
 | **Observable System** | 9/10 | Sync/async modes, RAII subscription, WeakObserver, 3 template variants |
-| **Resource Efficiency** | 7/10 | 8 async Observable tasks = 22KB DRAM (11% free heap) |
+| **Storage / Persistence** | 8/10 | ArcanaTs time-series DB with ChaCha20/AES-CTR + CRC32; optional SD; graceful degradation |
+| **Resource Efficiency** | 7/10 | ~12 async Observable tasks; MVVM render via task notification (zero idle cost) |
 | **Thread Safety** | 8/10 | Mutex-protected crypto sessions; std::string in queue (High issue) |
 | **Testing** | 5/10 | No unit tests; validation via on-board serial debug |
 | **Documentation** | 9.5/10 | Comprehensive README with data flows, protocol spec, security analysis |
-| **Overall** | **8.3/10** | Solid IoT platform with strong security and clean architecture, limited by testing gap and memory overhead |
+| **Overall** | **8.6/10** | Mature IoT platform — strong security, MVVM, provisioning, persistent storage; limited by testing gap and minor polling/dead-code issues |
 
 ---
 
@@ -77,6 +78,14 @@
 | 19 | **BLE Prepare Write rejection** | Command characteristic rejects `is_prep` writes with `ESP_GATT_REQ_NOT_SUPPORTED` and zero-length writes with `ESP_GATT_INVALID_ATTR_LEN`, preventing partial frame injection and protocol confusion |
 | 20 | **Compile-time wire size validation** | `static_assert(kMaxPayloadLen >= arcana_CmdResponse_size + CryptoEngine::kOverhead)` in CommandCodec catches payload size mismatches at compile time. Guarantees FrameCodec limit always accommodates the largest legal encrypted response |
 | 21 | **Protobuf field range validation** | Cluster and command values validated `<= 0xFF` after protobuf decode, before narrowing `static_cast`. Prevents attacker from sending `cluster=0x100` to truncate to `0x00` and bypass command dispatch |
+| 22 | **MVVM display layer** | `LcdViewModel` subscribes to Service Observables and transforms data into `LcdOutput` with per-field dirty flags (`DIRTY_SENSOR`, `DIRTY_STORAGE`, `DIRTY_TIME`, `DIRTY_TOAST`). `MainView` owns a FreeRTOS render task that blocks on `ulTaskNotifyTake` — woken only when ViewModel has new data. Clean separation: ViewModel has no rendering code; MainView has no service subscriptions. Zero idle cost (no polling) |
+| 23 | **WifiService encapsulates network** | `WifiService` abstract interface exposes `connect()`, `syncNtp()`, `isConnected()`. Replaces `protocol_examples_common` / `example_connect()` dependency. `AppContainer::run()` calls `mWifi->connect()` then `mWifi->syncNtp(10000)` before `startServices()` — explicit, readable sequencing |
+| 24 | **TOFU device provisioning** | `RegistrationService` implements Trust-On-First-Use: first boot sends `POST /api/register` to obtain MQTT credentials + `comm_key`, stored in `device.ats`. Subsequent boots load from storage. Device ID is MAC-based hex string. Credentials struct carries `mqttUser`, `mqttPass`, `mqttBroker`, `mqttPort`, `uploadToken`, `topicPrefix`, and 32-byte `commKey` |
+| 25 | **ArcanaTs time-series DB** | Custom append-only binary database. Single `.ats` file per day on SD (FAT32 SPI), 4KB block writes, 508 records/block (DHT11 = 8 bytes/rec). Pluggable `ICipher` (ChaCha20 / AES-CTR / Null) and `IFilePort` (VFS) interfaces. CRC-32 integrity per block. Daily midnight file rotation. Permanent `device.ats` for lifecycle/credentials |
+| 26 | **Graceful storage degradation** | `AppContainer::initHAL()` calls `mStorage->init_HAL()` without `ESP_ERROR_CHECK`. If SD init fails, `mStorage` is set to `nullptr`; all subsequent storage guards (`if (mStorage)`) skip storage-dependent logic. System continues without storage — BLE, MQTT, sensor, and command pipeline unaffected |
+| 27 | **IoService button abstraction** | GPIO button state machine behind abstract interface. Button A (GPIO5 active-LOW): press+release → upload request; during upload → cancel. Button B (GPIO36 active-LOW): hold 2s → format SD. `armCancel()` / `disarmCancel()` let `AppContainer` control cancel semantics without IoService knowing upload state |
+| 28 | **SensorData fan-out expands to 4 subscribers** | `output.DataEvents` now feeds `BleTransportService` (GATT notify), `LcdViewModel` (MVVM display), `MqttTransportService` (JSON publish), and `AtsStorageService` (time-series write to SD). Adding a new subscriber is one `input.SensorDataEvents` wire in `wireServices()` |
+| 29 | **Upload-then-reconnect flow** | HTTP file upload temporarily disconnects MQTT (`mqtt->stop()`), uploads all pending `.ats` files via `HttpUploadService`, then reconnects MQTT (`mqtt->start()`). Progress updates flow through `ViewModel::showToast()` via lambda callback — upload logic in AppContainer stays transport-agnostic |
 
 ### Cons
 
@@ -86,8 +95,11 @@
 | 2 | **8 async Observables = 8 FreeRTOS tasks** | Medium | Each named Observable creates a task + queue. 8 Observables consume ~22 KB DRAM (stacks + TCBs + queues). On ESP32 with ~200 KB free DRAM this is ~11% just for event dispatch | All `new Observable<T>("name")` calls |
 | 3 | **LED double queue hop** | Low | Each LED frame traverses two async queues: `esp_timer -> FastTimer queue -> LED callback -> LedObservable queue -> hardware callback`. Adds ~2ms latency per hop. Acceptable for LED cycling but would matter for latency-sensitive subscribers | `LedServiceImpl.cpp` |
 | 4 | **`CommandService` naming inconsistency** | Low | Uses `Instance()` / `Start()` / `Stop()` (PascalCase) while all other services use `getInstance()` / `start()` / `stop()` (camelCase). Controller calls `mCommand->Start()` vs `mLed->start()` | `CommandService.hpp`, `Controller.cpp` |
-| 5 | **Unnecessary `static_cast`** | Low | Controller casts `*mBle` to `BleTransportServiceImpl&` to call `server()`, but `server()` is already `virtual` on the abstract base `BleTransportService` | `Controller.cpp` |
+| 5 | **Unnecessary `static_cast` to impl** | Low | `AppContainer` casts `*mBle` to `BleTransportServiceImpl&` (line 233) to call `server()`, which is `virtual` on the abstract base. Also casts `*mStorage` to `AtsStorageServiceImpl&` (line 79) to call `isReady()` — `isReady()` is not on the abstract interface, so the cast is forced. Both bypass the abstraction boundary | `AppContainer.cpp:79, 233` |
 | 6 | **Duplicate Kconfig MQTT topics** | Low | `CommandService/Kconfig` defines `CMD_MQTT_CMD_TOPIC` / `CMD_MQTT_RSP_TOPIC`. `MqttService/Kconfig` defines `MQTT_SVC_CMD_TOPIC` / `MQTT_SVC_RSP_TOPIC`. Only the latter are used in code. The former are dead config | `CommandService/Kconfig` |
+| 7 | **Dead code: `uploadMonTask`** | Low | `AppContainer.cpp:21-40` defines a static FreeRTOS task function (`uploadMonTask`) that is never passed to `xTaskCreate`. The actual upload monitoring is done inline in `run()`. Dead code that adds confusion without benefit | `AppContainer.cpp:21` |
+| 8 | **Blocking poll in `AppContainer::run()`** | Low | The upload monitor loop calls `vTaskDelay(pdMS_TO_TICKS(500))` every iteration to check `io->isUploadRequested()`. This is a 2 Hz busy-poll: 2 context switches/sec wasted, and 500ms worst-case latency from button press to upload start. A semaphore or `xTaskNotifyGive` from `IoServiceImpl` would give immediate response and zero idle overhead | `AppContainer.cpp:101` |
+| 9 | **`AppContainer::run()` mixes init and runtime** | Low | The `run()` method contains both the entire startup sequence (wireServices through startServices) and the infinite upload event loop. If the upload loop ever needs to be refactored (e.g. to support cancellation, multiple upload types, or testing), the mixed concerns complicate extraction | `AppContainer.cpp:53` |
 
 ### Resolved Issues
 
@@ -198,14 +210,22 @@ graph TB
 | `CommandService` | `Arcana::Command` | `CommandService` | Command pattern with protobuf + AES-256-CCM + ECDH |
 | `MqttService` | `Arcana::Mqtt` | `MqttTransportService` | MQTT5 client transport layer |
 | `RgbLed` | `Arcana::Led` | `LedService` | WS2812B RGB LED strip via RMT peripheral |
-| `OledDisplay` | `Arcana::Lcd` | `LcdService` | SSD1306 OLED I2C display for sensor data |
-| `main/` | `Arcana` / `Arcana::Timer` | `TimerService`, `CommandBridgeService`, `Controller` | App entry, wiring, timer, command bridge, SNTP |
+| `OledDisplay` | `Arcana::Lcd` | `LcdService`, `LcdViewModel`, `MainView` | SSD1306 OLED I2C display + MVVM layer |
+| `ArcanaTs` | `Arcana::Ats` | — | Time-series DB engine: ChaCha20/AES-CTR, CRC32, pluggable ICipher/IFilePort |
+| `AtsStorageService` | `Arcana::Storage` | `AtsStorageService` | Daily `.ats` files on SD card; sensor data + credentials persistence |
+| `WifiService` | `Arcana::Wifi` | `WifiService` | WiFi connect + SNTP sync; replaces `protocol_examples_common` |
+| `IoService` | `Arcana::Io` | `IoService` | GPIO button state machine (Button A: upload/cancel, Button B: format) |
+| `OtaService` | `Arcana` | `OtaService` | OTA firmware update support |
+| `RegistrationService` | `Arcana::Registration` | `RegistrationService` | TOFU device provisioning: HTTP POST → MQTT credentials stored in device.ats |
+| `HttpUploadService` | `Arcana::Upload` | `HttpUploadService` | HTTP upload of pending `.ats` files to server; progress callback |
+| `LogService` | `Arcana` | — | Structured logging with ATS/device/serial appenders |
+| `main/` | `Arcana` / `Arcana::Timer` | `AppContainer`, `TimerService`, `CommandBridgeService` | App entry, 5-phase lifecycle orchestration, timer, command bridge |
 
 ### Component Dependency Graph
 
 ```mermaid
 graph TD
-    Main["main<br/>Controller, TimerService, CommandBridge"] --> esp_timer
+    Main["main<br/>AppContainer, TimerService, CommandBridge"] --> esp_timer
     Main --> CS["CommandService"]
     Main --> RGB["RgbLed"]
     Main --> MQTT["MqttService"]
@@ -275,9 +295,18 @@ private:
 | **BleTransportService** | `SensorDataEvents` | `ConnectionEvents`, `CommandWriteEvents` | Bluedroid stack tasks |
 | **MqttTransportService** | `SensorDataEvents` | `CommandEvents`, `ConnectionStatus` | esp_mqtt_client task |
 | **LedService** | `TimerEvents` | `LedObservable` | No own task; timer-driven |
-| **LcdService** | `SensorDataEvents` | (none) | No own task; sensor-driven display |
+| **LcdService** | (hardware) | display handle | No own task; provides `Ssd1306` to MVVM |
+| **LcdViewModel** | `SensorData`, `StorageStats`, `BaseTimer` | `LcdOutput` (dirty-flagged) | No own task; notifies MainView render task |
+| **MainView** | `LcdViewModel*`, `Ssd1306*` | (renders to display) | Owns `"LcdView"` FreeRTOS task (2048B, blocks on notify) |
 | **CommandService** | `Sensor*` | `ResponseEvents`, `KeyExchangeMgr`, `Factory` | EventQueue creates async task |
 | **CommandBridgeService** | 8 fields (BLE+MQTT+Command) | (none) | Purely reactive (subscription callbacks) |
+| **WifiService** | (none) | (none; imperative) | esp_wifi internal tasks; `connect()` + `syncNtp()` are synchronous calls |
+| **AtsStorageService** | `SensorDataEvents` | `StatsEvents` | Subscription callback writes to SD; `isReady()` for boot sync |
+| **IoService** | (GPIO) | (none; polled flags) | Owns GPIO poll task (100ms interval) |
+| **RegistrationService** | (none; HTTP) | `Credentials` | Imperative HTTP POST; no own task |
+| **HttpUploadService** | (none; HTTP) | (progress callback) | Imperative HTTP upload; progress via callback |
+| **OtaService** | (none; HTTP) | (none) | OTA partition write |
+| **DiagnosticService** | `TimerEvents` | (logs) | No own task; timer-triggered logging |
 
 ### Task Ownership Rule
 
@@ -293,46 +322,58 @@ private:
 
 ---
 
-## Controller Lifecycle
+## AppContainer Lifecycle
 
-The Controller (`main/Controller.cpp`) is a Meyer's singleton that orchestrates all services through a 4-phase lifecycle:
+`AppContainer` (`main/AppContainer.cpp`) is a Meyer's singleton that orchestrates all services through a 5-phase lifecycle, followed by an inline upload-monitor loop:
 
 ```mermaid
 flowchart TD
     A["app_main()"] --> B["nvs_flash_init()"]
     B --> C["esp_netif_init()"]
     C --> D["esp_event_loop_create_default()"]
-    D --> E["Controller::getInstance().run()"]
+    D --> E["AppContainer::getInstance().run()"]
     E --> F["wireServices()<br/>Phase 0: get singletons, wire I/O pointers"]
-    F --> G["initHAL()<br/>Phase 1: hardware peripherals"]
-    G --> H["initServices()<br/>Phase 2: subscriptions + logic"]
-    H --> I["example_connect()<br/>WiFi must be up before MQTT"]
-    I --> J["esp_netif_sntp_init<br/>SNTP time sync, non-blocking"]
-    J --> K["startServices()<br/>Phase 3: activate all services"]
+    F --> G["initHAL()<br/>Phase 1: hardware peripherals<br/>(SD fail → mStorage = nullptr)"]
+    G --> H["wireViews()<br/>Phase 1.5: MVVM wiring (after HAL)"]
+    H --> I["initServices()<br/>Phase 2: subscriptions + logic<br/>late-wire Bridge inputs"]
+    I --> J["mWifi->connect()<br/>WifiService: WiFi up"]
+    J --> K["mWifi->syncNtp(10000)<br/>SNTP sync, blocks up to 10s"]
+    K --> L["startServices()<br/>Phase 3: activate all services<br/>MVVM render task start"]
+    L --> M["Wait for AtsStorage ready<br/>(device.ats needed for TOFU)"]
+    M --> N["RegistrationService::doRegistration()<br/>TOFU: load or POST /api/register"]
+    N --> O["Upload monitor loop<br/>(main task, 500ms poll)"]
 ```
 
 ### Phase 0: wireServices()
 
-Gets singleton references and connects Observable pointers between services:
+Gets singleton references and wires Observable I/O pointers between services:
 
 ```
-mTimer   = &TimerServiceImpl::getInstance()     // allocates FastTimer + BaseTimer Observables
-mSensor  = &SensorServiceImpl::getInstance()    // allocates DataEvents, ErrorEvents
-mLed     = &LedServiceImpl::getInstance()       // allocates LedObservable
+mTimer   = &TimerServiceImpl::getInstance()
+mSensor  = &SensorServiceImpl::getInstance()
+mLed     = &LedServiceImpl::getInstance()
 mBle     = &BleTransportServiceImpl::getInstance()
 mMqtt    = &MqttTransportServiceImpl::getInstance()
 mBridge  = &CommandBridgeServiceImpl::getInstance()
 mCommand = &CommandService::Instance()
+mStorage = &AtsStorageServiceImpl::getInstance()
+mWifi    = &WifiServiceImpl::getInstance()
+mIo      = &IoServiceImpl::getInstance()
+mOta     = &OtaServiceImpl::getInstance()
+mReg     = &RegistrationServiceImpl::getInstance()
+mUpload  = &HttpUploadServiceImpl::getInstance()
+mDiag    = &DiagnosticServiceImpl::getInstance()
 
 // Wire dependencies via Input structs
-mLed->input.TimerEvents       = mTimer->output.BaseTimer
-mLcd->input.SensorDataEvents  = mSensor->output.DataEvents
-mBle->input.SensorDataEvents  = mSensor->output.DataEvents
-mMqtt->input.SensorDataEvents = mSensor->output.DataEvents
-mCommand->input.Sensor         = mSensor->output.Sensor
+mStorage->input.SensorDataEvents = mSensor->output.DataEvents
+mLed->input.TimerEvents          = mTimer->output.BaseTimer
+mDiag->input.TimerEvents         = mTimer->output.BaseTimer
+mBle->input.SensorDataEvents     = mSensor->output.DataEvents
+mMqtt->input.SensorDataEvents    = mSensor->output.DataEvents
+mCommand->input.Sensor           = mSensor->output.Sensor
 ```
 
-Output Observables are allocated in constructors (`new Observable<T>("name")`), so pointers are valid here. Bridge wiring happens later (Phase 2) because its inputs depend on `init_HAL()` / `init()` populating BLE/MQTT/Command outputs.
+Output Observables are allocated in constructors, so pointers are valid here. Bridge wiring happens in Phase 2 because it depends on `init()` populating BLE/MQTT/Command output Observables.
 
 ### Phase 1: initHAL()
 
@@ -343,13 +384,30 @@ mBle->init_HAL()       // BleService::Init(), sets output Observable pointers
 mLed->init_HAL()       // RgbLed RMT channel setup
 mLcd->init_HAL()       // SSD1306 OLED I2C initialization
 mMqtt->init_HAL()      // reads Kconfig topic
+mStorage->init_HAL()   // SPI SD card mount (FAT32); on failure: mStorage = nullptr
+mIo->init_HAL()        // GPIO config for Button A (GPIO5) + Button B (GPIO36)
+```
+
+Note: `mStorage->init_HAL()` is not wrapped in `ESP_ERROR_CHECK`. SD failure nulls `mStorage`; system continues without storage.
+
+### Phase 1.5: wireViews()
+
+Called after `initHAL()` so display hardware exists before wiring:
+
+```
+sViewModel.input.SensorData    = mSensor->output.DataEvents
+sViewModel.input.StorageStats  = mStorage ? mStorage->output.StatsEvents : nullptr
+sViewModel.input.BaseTimer     = mTimer->output.BaseTimer
+
+sMainView.input.viewModel  = &sViewModel
+sMainView.input.display    = &mLcd->getDisplay()
 ```
 
 ### Phase 2: initServices()
 
 ```
 mTimer->init()         // computes base divider (base_ms / fast_ms)
-mSensor->init()        // subscribes DhtSensor events -> service Observables
+mSensor->init()        // subscribes DhtSensor events → service Observables
 mBle->init()           // subscribes to SensorDataEvents for GATT notifications
 mCommand->init()       // creates KeyExchangeManager, Factory, Dispatcher
 
@@ -364,22 +422,31 @@ mBridge->input.Factory                = mCommand->output.Factory
 mBridge->input.MqttTransport          = mMqtt
 mBridge->input.BleServer              = &mBle->server()
 
-mBridge->init()        // subscribes to all 5 input event streams
+mBridge->init()        // subscribes to all event streams
 mLed->init()           // subscribes to TimerEvents + own LedObservable
-mLcd->init()           // subscribes to SensorDataEvents for OLED display
-mMqtt->init()          // subscribes to SensorDataEvents, publishes JSON to arcana/sensor
+mLcd->init()           // hardware only; no subscriptions (MVVM owns subscriptions)
+mMqtt->init()          // subscribes to SensorDataEvents, publishes JSON
+mDiag->init()          // subscribes to BaseTimer for periodic logging
+mStorage->init()       // semaphore + mutex init (if SD present)
+mIo->init()            // GPIO interrupt or poll setup
 ```
 
 ### Phase 3: startServices()
 
 ```
-mTimer->start()        // esp_timer_start_periodic (CONFIG_TIMER_FAST_INTERVAL_MS = 100ms)
+mTimer->start()        // esp_timer_start_periodic (100ms)
 mSensor->start()       // ObservableSensor FreeRTOS task starts reading
 mBle->start()          // BLE advertising begins
 mCommand->Start()      // CommandDispatcher async queue task starts
-mLed->start()          // sets mRunning=true (timer ticks now produce LED frames)
+mLed->start()          // sets mRunning=true
 mLcd->start()          // sets mRunning=true, shows startup screen
 mMqtt->start()         // MQTT5 client connects to broker
+mDiag->start()         // diagnostic logging begins
+mStorage->start()      // ATS write task starts (if SD present)
+mIo->start()           // GPIO poll task starts (100ms interval)
+
+sMainView.start()      // LcdView render task created
+sViewModel.init(sMainView.taskHandle())  // ViewModel subscribes, notifies render task
 ```
 
 ---
@@ -403,7 +470,7 @@ flowchart TD
     K --> L["future subscribers at 1000ms rate"]
 ```
 
-### Sensor -> BLE + LCD + MQTT (Fan-out)
+### Sensor -> BLE + LCD + MQTT + Storage (Fan-out)
 
 ```mermaid
 flowchart TD
@@ -412,14 +479,17 @@ flowchart TD
     C --> D["SensorServiceImpl<br/>subscribed in init"]
     D --> E["output.DataEvents→Notify<br/>async: SensorSvc DataEvents"]
     E --> F["BleTransportServiceImpl"]
-    E --> G["LcdServiceImpl"]
+    E --> G["LcdViewModel<br/>(MVVM)"]
     E --> H["MqttTransportServiceImpl"]
+    E --> I["AtsStorageServiceImpl"]
     F --> F1["BleGattServer::<br/>UpdateTemperature / UpdateHumidity"]
     F1 --> F2["esp_ble_gatts_send_indicate<br/>per client"]
-    G --> G1["Ssd1306::DrawStringAt<br/>temperature + humidity"]
-    G1 --> G2["Ssd1306::Display (I2C)"]
+    G --> G1["LcdOutput dirty flags<br/>DIRTY_SENSOR set"]
+    G1 --> G2["xTaskNotifyGive → MainView<br/>diff-render to SSD1306"]
     H --> H1["snprintf JSON<br/>temperature, humidity, timestamp"]
     H1 --> H2["esp_mqtt_client_publish<br/>arcana/sensor"]
+    I --> I1["ArcanaTsDb::Write()<br/>8-byte record"]
+    I1 --> I2["SD card .ats file<br/>4KB block, ChaCha20 encrypted"]
 ```
 
 ### BLE Command -> Response
@@ -908,12 +978,15 @@ graph TD
 | `"LedSvc Observable"` | 3072 | 5 | Observable | LedServiceImpl constructor |
 | `"MqttSvc CommandEvents"` | 2048 | 5 | Observable | MqttTransportServiceImpl constructor |
 | `"MqttSvc ConnStatus"` | 2048 | 5 | Observable | MqttTransportServiceImpl constructor |
+| `"LcdView"` | 2048 | 2 | MainView | `MainView::start()` |
+| IoService poll task | 2048 (est) | 5 | IoServiceImpl | `IoServiceImpl::start()` |
 | CommandDispatcher | 4096 (Kconfig) | 5 | EventQueue | CommandService::Start() |
 | BT Controller | (internal) | High | Bluedroid | BleService::Init() |
 | BT Host | (internal) | High | Bluedroid | BleService::Init() |
-| WiFi | (internal) | -- | esp_wifi | example_connect() |
+| WiFi | (internal) | -- | esp_wifi | WifiServiceImpl::connect() |
 | MQTT Client | (internal) | -- | esp_mqtt | MqttTransportService::start() |
 | esp_timer | (internal) | 22 | esp_timer | System startup |
+| main task | 4096 (app_main default) | 1 | AppContainer | app_main (upload monitor loop) |
 
 ---
 
@@ -1045,20 +1118,64 @@ arcana-embedded-esp32/
 |   |   +-- CMakeLists.txt / Kconfig
 |   |
 |   +-- RgbLed/                      # WS2812B LED strip via RMT
-|       +-- include/
-|       |   +-- RgbLed.hpp               # RMT driver
-|       |   +-- LedService.hpp           # Abstract service base
-|       |   +-- LedServiceImpl.hpp       # Meyer's singleton impl
-|       +-- RgbLed.cpp / LedServiceImpl.cpp
-|       +-- CMakeLists.txt / Kconfig
+|   |   +-- include/
+|   |   |   +-- RgbLed.hpp               # RMT driver
+|   |   |   +-- LedService.hpp           # Abstract service base
+|   |   |   +-- LedServiceImpl.hpp       # Meyer's singleton impl
+|   |   +-- RgbLed.cpp / LedServiceImpl.cpp
+|   |   +-- CMakeLists.txt / Kconfig
+|   |
+|   +-- ArcanaTs/                    # Time-series DB engine
+|   |   +-- include/
+|   |   |   +-- ats/ArcanaTsDb.hpp        # Core DB: append, query, rotate
+|   |   |   +-- ats/ICipher.hpp / IMutex.hpp / IFilePort.hpp  # Interfaces
+|   |   |   +-- ChaCha20.hpp / ChaCha20Cipher.hpp / NullCipher.hpp
+|   |   |   +-- Esp32AesCtrCipher.hpp / FreeRtosMutex.hpp / VfsFilePort.hpp
+|   |   +-- src/ (ArcanaTsDb.cpp, VfsFilePort.cpp)
+|   |   +-- CMakeLists.txt
+|   |
+|   +-- AtsStorageService/           # SD card time-series storage
+|   |   +-- include/
+|   |   |   +-- AtsStorageService.hpp        # Abstract base
+|   |   |   +-- impl/AtsStorageServiceImpl.hpp
+|   |   +-- CMakeLists.txt
+|   |
+|   +-- WifiService/                 # WiFi + SNTP
+|   |   +-- include/
+|   |   |   +-- WifiService.hpp / impl/WifiServiceImpl.hpp
+|   |   +-- WifiServiceImpl.cpp / CMakeLists.txt
+|   |
+|   +-- IoService/                   # GPIO button service
+|   |   +-- include/
+|   |   |   +-- IoService.hpp / impl/IoServiceImpl.hpp
+|   |   +-- CMakeLists.txt
+|   |
+|   +-- OtaService/                  # OTA firmware update
+|   |   +-- include/OtaService.hpp / impl/OtaServiceImpl.hpp
+|   |   +-- OtaServiceImpl.cpp / CMakeLists.txt
+|   |
+|   +-- RegistrationService/         # TOFU device provisioning
+|   |   +-- include/
+|   |   |   +-- RegistrationService.hpp / impl/RegistrationServiceImpl.hpp
+|   |   +-- CMakeLists.txt
+|   |
+|   +-- HttpUploadService/           # HTTP file upload
+|   |   +-- include/
+|   |   |   +-- HttpUploadService.hpp / impl/HttpUploadServiceImpl.hpp
+|   |   +-- CMakeLists.txt
+|   |
+|   +-- LogService/                  # Structured logging (ATS + serial appenders)
+|       +-- include/ (Log.hpp, EventCodes.hpp, AtsAppender.hpp, ...)
+|       +-- CMakeLists.txt
 |
 +-- main/
-|   +-- app_main.cpp                     # Entry: NVS + netif + event loop + Controller::run()
-|   +-- Controller.hpp / Controller.cpp  # Service wiring + lifecycle orchestration
+|   +-- app_main.cpp                     # Entry: NVS + netif + event loop + AppContainer::run()
+|   +-- AppContainer.hpp / AppContainer.cpp  # 5-phase lifecycle orchestration
 |   +-- TimerService.hpp                 # Abstract base (esp_timer periodic ticks)
-|   +-- TimerServiceImpl.hpp / .cpp      # Meyer's singleton impl
+|   +-- impl/TimerServiceImpl.hpp / .cpp # Meyer's singleton impl
 |   +-- CommandBridgeService.hpp         # Abstract base (glue service)
-|   +-- CommandBridgeServiceImpl.hpp / .cpp
+|   +-- impl/CommandBridgeServiceImpl.hpp / .cpp
+|   +-- DiagnosticService.hpp / impl/DiagnosticServiceImpl.hpp / .cpp
 |   +-- CMakeLists.txt / Kconfig.projbuild / idf_component.yml
 |
 +-- partitions.csv                       # Custom partition table (~4MB app)
@@ -1129,8 +1246,8 @@ case Cluster::Sensor:
 - [x] RAII Subscription guard + WeakObserver
 - [x] IModel polymorphic events + std::variant alternative
 - [x] EventQueue async dispatch
-- [x] **Service pattern (abstract base + Input/Output + 4-phase lifecycle)**
-- [x] **Controller orchestration (wire -> initHAL -> init -> start)**
+- [x] **Service pattern (abstract base + Input/Output + 5-phase lifecycle)**
+- [x] **AppContainer orchestration (wire -> initHAL -> wireViews -> init -> start)**
 - [x] **TimerService (esp_timer periodic ticks via Observable)**
 - [x] BLE GATT Server (Environmental Sensing 0x181A)
 - [x] BLE GATT Client (scan + connect + notify)
@@ -1143,11 +1260,19 @@ case Cluster::Sensor:
 - [x] **Per-connection session keys (4 slots)**
 - [x] **Frame Protocol (magic + version + flags + stream ID + CRC-16)**
 - [x] **RGB LED service (timer-driven, no own task)**
+- [x] **MVVM display layer (LcdViewModel + MainView, dirty-flag diffing)**
+- [x] **WifiService (encapsulated WiFi + SNTP, no protocol_examples_common)**
+- [x] **ArcanaTs time-series DB (ChaCha20 encrypted, CRC32, daily rotation)**
+- [x] **AtsStorageService (SD card sensor data, graceful degradation)**
+- [x] **IoService (GPIO buttons: upload trigger, cancel, SD format)**
+- [x] **RegistrationService (TOFU device provisioning)**
+- [x] **HttpUploadService (upload .ats files, progress callback)**
+- [x] **OTA firmware update**
 - [ ] UART transport (frame layer ready)
 - [ ] BLE bonding & SMP pairing
-- [ ] OTA firmware update
 - [ ] Real hardware sensor driver (I2C/SPI)
 - [ ] Runtime statistics dashboard
+- [ ] Unit tests (component-level, host-based)
 
 ---
 
