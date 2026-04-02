@@ -1,4 +1,5 @@
 #include "AppContainer.hpp"
+#include "esp_wifi.h"
 #include "impl/SensorServiceImpl.hpp"
 #include "impl/BleTransportServiceImpl.hpp"
 #include "impl/MqttTransportServiceImpl.hpp"
@@ -107,6 +108,9 @@ void AppContainer::run() {
                 sViewModel.showToast("Uploading...", 0);
                 io->armCancel();
 
+                // Disable WiFi power save for reliable TCP throughput
+                esp_wifi_set_ps(WIFI_PS_NONE);
+
                 // Pause ECG recording FIRST to relieve heap pressure
                 // (ECG 1KHz consumes ~28KB/s; MQTT stop needs heap for free)
                 if (mStorage) {
@@ -146,6 +150,9 @@ void AppContainer::run() {
                 if (mStorage) {
                     static_cast<Storage::AtsStorageServiceImpl&>(*mStorage).resumeRecording();
                 }
+
+                // Re-enable WiFi power save
+                esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
             }
         }
     }
