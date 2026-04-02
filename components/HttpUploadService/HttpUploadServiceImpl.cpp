@@ -8,6 +8,7 @@
 #include "freertos/task.h"
 #include "lwip/sockets.h"
 #include "lwip/netdb.h"
+#include "lwip/tcp.h"
 #include <cstdio>
 #include <cstring>
 
@@ -174,8 +175,11 @@ bool HttpUploadServiceImpl::uploadFile(const char* filename, const char* deviceI
         freeaddrinfo(res); fclose(fp); return false;
     }
 
-    struct timeval tv = { .tv_sec = 30, .tv_usec = 0 };
+    struct timeval tv = { .tv_sec = 5, .tv_usec = 0 };
     setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));  // also for recv
+    int nodelay = 1;
+    setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
 
     if (connect(sock, res->ai_addr, res->ai_addrlen) != 0) {
         ESP_LOGE(TAG, "TCP connect failed");
@@ -214,25 +218,40 @@ bool HttpUploadServiceImpl::uploadFile(const char* filename, const char* deviceI
     uint8_t buf[CHUNK_SIZE];
     uint32_t sent = 0;
     bool ok = true;
+    uint32_t lastLogTick = xTaskGetTickCount();
+
+    ESP_LOGI(TAG, "Starting body stream: %lu bytes", (unsigned long)remainSize);
 
     while (sent < remainSize) {
         size_t chunkLen = (remainSize - sent > CHUNK_SIZE) ? CHUNK_SIZE : (remainSize - sent);
         size_t br = fread(buf, 1, chunkLen, fp);
+        if (sent == 0) {
+            ESP_LOGI(TAG, "fread: %u bytes (first chunk)", (unsigned)br);
+        }
         if (br == 0) {
             ESP_LOGE(TAG, "Read error at %lu", (unsigned long)(resumeOffset + sent));
             ok = false; break;
         }
 
-        // Send with retry on EAGAIN (TCP buffer full — wait and retry)
+        // Send with retry on EAGAIN (TCP buffer full — wait and retry, max 60s)
         {
             size_t toSend = br;
             size_t bufOff = 0;
+            int retryCount = 0;
             while (toSend > 0) {
                 int w = send(sock, buf + bufOff, toSend, 0);
                 if (w > 0) {
                     bufOff += w;
                     toSend -= w;
+                    retryCount = 0;
                 } else if (w < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                    retryCount++;
+                    if (retryCount > 200) {  // 200 × 10ms + SO_SNDTIMEO waits ≈ 60s+
+                        ESP_LOGE(TAG, "Send stalled: %d retries at %lu",
+                                 retryCount, (unsigned long)(resumeOffset + sent + bufOff));
+                        ok = false;
+                        break;
+                    }
                     vTaskDelay(pdMS_TO_TICKS(10));
                 } else {
                     ESP_LOGE(TAG, "Send failed at %lu (errno=%d)",
@@ -244,14 +263,20 @@ bool HttpUploadServiceImpl::uploadFile(const char* filename, const char* deviceI
             if (!ok) break;
             sent += br;
         }
+        if (sent <= CHUNK_SIZE) {
+            ESP_LOGI(TAG, "send: first chunk OK, sent=%lu", (unsigned long)sent);
+        }
         mProgress.bytesSent = resumeOffset + sent;
 
-        // Progress every chunk (notify LCD) + log every 100KB
+        // Progress every chunk (notify LCD) + log every 5 seconds
         notifyProgress();
-        if (sent % (CHUNK_SIZE * 50) == 0 || sent >= remainSize) {
+        uint32_t now = xTaskGetTickCount();
+        if ((now - lastLogTick) >= pdMS_TO_TICKS(5000) || sent >= remainSize) {
             uint8_t pct = (uint8_t)((mProgress.bytesSent * 100ULL) / fileSize);
-            ESP_LOGI(TAG, "%s: %u%% (%lu/%lu)", filename, pct,
-                     (unsigned long)mProgress.bytesSent, (unsigned long)fileSize);
+            ESP_LOGI(TAG, "%s: %u%% sent=%luKB/%luKB", filename, pct,
+                     (unsigned long)(mProgress.bytesSent / 1024),
+                     (unsigned long)(fileSize / 1024));
+            lastLogTick = now;
         }
 
         if (Io::IoServiceImpl::getInstance().isCancelRequested()) {
