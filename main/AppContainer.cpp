@@ -157,13 +157,20 @@ void AppContainer::run() {
                     ESP_LOGI(TAG, "Upload complete: %u files", n);
                 }
 
+                bool wasCancelled = io->isCancelRequested();
                 io->disarmCancel();
-                sViewModel.showToast("Rebooting...", 2000);
-                ESP_LOGI(TAG, "Upload done — restarting to recover BLE + heap cleanly");
+
+                // BLE was deinited — must restart to recover cleanly
+                // (reinit in same boot leaks ~2KB, known ESP-IDF issue)
+                if (wasCancelled) {
+                    sViewModel.showToast("Cancelled.Reboot", 2000);
+                    ESP_LOGI(TAG, "Upload cancelled — restarting");
+                } else {
+                    sViewModel.showToast("Done! Reboot..", 2000);
+                    ESP_LOGI(TAG, "Upload done — restarting");
+                }
                 vTaskDelay(pdMS_TO_TICKS(2000));
                 esp_restart();
-                // BLE reinit in same boot cycle leaks ~2KB (known ESP-IDF issue)
-                // Clean restart is the official recommended approach
             }
         }
     }
