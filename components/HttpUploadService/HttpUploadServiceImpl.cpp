@@ -242,10 +242,15 @@ bool HttpUploadServiceImpl::uploadFile(const char* filename, const char* deviceI
         int rLen = recv(sock, resp, sizeof(resp) - 1, 0);
         if (rLen > 0) {
             resp[rLen] = '\0';
-            ok = (strstr(resp, "200") != nullptr);
-            ESP_LOGI(TAG, "%s: %s", filename, ok ? "OK (200)" : "FAILED");
+            // Parse HTTP status code from status line: "HTTP/1.x NNN ..."
+            const char* sp = strchr(resp, ' ');
+            int code = sp ? atoi(sp + 1) : 0;
+            ok = (code == 200 || code == 206);
+            ESP_LOGI(TAG, "%s: HTTP %d → %s", filename, code, ok ? "OK" : "FAILED");
         } else {
-            ESP_LOGW(TAG, "No response received");
+            ESP_LOGW(TAG, "%s: no response (recv=%d, errno=%d)",
+                     filename, rLen, errno);
+            ok = false;  // cannot confirm success
         }
     }
 
@@ -255,15 +260,22 @@ bool HttpUploadServiceImpl::uploadFile(const char* filename, const char* deviceI
 }
 
 // ---------------------------------------------------------------------------
-// Query resume offset (still uses esp_http_client — small GET, no body)
+// Query resume offset — streaming mode + Bearer auth
 // ---------------------------------------------------------------------------
 
 uint32_t HttpUploadServiceImpl::queryServerOffset(const char* filename,
                                                     const char* deviceId) {
+    auto& regSvc = Registration::RegistrationServiceImpl::getInstance();
+    const char* token = regSvc.isRegistered()
+                        ? regSvc.credentials().uploadToken : "";
+
     char url[128];
     snprintf(url, sizeof(url), "http://%s:%d/upload/%s/%s/status",
              CONFIG_UPLOAD_SERVER_HOST, CONFIG_UPLOAD_SERVER_PORT,
              deviceId, filename);
+
+    char authHeader[128];
+    snprintf(authHeader, sizeof(authHeader), "Bearer %s", token);
 
     esp_http_client_config_t cfg = {};
     cfg.url = url;
@@ -271,27 +283,48 @@ uint32_t HttpUploadServiceImpl::queryServerOffset(const char* filename,
     cfg.timeout_ms = 10000;
 
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
-    esp_err_t err = esp_http_client_perform(client);
+    if (!client) return 0;
+
+    esp_http_client_set_header(client, "Authorization", authHeader);
+
+    // Use streaming mode so we can read the body after fetching headers
+    esp_err_t err = esp_http_client_open(client, 0);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "queryOffset: connect failed: %s", esp_err_to_name(err));
+        esp_http_client_cleanup(client);
+        return 0;
+    }
+
+    esp_http_client_fetch_headers(client);
     int status = esp_http_client_get_status_code(client);
 
     uint32_t offset = 0;
-    if (err == ESP_OK && status == 200) {
+    if (status == 200) {
         char respBuf[128];
         int len = esp_http_client_read(client, respBuf, sizeof(respBuf) - 1);
         if (len > 0) {
             respBuf[len] = '\0';
-            const char* sizeStr = strstr(respBuf, "\"size\":");
-            if (sizeStr) {
-                sizeStr += 7;
-                while (*sizeStr == ' ') sizeStr++;
-                while (*sizeStr >= '0' && *sizeStr <= '9') {
-                    offset = offset * 10 + (*sizeStr - '0');
-                    sizeStr++;
+            const char* p = strstr(respBuf, "\"size\":");
+            if (p) {
+                p += 7;
+                while (*p == ' ') p++;
+                while (*p >= '0' && *p <= '9') {
+                    offset = offset * 10 + (*p - '0');
+                    p++;
                 }
             }
         }
+        ESP_LOGI(TAG, "queryOffset %s: server has %lu bytes", filename,
+                 (unsigned long)offset);
+    } else if (status == 404) {
+        ESP_LOGI(TAG, "queryOffset %s: not started (404)", filename);
+        offset = 0;
+    } else {
+        ESP_LOGW(TAG, "queryOffset %s: status=%d", filename, status);
+        offset = 0;
     }
 
+    esp_http_client_close(client);
     esp_http_client_cleanup(client);
     return offset;
 }
