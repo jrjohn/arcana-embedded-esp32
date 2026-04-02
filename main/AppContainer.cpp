@@ -1,5 +1,7 @@
 #include "AppContainer.hpp"
 #include "esp_wifi.h"
+#include "esp_bt.h"
+#include "esp_bt_main.h"
 #include "impl/SensorServiceImpl.hpp"
 #include "impl/BleTransportServiceImpl.hpp"
 #include "impl/MqttTransportServiceImpl.hpp"
@@ -104,26 +106,36 @@ void AppContainer::run() {
             if (io && io->isUploadRequested()) {
                 io->clearUploadRequest();
 
-                // Show toast + arm cancel (Button A again = cancel)
-                sViewModel.showToast("Uploading...", 0);
-                io->armCancel();
-
-                // Disable WiFi power save for reliable TCP throughput
-                esp_wifi_set_ps(WIFI_PS_NONE);
-
-                // Pause ECG recording FIRST to relieve heap pressure
-                // (ECG 1KHz consumes ~28KB/s; MQTT stop needs heap for free)
+                // 1. Pause ECG immediately (stop SD writes + free CPU)
                 if (mStorage) {
                     static_cast<Storage::AtsStorageServiceImpl&>(*mStorage).pauseRecording();
-                    vTaskDelay(pdMS_TO_TICKS(300));  // let ECG task yield + flush
                 }
-                ESP_LOGI(TAG, "Button A: upload — heap=%lu, disconnecting MQTT...",
+                sViewModel.showToast("Uploading...", 0);
+                io->armCancel();
+                vTaskDelay(pdMS_TO_TICKS(300));  // let ECG task yield
+
+                // 2. WiFi power save off
+                esp_wifi_set_ps(WIFI_PS_NONE);
+
+                // 3. Stop MQTT (needs heap, but ECG is paused so safe)
+                ESP_LOGI(TAG, "Upload: stopping MQTT (heap=%lu)...",
                          (unsigned long)esp_get_free_heap_size());
                 if (mqtt) mqtt->stop();
-                vTaskDelay(pdMS_TO_TICKS(500));
+                vTaskDelay(pdMS_TO_TICKS(300));
+
+                // 4. Deinit BLE stack to free ~50KB for TLS
+                if (mBle) mBle->stop();
+                esp_bluedroid_disable();
+                esp_bluedroid_deinit();
+                esp_bt_controller_disable();
+                esp_bt_controller_deinit();
+                ESP_LOGI(TAG, "Upload: BLE off, heap=%lu",
+                         (unsigned long)esp_get_free_heap_size());
 
                 if (upload) {
-                    // Set progress callback → updates LCD toast
+                    ESP_LOGI(TAG, "Starting upload (heap=%lu)...",
+                             (unsigned long)esp_get_free_heap_size());
+
                     upload->setProgressCallback(
                         [](uint8_t curFile, uint8_t totalFiles,
                            uint32_t bytesSent, uint32_t totalBytes, void*) {
@@ -150,6 +162,21 @@ void AppContainer::run() {
                 if (mStorage) {
                     static_cast<Storage::AtsStorageServiceImpl&>(*mStorage).resumeRecording();
                 }
+
+                // Reinit BLE stack (takes 2-3 seconds)
+                ESP_LOGI(TAG, "Reinitializing BLE stack...");
+                esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
+                esp_bt_controller_init(&bt_cfg);
+                esp_bt_controller_enable(ESP_BT_MODE_BLE);
+                esp_bluedroid_init();
+                esp_bluedroid_enable();
+                if (mBle) {
+                    mBle->init_HAL();
+                    mBle->init();
+                    mBle->start();
+                }
+                ESP_LOGI(TAG, "BLE stack restarted, heap=%lu",
+                         (unsigned long)esp_get_free_heap_size());
 
                 // Re-enable WiFi power save
                 esp_wifi_set_ps(WIFI_PS_MIN_MODEM);

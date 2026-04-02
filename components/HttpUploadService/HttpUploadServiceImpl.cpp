@@ -12,7 +12,7 @@
 static const char* TAG = "HttpUpload";
 
 #ifndef CONFIG_UPLOAD_SERVER_HOST
-#define CONFIG_UPLOAD_SERVER_HOST  "arcana.boo"
+#define CONFIG_UPLOAD_SERVER_HOST  "192.168.11.44"
 #endif
 #ifndef CONFIG_UPLOAD_SERVER_PORT
 #define CONFIG_UPLOAD_SERVER_PORT  8088
@@ -20,6 +20,20 @@ static const char* TAG = "HttpUpload";
 
 static const char* MOUNT_POINT = "/sdcard";
 static const size_t CHUNK_SIZE = 2048;
+
+// ECC P-256 self-signed cert for local HTTPS test server (611 bytes vs RSA 1147)
+static const char LOCAL_SERVER_CERT[] =
+"-----BEGIN CERTIFICATE-----\n"
+"MIIBlzCCATygAwIBAgIUHOkyHLjbJ7t1s++opThEv88gI80wCgYIKoZIzj0EAwIw\n"
+"GDEWMBQGA1UEAwwNMTkyLjE2OC4xMS40NDAeFw0yNjA0MDIxNDAyMzFaFw0yNzA0\n"
+"MDIxNDAyMzFaMBgxFjAUBgNVBAMMDTE5Mi4xNjguMTEuNDQwWTATBgcqhkjOPQIB\n"
+"BggqhkjOPQMBBwNCAATf2jDGtUWlg0llL7/DqAp5QNKtEjQA6/EwTZIOsdUZrDB0\n"
+"3AcpAUnA6MvNC79RosYnYtMtPrmC0UgajyVDtV29o2QwYjAdBgNVHQ4EFgQU9WW4\n"
+"O/NhIMTpkirAyMelDOgHto8wHwYDVR0jBBgwFoAU9WW4O/NhIMTpkirAyMelDOgH\n"
+"to8wDwYDVR0TAQH/BAUwAwEB/zAPBgNVHREECDAGhwTAqAssMAoGCCqGSM49BAMC\n"
+"A0kAMEYCIQDtzsA/80iLWDPMK5SXGixYoq9YeBw93lqm7BHhuz14/gIhAMcJrTZm\n"
+"Z9Pm0yYfG5F8r/fbNWWhHB0Z6DpnDHrxyvDe\n"
+"-----END CERTIFICATE-----\n";
 
 /// Check if upload token "{device_id}|{expiry}|{sig}" is expired
 static bool isTokenExpired(const char* token) {
@@ -122,7 +136,7 @@ done:
 }
 
 // ---------------------------------------------------------------------------
-// Upload single file — esp_http_client streaming mode
+// Upload single file — MINIMAL esp_http_client test (no auth, no resume)
 // ---------------------------------------------------------------------------
 
 bool HttpUploadServiceImpl::uploadFile(const char* filename, const char* deviceId,
@@ -138,139 +152,80 @@ bool HttpUploadServiceImpl::uploadFile(const char* filename, const char* deviceI
     fseek(fp, 0, SEEK_SET);
     if (fileSize == 0) { fclose(fp); return false; }
 
-    mProgress.totalBytes = fileSize;
-    mProgress.bytesSent = 0;
-
-    // Skip files > 50MB (esp_http_client blocks on very large POST bodies)
-    static const uint32_t MAX_UPLOAD_SIZE = 50 * 1024 * 1024;
-    if (fileSize > MAX_UPLOAD_SIZE) {
-        ESP_LOGW(TAG, "%s too large (%luMB > 50MB), skipping",
+    // Skip files > 50MB
+    if (fileSize > 50 * 1024 * 1024) {
+        ESP_LOGW(TAG, "%s too large (%luMB), skipping",
                  filename, (unsigned long)(fileSize / (1024*1024)));
         fclose(fp); return false;
     }
 
-    // Skip resume query — upload from start (DEBUG: isolate socket reuse issue)
-    uint32_t resumeOffset = 0;
-    ESP_LOGI(TAG, "Upload from start (resume disabled for debug)");
+    mProgress.totalBytes = fileSize;
+    mProgress.bytesSent = 0;
 
-    uint32_t remainSize = fileSize - resumeOffset;
-    mProgress.bytesSent = resumeOffset;
-
-    // --- esp_http_client streaming POST ---
+    // --- POST with HTTPS + Bearer auth ---
     char url[128];
-    snprintf(url, sizeof(url), "http://%s:%d/upload/%s/%s",
+    snprintf(url, sizeof(url), "https://%s:%d/upload/%s/%s",
              CONFIG_UPLOAD_SERVER_HOST, CONFIG_UPLOAD_SERVER_PORT,
              deviceId, filename);
-
-    char authHeader[128];
-    snprintf(authHeader, sizeof(authHeader), "Bearer %s", token);
-
-    char rangeHeader[64];
-    snprintf(rangeHeader, sizeof(rangeHeader), "bytes %lu-%lu/%lu",
-             (unsigned long)resumeOffset,
-             (unsigned long)(resumeOffset + remainSize - 1),
-             (unsigned long)fileSize);
 
     esp_http_client_config_t cfg = {};
     cfg.url = url;
     cfg.method = HTTP_METHOD_POST;
     cfg.timeout_ms = 30000;
-    cfg.buffer_size = 512;
-    cfg.buffer_size_tx = 512;
+    cfg.cert_pem = LOCAL_SERVER_CERT;
+    cfg.skip_cert_common_name_check = true;  // IP-based CN
 
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
     if (!client) { fclose(fp); return false; }
 
+    // Auth header
+    char authHeader[128];
+    snprintf(authHeader, sizeof(authHeader), "Bearer %s", token);
     esp_http_client_set_header(client, "Authorization", authHeader);
-    esp_http_client_set_header(client, "Content-Type", "application/octet-stream");
-    esp_http_client_set_header(client, "Content-Range", rangeHeader);
-    esp_http_client_set_header(client, "Connection", "close");
 
-    // Verify connectivity before upload (small GET to /health)
-    {
-        char healthUrl[80];
-        snprintf(healthUrl, sizeof(healthUrl), "http://%s:%d/health",
-                 CONFIG_UPLOAD_SERVER_HOST, CONFIG_UPLOAD_SERVER_PORT);
-        esp_http_client_config_t hcfg = {};
-        hcfg.url = healthUrl;
-        hcfg.timeout_ms = 10000;
-        auto* hc = esp_http_client_init(&hcfg);
-        esp_err_t herr = esp_http_client_perform(hc);
-        int hstatus = esp_http_client_get_status_code(hc);
-        ESP_LOGI(TAG, "Health check: err=%s status=%d heap=%lu",
-                 esp_err_to_name(herr), hstatus,
-                 (unsigned long)esp_get_free_heap_size());
-        esp_http_client_cleanup(hc);
-        if (herr != ESP_OK || hstatus != 200) {
-            ESP_LOGE(TAG, "Server unreachable — aborting upload");
-            fclose(fp); return false;
-        }
-        vTaskDelay(pdMS_TO_TICKS(500));  // let socket TIME_WAIT settle
-    }
+    ESP_LOGI(TAG, "open(%s, %lu bytes) heap=%lu", filename,
+             (unsigned long)fileSize, (unsigned long)esp_get_free_heap_size());
 
-    // Open connection and send headers (streaming: we provide body via write())
-    ESP_LOGI(TAG, "Opening upload connection (heap=%lu)...",
-             (unsigned long)esp_get_free_heap_size());
-    esp_err_t err = esp_http_client_open(client, (int)remainSize);
+    esp_err_t err = esp_http_client_open(client, (int)fileSize);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "HTTP open failed: %s", esp_err_to_name(err));
-        esp_http_client_cleanup(client);
-        fclose(fp); return false;
+        ESP_LOGE(TAG, "open failed: %s", esp_err_to_name(err));
+        esp_http_client_cleanup(client); fclose(fp); return false;
     }
-    ESP_LOGI(TAG, "Connection open OK (heap=%lu)",
+
+    ESP_LOGI(TAG, "open OK, heap=%lu, writing...",
              (unsigned long)esp_get_free_heap_size());
 
-    ESP_LOGI(TAG, "POST %s (%lu bytes, offset=%lu)", filename,
-             (unsigned long)remainSize, (unsigned long)resumeOffset);
-
-    // --- Stream file body via esp_http_client_write ---
-    uint8_t buf[CHUNK_SIZE];
+    // Stream body
+    uint8_t buf[1024];  // smaller chunk
     uint32_t sent = 0;
     bool ok = true;
-    uint32_t lastLogTick = xTaskGetTickCount();
 
-    while (sent < remainSize) {
-        size_t chunkLen = (remainSize - sent > CHUNK_SIZE) ? CHUNK_SIZE : (remainSize - sent);
-        size_t br = fread(buf, 1, chunkLen, fp);
-        if (br == 0) {
-            ESP_LOGE(TAG, "Read error at %lu", (unsigned long)(resumeOffset + sent));
+    while (sent < fileSize) {
+        size_t want = (fileSize - sent > sizeof(buf)) ? sizeof(buf) : (fileSize - sent);
+        size_t br = fread(buf, 1, want, fp);
+        if (br == 0) { ESP_LOGE(TAG, "fread err at %lu", (unsigned long)sent); ok = false; break; }
+
+        int w = esp_http_client_write(client, (const char*)buf, (int)br);
+        if (w <= 0) {
+            ESP_LOGE(TAG, "write err at %lu: w=%d errno=%d", (unsigned long)sent, w, errno);
             ok = false; break;
         }
-
-        int written = esp_http_client_write(client, (const char*)buf, (int)br);
-        if (written <= 0) {
-            ESP_LOGE(TAG, "Write failed at %lu (err=%d, errno=%d)",
-                     (unsigned long)(resumeOffset + sent), written, errno);
-            ok = false; break;
-        }
-        sent += written;
-        // Pace writes — give TCP stack time to drain buffer + receive ACKs
-        vTaskDelay(pdMS_TO_TICKS(20));
-        mProgress.bytesSent = resumeOffset + sent;
-
+        sent += w;
+        mProgress.bytesSent = sent;
         notifyProgress();
-        uint32_t now = xTaskGetTickCount();
-        if ((now - lastLogTick) >= pdMS_TO_TICKS(5000) || sent >= remainSize) {
-            uint8_t pct = (uint8_t)((mProgress.bytesSent * 100ULL) / fileSize);
-            ESP_LOGI(TAG, "%s: %u%% sent=%luKB/%luKB", filename, pct,
-                     (unsigned long)(mProgress.bytesSent / 1024),
-                     (unsigned long)(fileSize / 1024));
-            lastLogTick = now;
-        }
 
-        if (Io::IoServiceImpl::getInstance().isCancelRequested()) {
-            ESP_LOGI(TAG, "Cancelled");
-            ok = false; break;
+        if (sent % (50 * 1024) < 1024) {
+            ESP_LOGI(TAG, "%s: %luKB/%luKB", filename,
+                     (unsigned long)(sent/1024), (unsigned long)(fileSize/1024));
         }
     }
 
-    // --- Read HTTP response ---
     if (ok) {
-        int contentLen = esp_http_client_fetch_headers(client);
+        int clen = esp_http_client_fetch_headers(client);
         int status = esp_http_client_get_status_code(client);
-        ok = (status == 200 || status == 206);
-        ESP_LOGI(TAG, "%s: HTTP %d (body=%d) → %s", filename, status,
-                 contentLen, ok ? "OK" : "FAILED");
+        ESP_LOGI(TAG, "%s: HTTP %d (clen=%d) → %s", filename, status, clen,
+                 (status >= 200 && status < 300) ? "OK" : "FAIL");
+        ok = (status >= 200 && status < 300);
     }
 
     esp_http_client_close(client);
@@ -290,7 +245,7 @@ uint32_t HttpUploadServiceImpl::queryServerOffset(const char* filename,
                         ? regSvc.credentials().uploadToken : "";
 
     char url[128];
-    snprintf(url, sizeof(url), "http://%s:%d/upload/%s/%s/status",
+    snprintf(url, sizeof(url), "https://%s:%d/upload/%s/%s/status",
              CONFIG_UPLOAD_SERVER_HOST, CONFIG_UPLOAD_SERVER_PORT,
              deviceId, filename);
 
