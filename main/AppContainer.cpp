@@ -107,7 +107,14 @@ void AppContainer::run() {
                 sViewModel.showToast("Uploading...", 0);
                 io->armCancel();
 
-                ESP_LOGI(TAG, "Button A: upload — disconnecting MQTT...");
+                // Pause ECG recording FIRST to relieve heap pressure
+                // (ECG 1KHz consumes ~28KB/s; MQTT stop needs heap for free)
+                if (mStorage) {
+                    static_cast<Storage::AtsStorageServiceImpl&>(*mStorage).pauseRecording();
+                    vTaskDelay(pdMS_TO_TICKS(300));  // let ECG task yield + flush
+                }
+                ESP_LOGI(TAG, "Button A: upload — heap=%lu, disconnecting MQTT...",
+                         (unsigned long)esp_get_free_heap_size());
                 if (mqtt) mqtt->stop();
                 vTaskDelay(pdMS_TO_TICKS(500));
 
@@ -134,6 +141,11 @@ void AppContainer::run() {
 
                 ESP_LOGI(TAG, "Reconnecting MQTT...");
                 if (mqtt) mqtt->start();
+
+                // Resume ECG recording (safe even if uploadPendingFiles already resumed)
+                if (mStorage) {
+                    static_cast<Storage::AtsStorageServiceImpl&>(*mStorage).resumeRecording();
+                }
             }
         }
     }
