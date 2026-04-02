@@ -4,6 +4,7 @@
 #include "impl/IoServiceImpl.hpp"
 #include "esp_log.h"
 #include "esp_http_client.h"
+#include "esp_crt_bundle.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <cstdio>
@@ -12,10 +13,10 @@
 static const char* TAG = "HttpUpload";
 
 #ifndef CONFIG_UPLOAD_SERVER_HOST
-#define CONFIG_UPLOAD_SERVER_HOST  "192.168.11.44"
+#define CONFIG_UPLOAD_SERVER_HOST  "arcana.boo"
 #endif
 #ifndef CONFIG_UPLOAD_SERVER_PORT
-#define CONFIG_UPLOAD_SERVER_PORT  8088
+#define CONFIG_UPLOAD_SERVER_PORT  443
 #endif
 
 static const char* MOUNT_POINT = "/sdcard";
@@ -172,8 +173,7 @@ bool HttpUploadServiceImpl::uploadFile(const char* filename, const char* deviceI
     cfg.url = url;
     cfg.method = HTTP_METHOD_POST;
     cfg.timeout_ms = 30000;
-    cfg.cert_pem = LOCAL_SERVER_CERT;
-    cfg.skip_cert_common_name_check = true;  // IP-based CN
+    cfg.crt_bundle_attach = esp_crt_bundle_attach;  // Let's Encrypt via ESP-IDF bundle
 
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
     if (!client) { fclose(fp); return false; }
@@ -256,6 +256,7 @@ uint32_t HttpUploadServiceImpl::queryServerOffset(const char* filename,
     cfg.url = url;
     cfg.method = HTTP_METHOD_GET;
     cfg.timeout_ms = 10000;
+    cfg.crt_bundle_attach = esp_crt_bundle_attach;
 
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
     if (!client) return 0;
