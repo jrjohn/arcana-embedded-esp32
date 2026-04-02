@@ -23,6 +23,21 @@ static const char* TAG = "HttpUpload";
 static const char* MOUNT_POINT = "/sdcard";
 static const size_t CHUNK_SIZE = 2048;
 
+/// Check if upload token "{device_id}|{expiry}|{sig}" is expired
+static bool isTokenExpired(const char* token) {
+    if (!token || token[0] == '\0') return true;
+    const char* p = strchr(token, '|');
+    if (!p) return true;
+    uint32_t expiry = 0;
+    for (const char* c = p + 1; *c >= '0' && *c <= '9'; c++) {
+        expiry = expiry * 10 + (*c - '0');
+    }
+    if (expiry == 0) return true;
+    time_t now;
+    time(&now);
+    return (now > 1577836800) && ((uint32_t)now > expiry);  // only check if NTP synced
+}
+
 namespace Arcana::Upload {
 
 HttpUploadServiceImpl& HttpUploadServiceImpl::getInstance() {
@@ -47,6 +62,17 @@ uint8_t HttpUploadServiceImpl::uploadPendingFiles() {
     const char* deviceId = regSvc.deviceId();
     const char* token = regSvc.isRegistered()
                         ? regSvc.credentials().uploadToken : "";
+
+    // Refresh token if expired (re-register to get new 30-day token)
+    if (isTokenExpired(token)) {
+        ESP_LOGW(TAG, "Upload token expired — refreshing");
+        if (regSvc.refreshToken()) {
+            token = regSvc.credentials().uploadToken;
+            ESP_LOGI(TAG, "New token: %.40s...", token);
+        } else {
+            ESP_LOGE(TAG, "Token refresh failed — upload will likely fail");
+        }
+    }
 
     storage.pauseRecording();
     vTaskDelay(pdMS_TO_TICKS(500));

@@ -12,6 +12,7 @@ public:
     const Credentials& credentials() const override { return mCreds; }
     bool doRegistration() override;
     bool loadCredentials() override;
+    bool refreshToken() override;
     const char* deviceId() const override { return mDeviceId; }
 
     bool saveCredentials();

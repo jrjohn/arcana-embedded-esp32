@@ -35,6 +35,9 @@ public:
     /// Load credentials from device.ats. Call at boot.
     virtual bool loadCredentials() = 0;
 
+    /// Force re-register to refresh expired upload token.
+    virtual bool refreshToken() = 0;
+
     /// Get device ID (MAC-based hex string)
     virtual const char* deviceId() const = 0;
 

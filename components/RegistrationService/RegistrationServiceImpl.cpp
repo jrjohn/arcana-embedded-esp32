@@ -231,6 +231,24 @@ bool RegistrationServiceImpl::doRegistration() {
     return true;
 }
 
+bool RegistrationServiceImpl::refreshToken() {
+    ESP_LOGI(TAG, "Refreshing upload token (re-register)...");
+    mCreds.valid = false;  // bypass doRegistration() early return
+
+    if (!httpRegister()) {
+        ESP_LOGE(TAG, "Token refresh failed");
+        return false;
+    }
+
+    if (!saveCredentials()) {
+        vTaskDelay(pdMS_TO_TICKS(2000));
+        saveCredentials();
+    }
+
+    ESP_LOGI(TAG, "Token refreshed: %.60s...", mCreds.uploadToken);
+    return mCreds.valid;
+}
+
 // HTTP response buffer (shared static to avoid stack pressure)
 static uint8_t sRespBuf[512];
 static int sRespLen = 0;
