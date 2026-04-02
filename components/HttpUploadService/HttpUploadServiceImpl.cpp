@@ -141,15 +141,17 @@ bool HttpUploadServiceImpl::uploadFile(const char* filename, const char* deviceI
     mProgress.totalBytes = fileSize;
     mProgress.bytesSent = 0;
 
-    uint32_t resumeOffset = queryServerOffset(filename, deviceId);
-    if (resumeOffset >= fileSize) {
-        ESP_LOGI(TAG, "%s already uploaded", filename);
-        fclose(fp); return true;
+    // Skip files > 50MB (esp_http_client blocks on very large POST bodies)
+    static const uint32_t MAX_UPLOAD_SIZE = 50 * 1024 * 1024;
+    if (fileSize > MAX_UPLOAD_SIZE) {
+        ESP_LOGW(TAG, "%s too large (%luMB > 50MB), skipping",
+                 filename, (unsigned long)(fileSize / (1024*1024)));
+        fclose(fp); return false;
     }
-    if (resumeOffset > 0) {
-        ESP_LOGI(TAG, "Resuming from %lu/%lu", (unsigned long)resumeOffset, (unsigned long)fileSize);
-        fseek(fp, resumeOffset, SEEK_SET);
-    }
+
+    // Skip resume query — upload from start (DEBUG: isolate socket reuse issue)
+    uint32_t resumeOffset = 0;
+    ESP_LOGI(TAG, "Upload from start (resume disabled for debug)");
 
     uint32_t remainSize = fileSize - resumeOffset;
     mProgress.bytesSent = resumeOffset;
@@ -173,8 +175,8 @@ bool HttpUploadServiceImpl::uploadFile(const char* filename, const char* deviceI
     cfg.url = url;
     cfg.method = HTTP_METHOD_POST;
     cfg.timeout_ms = 30000;
-    cfg.buffer_size = 2048;
-    cfg.buffer_size_tx = 2048;
+    cfg.buffer_size = 512;
+    cfg.buffer_size_tx = 512;
 
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
     if (!client) { fclose(fp); return false; }
@@ -184,13 +186,39 @@ bool HttpUploadServiceImpl::uploadFile(const char* filename, const char* deviceI
     esp_http_client_set_header(client, "Content-Range", rangeHeader);
     esp_http_client_set_header(client, "Connection", "close");
 
+    // Verify connectivity before upload (small GET to /health)
+    {
+        char healthUrl[80];
+        snprintf(healthUrl, sizeof(healthUrl), "http://%s:%d/health",
+                 CONFIG_UPLOAD_SERVER_HOST, CONFIG_UPLOAD_SERVER_PORT);
+        esp_http_client_config_t hcfg = {};
+        hcfg.url = healthUrl;
+        hcfg.timeout_ms = 10000;
+        auto* hc = esp_http_client_init(&hcfg);
+        esp_err_t herr = esp_http_client_perform(hc);
+        int hstatus = esp_http_client_get_status_code(hc);
+        ESP_LOGI(TAG, "Health check: err=%s status=%d heap=%lu",
+                 esp_err_to_name(herr), hstatus,
+                 (unsigned long)esp_get_free_heap_size());
+        esp_http_client_cleanup(hc);
+        if (herr != ESP_OK || hstatus != 200) {
+            ESP_LOGE(TAG, "Server unreachable — aborting upload");
+            fclose(fp); return false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(500));  // let socket TIME_WAIT settle
+    }
+
     // Open connection and send headers (streaming: we provide body via write())
+    ESP_LOGI(TAG, "Opening upload connection (heap=%lu)...",
+             (unsigned long)esp_get_free_heap_size());
     esp_err_t err = esp_http_client_open(client, (int)remainSize);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "HTTP open failed: %s", esp_err_to_name(err));
         esp_http_client_cleanup(client);
         fclose(fp); return false;
     }
+    ESP_LOGI(TAG, "Connection open OK (heap=%lu)",
+             (unsigned long)esp_get_free_heap_size());
 
     ESP_LOGI(TAG, "POST %s (%lu bytes, offset=%lu)", filename,
              (unsigned long)remainSize, (unsigned long)resumeOffset);
@@ -210,12 +238,14 @@ bool HttpUploadServiceImpl::uploadFile(const char* filename, const char* deviceI
         }
 
         int written = esp_http_client_write(client, (const char*)buf, (int)br);
-        if (written < 0) {
-            ESP_LOGE(TAG, "Write failed at %lu (err=%d)",
-                     (unsigned long)(resumeOffset + sent), written);
+        if (written <= 0) {
+            ESP_LOGE(TAG, "Write failed at %lu (err=%d, errno=%d)",
+                     (unsigned long)(resumeOffset + sent), written, errno);
             ok = false; break;
         }
         sent += written;
+        // Pace writes — give TCP stack time to drain buffer + receive ACKs
+        vTaskDelay(pdMS_TO_TICKS(20));
         mProgress.bytesSent = resumeOffset + sent;
 
         notifyProgress();
