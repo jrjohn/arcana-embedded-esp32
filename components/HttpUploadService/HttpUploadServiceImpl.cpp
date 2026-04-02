@@ -153,15 +153,8 @@ bool HttpUploadServiceImpl::uploadFile(const char* filename, const char* deviceI
     fseek(fp, 0, SEEK_SET);
     if (fileSize == 0) { fclose(fp); return false; }
 
-    // Skip files > 50MB (ECG 1KHz generates ~2.4GB/day)
-    static const uint32_t MAX_UPLOAD_SIZE = 50 * 1024 * 1024;
-    if (fileSize > MAX_UPLOAD_SIZE) {
-        ESP_LOGW(TAG, "%s too large (%luMB > 50MB), skipping",
-                 filename, (unsigned long)(fileSize / (1024*1024)));
-        fclose(fp); return false;
-    }
-
     mProgress.totalBytes = fileSize;
+    ESP_LOGI(TAG, "%s: %luKB on SD", filename, (unsigned long)(fileSize / 1024));
     mProgress.bytesSent = 0;
 
     // Resume: query server for already-uploaded bytes
