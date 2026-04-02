@@ -158,33 +158,12 @@ void AppContainer::run() {
                 }
 
                 io->disarmCancel();
-                sViewModel.showToast("Upload done!", 3000);
-
-                ESP_LOGI(TAG, "Reconnecting MQTT...");
-                if (mqtt) mqtt->start();
-
-                // Resume ECG recording (safe even if uploadPendingFiles already resumed)
-                if (mStorage) {
-                    static_cast<Storage::AtsStorageServiceImpl&>(*mStorage).resumeRecording();
-                }
-
-                // Reinit BLE stack (takes 2-3 seconds)
-                ESP_LOGI(TAG, "Reinitializing BLE stack...");
-                esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
-                esp_bt_controller_init(&bt_cfg);
-                esp_bt_controller_enable(ESP_BT_MODE_BLE);
-                esp_bluedroid_init();
-                esp_bluedroid_enable();
-                if (mBle) {
-                    mBle->init_HAL();
-                    mBle->init();
-                    mBle->start();
-                }
-                ESP_LOGI(TAG, "BLE stack restarted, heap=%lu",
-                         (unsigned long)esp_get_free_heap_size());
-
-                // Re-enable WiFi power save
-                esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+                sViewModel.showToast("Rebooting...", 2000);
+                ESP_LOGI(TAG, "Upload done — restarting to recover BLE + heap cleanly");
+                vTaskDelay(pdMS_TO_TICKS(2000));
+                esp_restart();
+                // BLE reinit in same boot cycle leaks ~2KB (known ESP-IDF issue)
+                // Clean restart is the official recommended approach
             }
         }
     }
