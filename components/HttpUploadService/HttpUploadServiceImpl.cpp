@@ -6,9 +6,6 @@
 #include "esp_http_client.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "lwip/sockets.h"
-#include "lwip/netdb.h"
-#include "lwip/tcp.h"
 #include <cstdio>
 #include <cstring>
 
@@ -125,7 +122,7 @@ done:
 }
 
 // ---------------------------------------------------------------------------
-// Upload single file — raw TCP socket (like STM32 transparent mode)
+// Upload single file — esp_http_client streaming mode
 // ---------------------------------------------------------------------------
 
 bool HttpUploadServiceImpl::uploadFile(const char* filename, const char* deviceId,
@@ -157,118 +154,70 @@ bool HttpUploadServiceImpl::uploadFile(const char* filename, const char* deviceI
     uint32_t remainSize = fileSize - resumeOffset;
     mProgress.bytesSent = resumeOffset;
 
-    // --- Raw TCP connect (like STM32 AT+CIPSTART) ---
-    struct addrinfo hints = {}, *res = nullptr;
-    hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_STREAM;
-    char portStr[8];
-    snprintf(portStr, sizeof(portStr), "%d", CONFIG_UPLOAD_SERVER_PORT);
+    // --- esp_http_client streaming POST ---
+    char url[128];
+    snprintf(url, sizeof(url), "http://%s:%d/upload/%s/%s",
+             CONFIG_UPLOAD_SERVER_HOST, CONFIG_UPLOAD_SERVER_PORT,
+             deviceId, filename);
 
-    if (getaddrinfo(CONFIG_UPLOAD_SERVER_HOST, portStr, &hints, &res) != 0 || !res) {
-        ESP_LOGE(TAG, "DNS failed: %s", CONFIG_UPLOAD_SERVER_HOST);
+    char authHeader[128];
+    snprintf(authHeader, sizeof(authHeader), "Bearer %s", token);
+
+    char rangeHeader[64];
+    snprintf(rangeHeader, sizeof(rangeHeader), "bytes %lu-%lu/%lu",
+             (unsigned long)resumeOffset,
+             (unsigned long)(resumeOffset + remainSize - 1),
+             (unsigned long)fileSize);
+
+    esp_http_client_config_t cfg = {};
+    cfg.url = url;
+    cfg.method = HTTP_METHOD_POST;
+    cfg.timeout_ms = 30000;
+    cfg.buffer_size = 2048;
+    cfg.buffer_size_tx = 2048;
+
+    esp_http_client_handle_t client = esp_http_client_init(&cfg);
+    if (!client) { fclose(fp); return false; }
+
+    esp_http_client_set_header(client, "Authorization", authHeader);
+    esp_http_client_set_header(client, "Content-Type", "application/octet-stream");
+    esp_http_client_set_header(client, "Content-Range", rangeHeader);
+    esp_http_client_set_header(client, "Connection", "close");
+
+    // Open connection and send headers (streaming: we provide body via write())
+    esp_err_t err = esp_http_client_open(client, (int)remainSize);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "HTTP open failed: %s", esp_err_to_name(err));
+        esp_http_client_cleanup(client);
         fclose(fp); return false;
     }
-
-    int sock = socket(res->ai_family, res->ai_socktype, 0);
-    if (sock < 0) {
-        ESP_LOGE(TAG, "Socket failed");
-        freeaddrinfo(res); fclose(fp); return false;
-    }
-
-    struct timeval tv = { .tv_sec = 5, .tv_usec = 0 };
-    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));  // also for recv
-    int nodelay = 1;
-    setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
-
-    if (connect(sock, res->ai_addr, res->ai_addrlen) != 0) {
-        ESP_LOGE(TAG, "TCP connect failed");
-        close(sock); freeaddrinfo(res); fclose(fp); return false;
-    }
-    freeaddrinfo(res);
-    ESP_LOGI(TAG, "TCP connected");
-
-    // --- Build raw HTTP header (like STM32) ---
-    char header[448];
-    uint32_t rangeEnd = resumeOffset + remainSize - 1;
-    int hLen = snprintf(header, sizeof(header),
-        "POST /upload/%s/%s HTTP/1.1\r\n"
-        "Host: %s\r\n"
-        "Authorization: Bearer %s\r\n"
-        "Content-Length: %lu\r\n"
-        "Content-Range: bytes %lu-%lu/%lu\r\n"
-        "Content-Type: application/octet-stream\r\n"
-        "Connection: close\r\n"
-        "\r\n",
-        deviceId, filename, CONFIG_UPLOAD_SERVER_HOST,
-        token,
-        (unsigned long)remainSize,
-        (unsigned long)resumeOffset, (unsigned long)rangeEnd,
-        (unsigned long)fileSize);
 
     ESP_LOGI(TAG, "POST %s (%lu bytes, offset=%lu)", filename,
              (unsigned long)remainSize, (unsigned long)resumeOffset);
 
-    if (send(sock, header, hLen, 0) != hLen) {
-        ESP_LOGE(TAG, "Header send failed");
-        close(sock); fclose(fp); return false;
-    }
-
-    // --- Stream file body ---
+    // --- Stream file body via esp_http_client_write ---
     uint8_t buf[CHUNK_SIZE];
     uint32_t sent = 0;
     bool ok = true;
     uint32_t lastLogTick = xTaskGetTickCount();
 
-    ESP_LOGI(TAG, "Starting body stream: %lu bytes", (unsigned long)remainSize);
-
     while (sent < remainSize) {
         size_t chunkLen = (remainSize - sent > CHUNK_SIZE) ? CHUNK_SIZE : (remainSize - sent);
         size_t br = fread(buf, 1, chunkLen, fp);
-        if (sent == 0) {
-            ESP_LOGI(TAG, "fread: %u bytes (first chunk)", (unsigned)br);
-        }
         if (br == 0) {
             ESP_LOGE(TAG, "Read error at %lu", (unsigned long)(resumeOffset + sent));
             ok = false; break;
         }
 
-        // Send with retry on EAGAIN (TCP buffer full — wait and retry, max 60s)
-        {
-            size_t toSend = br;
-            size_t bufOff = 0;
-            int retryCount = 0;
-            while (toSend > 0) {
-                int w = send(sock, buf + bufOff, toSend, 0);
-                if (w > 0) {
-                    bufOff += w;
-                    toSend -= w;
-                    retryCount = 0;
-                } else if (w < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-                    retryCount++;
-                    if (retryCount > 200) {  // 200 × 10ms + SO_SNDTIMEO waits ≈ 60s+
-                        ESP_LOGE(TAG, "Send stalled: %d retries at %lu",
-                                 retryCount, (unsigned long)(resumeOffset + sent + bufOff));
-                        ok = false;
-                        break;
-                    }
-                    vTaskDelay(pdMS_TO_TICKS(10));
-                } else {
-                    ESP_LOGE(TAG, "Send failed at %lu (errno=%d)",
-                             (unsigned long)(resumeOffset + sent + bufOff), errno);
-                    ok = false;
-                    break;
-                }
-            }
-            if (!ok) break;
-            sent += br;
+        int written = esp_http_client_write(client, (const char*)buf, (int)br);
+        if (written < 0) {
+            ESP_LOGE(TAG, "Write failed at %lu (err=%d)",
+                     (unsigned long)(resumeOffset + sent), written);
+            ok = false; break;
         }
-        if (sent <= CHUNK_SIZE) {
-            ESP_LOGI(TAG, "send: first chunk OK, sent=%lu", (unsigned long)sent);
-        }
+        sent += written;
         mProgress.bytesSent = resumeOffset + sent;
 
-        // Progress every chunk (notify LCD) + log every 5 seconds
         notifyProgress();
         uint32_t now = xTaskGetTickCount();
         if ((now - lastLogTick) >= pdMS_TO_TICKS(5000) || sent >= remainSize) {
@@ -287,25 +236,15 @@ bool HttpUploadServiceImpl::uploadFile(const char* filename, const char* deviceI
 
     // --- Read HTTP response ---
     if (ok) {
-        tv.tv_sec = 10;
-        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-        char resp[256];
-        int rLen = recv(sock, resp, sizeof(resp) - 1, 0);
-        if (rLen > 0) {
-            resp[rLen] = '\0';
-            // Parse HTTP status code from status line: "HTTP/1.x NNN ..."
-            const char* sp = strchr(resp, ' ');
-            int code = sp ? atoi(sp + 1) : 0;
-            ok = (code == 200 || code == 206);
-            ESP_LOGI(TAG, "%s: HTTP %d → %s", filename, code, ok ? "OK" : "FAILED");
-        } else {
-            ESP_LOGW(TAG, "%s: no response (recv=%d, errno=%d)",
-                     filename, rLen, errno);
-            ok = false;  // cannot confirm success
-        }
+        int contentLen = esp_http_client_fetch_headers(client);
+        int status = esp_http_client_get_status_code(client);
+        ok = (status == 200 || status == 206);
+        ESP_LOGI(TAG, "%s: HTTP %d (body=%d) → %s", filename, status,
+                 contentLen, ok ? "OK" : "FAILED");
     }
 
-    close(sock);
+    esp_http_client_close(client);
+    esp_http_client_cleanup(client);
     fclose(fp);
     return ok;
 }
