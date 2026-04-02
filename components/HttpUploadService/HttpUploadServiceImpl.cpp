@@ -233,9 +233,8 @@ bool HttpUploadServiceImpl::uploadFile(const char* filename, const char* deviceI
         mProgress.bytesSent = resumeOffset + sent;
         notifyProgress();
 
-        // Cancel check
+        // Cancel check (don't clear — let uploadPendingFiles see it too)
         if (Io::IoServiceImpl::getInstance().isCancelRequested()) {
-            Io::IoServiceImpl::getInstance().clearCancelRequest();
             ESP_LOGI(TAG, "Cancelled at %luKB/%luKB",
                      (unsigned long)((resumeOffset + sent) / 1024),
                      (unsigned long)(fileSize / 1024));
