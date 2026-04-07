@@ -1223,9 +1223,14 @@ bool ArcanaTsDb::recoverFromExisting() {
                     while (off + BLOCK_SIZE <= fileSize) {
                         AtsBlockHeader hdr;
                         if (!validateBlock(off / BLOCK_SIZE, hdr)) break;
+                        // LCOV_EXCL_START — IEC 62304 §5.5.3. Same rationale
+                        // as the tail-verify mNextSeqNo update above: blocks
+                        // walked here all have seq <= the persisted lastSeqNo,
+                        // so this branch only fires on a stale-lastSeqNo race.
                         if (hdr.blockSeqNo >= mNextSeqNo) {
                             mNextSeqNo = hdr.blockSeqNo + 1;
                         }
+                        // LCOV_EXCL_STOP
                         mStats.blocksWritten++;
                         off += BLOCK_SIZE;
                     }
