@@ -93,6 +93,8 @@ extern "C" BaseType_t xTaskCreate(TaskFunction_t, const char*, uint32_t, void*,
 extern "C" void       vTaskDelete(TaskHandle_t)        {}
 extern "C" void       vTaskDelay(TickType_t)           {}
 extern "C" TickType_t xTaskGetTickCount(void)          { return 0; }
+extern "C" BaseType_t xTaskNotifyGive(TaskHandle_t)    { return pdTRUE; }
+extern "C" uint32_t   ulTaskNotifyTake(BaseType_t, TickType_t) { return 0; }
 
 // ────────────────────────────────────────────────────────────────────────────
 // esp_timer stubs

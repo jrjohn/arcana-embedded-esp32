@@ -1,6 +1,8 @@
 #pragma once
 #include "FreeRTOS.h"
 
+#define tskIDLE_PRIORITY ((UBaseType_t)0)
+
 typedef void* TaskHandle_t;
 typedef void (*TaskFunction_t)(void*);
 
@@ -12,6 +14,8 @@ BaseType_t xTaskCreate(TaskFunction_t pxTaskCode, const char* pcName, uint32_t u
 void       vTaskDelete(TaskHandle_t xTaskToDelete);
 void       vTaskDelay(TickType_t xTicksToDelay);
 TickType_t xTaskGetTickCount(void);
+BaseType_t xTaskNotifyGive(TaskHandle_t xTaskToNotify);
+uint32_t   ulTaskNotifyTake(BaseType_t xClearCountOnExit, TickType_t xTicksToWait);
 #ifdef __cplusplus
 }
 #endif

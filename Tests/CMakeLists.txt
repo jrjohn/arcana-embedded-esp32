@@ -25,6 +25,7 @@ set(CMD_INC       ${PROJECT_ROOT}/components/CommandService/include)
 set(CMD_SRC       ${PROJECT_ROOT}/components/CommandService/src)
 set(OBS_INC       ${PROJECT_ROOT}/components/ObservableSensor/include)
 set(ATS_INC       ${PROJECT_ROOT}/components/ArcanaTs/include)
+set(ATS_SRC       ${PROJECT_ROOT}/components/ArcanaTs/src)
 
 # Common includes — mocks FIRST so they override real ESP-IDF / FreeRTOS headers
 set(COMMON_INCS
@@ -67,6 +68,33 @@ target_link_libraries(test_chacha20 PRIVATE GTest::gtest_main)
 add_executable(test_ats_schema test_ats_schema.cpp)
 target_include_directories(test_ats_schema PRIVATE ${COMMON_INCS})
 target_link_libraries(test_ats_schema PRIVATE GTest::gtest_main)
+
+# ── test_vfs_file_port (POSIX file wrapper, /tmp as mount point) ─────────────
+add_executable(test_vfs_file_port
+    test_vfs_file_port.cpp
+    ${ATS_SRC}/VfsFilePort.cpp
+)
+target_include_directories(test_vfs_file_port PRIVATE ${COMMON_INCS})
+target_link_libraries(test_vfs_file_port PRIVATE GTest::gtest_main)
+
+# ── test_lcd_viewmodel (header-only MVVM ViewModel) ──────────────────────────
+add_executable(test_lcd_viewmodel test_lcd_viewmodel.cpp)
+target_include_directories(test_lcd_viewmodel PRIVATE
+    ${COMMON_INCS}
+    ${PROJECT_ROOT}/components/OledDisplay/include
+)
+target_link_libraries(test_lcd_viewmodel PRIVATE GTest::gtest_main esp_stubs)
+
+# ── test_main_view (View + stub Ssd1306 for I2C-free testing) ────────────────
+add_executable(test_main_view
+    test_main_view.cpp
+    mocks/Ssd1306_stub.cpp
+)
+target_include_directories(test_main_view PRIVATE
+    ${COMMON_INCS}
+    ${PROJECT_ROOT}/components/OledDisplay/include
+)
+target_link_libraries(test_main_view PRIVATE GTest::gtest_main esp_stubs)
 
 # ── test_command_factory (links CommandFactory.cpp; needs mbedtls headers
 #    via KeyExchangeCommand → KeyExchangeManager → CryptoEngine → mbedtls/ccm.h)
@@ -125,3 +153,6 @@ add_test(NAME test_sensor_types COMMAND test_sensor_types)
 add_test(NAME test_commands     COMMAND test_commands)
 add_test(NAME test_chacha20     COMMAND test_chacha20)
 add_test(NAME test_ats_schema     COMMAND test_ats_schema)
+add_test(NAME test_vfs_file_port  COMMAND test_vfs_file_port)
+add_test(NAME test_lcd_viewmodel  COMMAND test_lcd_viewmodel)
+add_test(NAME test_main_view      COMMAND test_main_view)
