@@ -107,6 +107,7 @@ add_executable(test_arcana_ts_db
 target_include_directories(test_arcana_ts_db PRIVATE
     ${COMMON_INCS}
     ${ATS_INC}/ats   # ArcanaTsDb.cpp uses #include "ArcanaTsDb.hpp" without ats/ prefix
+    ${LOG_INC}       # AtsAppender.hpp + EventCodes.hpp
 )
 target_link_libraries(test_arcana_ts_db PRIVATE GTest::gtest_main)
 

@@ -3,6 +3,8 @@
 #include "ats/ArcanaTsSchema.hpp"
 #include "NullCipher.hpp"
 #include "VfsFilePort.hpp"
+#include "AtsAppender.hpp"
+#include "Log.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -603,6 +605,96 @@ TEST_F(ArcanaTsDbTest, OverflowDropIncrementsDropsCounter) {
     // Whether drops happen depends on flush timing — just verify the counter
     // is tracked (no crash)
     SUCCEED();
+}
+
+// ── AtsAppender (LogService → ArcanaTsDb adapter) ──────────────────────────
+
+TEST_F(ArcanaTsDbTest, AtsAppenderMinLevelIsWarn) {
+    arcana::log::AtsAppender app;
+    EXPECT_EQ(app.minLevel(), arcana::log::Level::Warn);
+}
+
+TEST_F(ArcanaTsDbTest, AtsAppenderAppendWithoutDbIsSafe) {
+    arcana::log::AtsAppender app;
+    arcana::log::LogEvent ev{};
+    ev.timestamp = 1700000000;
+    ev.level = static_cast<uint8_t>(arcana::log::Level::Warn);
+    ev.code = 0x1234;
+    app.append(ev);  // mDb is nullptr → early return
+    SUCCEED();
+}
+
+TEST_F(ArcanaTsDbTest, AtsAppenderWritesEventToDb) {
+    AtsConfig cfg = makeConfig();
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::errorLog()));
+    ASSERT_TRUE(db.start());
+
+    arcana::log::AtsAppender app;
+    app.attach(&db, 0);
+
+    arcana::log::LogEvent ev{};
+    ev.timestamp = 1700000000;
+    ev.level = static_cast<uint8_t>(arcana::log::Level::Warn);
+    ev.source = 0x05;
+    ev.code = 0xABCD;
+    ev.param = 0x12345678;
+    app.append(ev);
+    EXPECT_EQ(db.getStats().perChannelRecords[0], 1u);
+}
+
+TEST_F(ArcanaTsDbTest, AtsAppenderErrorLevelTriggersFlush) {
+    AtsConfig cfg = makeConfig();
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::errorLog()));
+    ASSERT_TRUE(db.start());
+
+    arcana::log::AtsAppender app;
+    app.attach(&db, 0);
+
+    arcana::log::LogEvent ev{};
+    ev.timestamp = 1700000000;
+    ev.level = static_cast<uint8_t>(arcana::log::Level::Error);
+    ev.code = 0x1111;
+    app.append(ev);
+    // Error severity → immediate flush; verify no crash
+    SUCCEED();
+}
+
+TEST_F(ArcanaTsDbTest, AtsAppenderDetachClearsDb) {
+    AtsConfig cfg = makeConfig();
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::errorLog()));
+    ASSERT_TRUE(db.start());
+
+    arcana::log::AtsAppender app;
+    app.attach(&db, 0);
+    app.detach();
+
+    arcana::log::LogEvent ev{};
+    ev.level = static_cast<uint8_t>(arcana::log::Level::Warn);
+    app.append(ev);  // detached → no-op, no crash
+    EXPECT_EQ(db.getStats().perChannelRecords[0], 0u);
+}
+
+TEST_F(ArcanaTsDbTest, AtsAppenderMapsAllSeverityLevels) {
+    AtsConfig cfg = makeConfig();
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::errorLog()));
+    ASSERT_TRUE(db.start());
+
+    arcana::log::AtsAppender app;
+    app.attach(&db, 0);
+
+    // Exercise the toSeverity branch table for Trace/Debug/Info/Warn/Error/Fatal
+    for (int lvl : {0, 1, 2, 3, 4, 5}) {
+        arcana::log::LogEvent ev{};
+        ev.timestamp = 1700000000 + lvl;
+        ev.level = static_cast<uint8_t>(lvl);
+        ev.code = 0x4000 + lvl;
+        app.append(ev);
+    }
+    EXPECT_EQ(db.getStats().perChannelRecords[0], 6u);
 }
 
 // ── Multi-channel: write/read independence ──────────────────────────────────
