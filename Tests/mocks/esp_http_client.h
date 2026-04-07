@@ -70,7 +70,7 @@ typedef struct {
     void* client_cert_pem;
     void* client_key_pem;
     bool use_global_ca_store;
-    void* crt_bundle_attach;
+    esp_err_t (*crt_bundle_attach)(void*);
     bool skip_cert_common_name_check;
 } esp_http_client_config_t;
 
