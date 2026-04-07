@@ -32,6 +32,8 @@ set(REG_INC       ${PROJECT_ROOT}/components/RegistrationService/include)
 set(REG_SRC       ${PROJECT_ROOT}/components/RegistrationService)
 set(IO_INC        ${PROJECT_ROOT}/components/IoService/include)
 set(STORAGE_INC   ${PROJECT_ROOT}/components/AtsStorageService/include)
+set(UPLOAD_INC    ${PROJECT_ROOT}/components/HttpUploadService/include)
+set(UPLOAD_SRC    ${PROJECT_ROOT}/components/HttpUploadService)
 set(NANOPB_DIR    ${PROJECT_ROOT}/managed_components/nikas-belogolov__nanopb)
 
 # Common includes — mocks FIRST so they override real ESP-IDF / FreeRTOS headers
@@ -244,6 +246,29 @@ if(MBEDTLS_INCLUDE_DIR AND MBEDCRYPTO_LIB)
         ${MBEDCRYPTO_LIB}
     )
     add_test(NAME test_registration_service COMMAND test_registration_service)
+
+    # ── test_http_upload_service (Phase D — uses real RegistrationServiceImpl)
+    add_executable(test_http_upload_service
+        test_http_upload_service.cpp
+        ${UPLOAD_SRC}/HttpUploadServiceImpl.cpp
+        ${REG_SRC}/RegistrationServiceImpl.cpp
+        mocks/esp_http_client_stub.cpp
+    )
+    target_include_directories(test_http_upload_service PRIVATE
+        ${COMMON_INCS}
+        ${MBEDTLS_INCLUDE_DIR}
+        ${REG_INC}
+        ${STORAGE_INC}
+        ${UPLOAD_INC}
+        ${IO_INC}
+    )
+    target_compile_options(test_http_upload_service PRIVATE ${MBEDTLS_COMPAT_FLAGS})
+    target_link_libraries(test_http_upload_service PRIVATE
+        GTest::gtest_main
+        esp_stubs
+        ${MBEDCRYPTO_LIB}
+    )
+    add_test(NAME test_http_upload_service COMMAND test_http_upload_service)
 
     # ── test_command_service (Meyer singleton lifecycle + request routing) ──
     add_executable(test_command_service
