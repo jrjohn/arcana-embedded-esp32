@@ -24,12 +24,14 @@ set(MOCKS_DIR     ${CMAKE_SOURCE_DIR}/mocks)
 set(CMD_INC       ${PROJECT_ROOT}/components/CommandService/include)
 set(CMD_SRC       ${PROJECT_ROOT}/components/CommandService/src)
 set(OBS_INC       ${PROJECT_ROOT}/components/ObservableSensor/include)
+set(ATS_INC       ${PROJECT_ROOT}/components/ArcanaTs/include)
 
 # Common includes — mocks FIRST so they override real ESP-IDF / FreeRTOS headers
 set(COMMON_INCS
     ${MOCKS_DIR}
     ${CMD_INC}
     ${OBS_INC}
+    ${ATS_INC}
 )
 
 # Stubs library (FreeRTOS + esp_log + esp_timer)
@@ -56,9 +58,44 @@ add_executable(test_commands test_commands.cpp)
 target_include_directories(test_commands PRIVATE ${COMMON_INCS})
 target_link_libraries(test_commands PRIVATE GTest::gtest_main esp_stubs)
 
+# ── test_chacha20 (pure C++ stream cipher, no mbedtls) ───────────────────────
+add_executable(test_chacha20 test_chacha20.cpp)
+target_include_directories(test_chacha20 PRIVATE ${COMMON_INCS})
+target_link_libraries(test_chacha20 PRIVATE GTest::gtest_main)
+
+# ── test_crypto_engine (AES-256-CCM, requires real mbedtls) ──────────────────
+# Try to find system mbedtls. If found, build the test; otherwise skip.
+find_library(MBEDCRYPTO_LIB NAMES mbedcrypto)
+find_library(MBEDTLS_LIB    NAMES mbedtls)
+find_path(MBEDTLS_INCLUDE_DIR mbedtls/ccm.h)
+
+if(MBEDCRYPTO_LIB AND MBEDTLS_INCLUDE_DIR)
+    message(STATUS "Building test_crypto_engine with mbedtls: ${MBEDCRYPTO_LIB}")
+    add_executable(test_crypto_engine
+        test_crypto_engine.cpp
+        ${CMD_SRC}/CryptoEngine.cpp
+    )
+    # Real mbedtls headers must come BEFORE our mock — drop mocks dir for this target
+    target_include_directories(test_crypto_engine PRIVATE
+        ${MBEDTLS_INCLUDE_DIR}
+        ${MOCKS_DIR}
+        ${CMD_INC}
+        ${OBS_INC}
+    )
+    target_link_libraries(test_crypto_engine PRIVATE
+        GTest::gtest_main
+        esp_stubs
+        ${MBEDCRYPTO_LIB}
+    )
+    add_test(NAME test_crypto_engine COMMAND test_crypto_engine)
+else()
+    message(WARNING "mbedtls not found — skipping test_crypto_engine (install libmbedtls-dev)")
+endif()
+
 # ── CTest registration ────────────────────────────────────────────────────────
 enable_testing()
 add_test(NAME test_frame_codec  COMMAND test_frame_codec)
 add_test(NAME test_observable   COMMAND test_observable)
 add_test(NAME test_sensor_types COMMAND test_sensor_types)
 add_test(NAME test_commands     COMMAND test_commands)
+add_test(NAME test_chacha20     COMMAND test_chacha20)

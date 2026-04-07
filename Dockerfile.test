@@ -2,6 +2,7 @@ FROM gcc:12
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake ninja-build git lcov ca-certificates python3 python3-pip \
+    libmbedtls-dev \
     && pip3 install lcov_cobertura --break-system-packages \
     && rm -rf /var/lib/apt/lists/*
 
