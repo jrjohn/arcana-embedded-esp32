@@ -83,6 +83,14 @@ protected:
     void SetUp() override {
         http_test_reset();
         Arcana::Storage::AtsStorageServiceImpl::getInstance().test_reset();
+
+        // RegistrationServiceImpl is a Meyer singleton — credentials persist
+        // across tests. refreshToken() unconditionally sets mCreds.valid=false
+        // at line 1 of its body, so calling it (even with http_test_perform=
+        // FAIL) gives us a clean slate.
+        http_test_set_perform_result(ESP_FAIL);
+        RegistrationServiceImpl::getInstance().refreshToken();
+        http_test_reset();
     }
 };
 
