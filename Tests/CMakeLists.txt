@@ -26,6 +26,7 @@ set(CMD_SRC       ${PROJECT_ROOT}/components/CommandService/src)
 set(OBS_INC       ${PROJECT_ROOT}/components/ObservableSensor/include)
 set(ATS_INC       ${PROJECT_ROOT}/components/ArcanaTs/include)
 set(ATS_SRC       ${PROJECT_ROOT}/components/ArcanaTs/src)
+set(LOG_INC       ${PROJECT_ROOT}/components/LogService/include)
 
 # Common includes — mocks FIRST so they override real ESP-IDF / FreeRTOS headers
 set(COMMON_INCS
@@ -82,6 +83,14 @@ add_executable(test_vfs_file_port
 )
 target_include_directories(test_vfs_file_port PRIVATE ${COMMON_INCS})
 target_link_libraries(test_vfs_file_port PRIVATE GTest::gtest_main)
+
+# ── test_log (Logger ring buffer + appenders, header-only) ───────────────────
+add_executable(test_log test_log.cpp)
+target_include_directories(test_log PRIVATE
+    ${COMMON_INCS}
+    ${LOG_INC}
+)
+target_link_libraries(test_log PRIVATE GTest::gtest_main esp_stubs)
 
 # ── test_lcd_viewmodel (header-only MVVM ViewModel) ──────────────────────────
 add_executable(test_lcd_viewmodel test_lcd_viewmodel.cpp)
@@ -142,6 +151,26 @@ if(MBEDTLS_INCLUDE_DIR AND MBEDCRYPTO_LIB)
         ${MBEDCRYPTO_LIB}
     )
     add_test(NAME test_command_dispatcher COMMAND test_command_dispatcher)
+
+    # ── test_command_service (Meyer singleton lifecycle + request routing) ──
+    add_executable(test_command_service
+        test_command_service.cpp
+        ${CMD_SRC}/CommandService.cpp
+        ${CMD_SRC}/CommandDispatcher.cpp
+        ${CMD_SRC}/CommandFactory.cpp
+        ${CMD_SRC}/CryptoEngine.cpp
+        mocks/sensor_kex_stubs.cpp
+    )
+    target_include_directories(test_command_service PRIVATE
+        ${COMMON_INCS}
+        ${MBEDTLS_INCLUDE_DIR}
+    )
+    target_link_libraries(test_command_service PRIVATE
+        GTest::gtest_main
+        esp_stubs
+        ${MBEDCRYPTO_LIB}
+    )
+    add_test(NAME test_command_service COMMAND test_command_service)
 else()
     message(WARNING "mbedtls/mbedcrypto not found — skipping test_command_factory and test_command_dispatcher")
 endif()
@@ -182,5 +211,6 @@ add_test(NAME test_commands     COMMAND test_commands)
 add_test(NAME test_chacha20     COMMAND test_chacha20)
 add_test(NAME test_ats_schema     COMMAND test_ats_schema)
 add_test(NAME test_vfs_file_port  COMMAND test_vfs_file_port)
+add_test(NAME test_log            COMMAND test_log)
 add_test(NAME test_lcd_viewmodel  COMMAND test_lcd_viewmodel)
 add_test(NAME test_main_view      COMMAND test_main_view)
