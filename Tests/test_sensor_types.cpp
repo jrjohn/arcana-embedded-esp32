@@ -51,6 +51,35 @@ TEST(SensorTypesTest, ThresholdEventConstruct) {
     EXPECT_EQ(t.GetType(), ModelType::ThresholdEvent);
 }
 
+// Cover the IModel accessor overrides for SensorError + ThresholdEvent
+TEST(SensorTypesTest, SensorErrorIModelAccessors) {
+    SensorError e(-7, "fail", 9);
+    e.TimestampMs = 4242;
+    EXPECT_EQ(e.GetSensorId(), 9);
+    EXPECT_EQ(e.GetTimestampMs(), 4242u);
+    EXPECT_STREQ(e.GetTypeName(), "SensorError");
+}
+
+TEST(SensorTypesTest, ThresholdEventIModelAccessors) {
+    ThresholdEvent t(ThresholdEvent::Type::Low, 5, 10, 4);
+    t.TimestampMs = 1111;
+    EXPECT_EQ(t.GetSensorId(), 4);
+    EXPECT_EQ(t.GetTimestampMs(), 1111u);
+    EXPECT_STREQ(t.GetTypeName(), "ThresholdEvent");
+}
+
+TEST(SensorTypesTest, LifecycleEventGetTimestampMs) {
+    LifecycleEvent l(LifecycleEvent::State::Stopped, 6);
+    l.TimestampMs = 8888;
+    EXPECT_EQ(l.GetTimestampMs(), 8888u);
+}
+
+TEST(SensorTypesTest, LifecycleEventStateNameFallthrough) {
+    // Cast an out-of-range value to State to hit the "Unknown" return path
+    LifecycleEvent l(static_cast<LifecycleEvent::State>(99), 0);
+    EXPECT_STREQ(l.GetStateName(), "Unknown");
+}
+
 TEST(SensorTypesTest, LifecycleEventStateName) {
     EXPECT_STREQ(LifecycleEvent(LifecycleEvent::State::Started, 0).GetStateName(),       "Started");
     EXPECT_STREQ(LifecycleEvent(LifecycleEvent::State::Stopped, 0).GetStateName(),       "Stopped");

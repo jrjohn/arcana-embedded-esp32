@@ -39,6 +39,40 @@ TEST(Esp32AesCtrCipherTest, CounterAffectsKeystream) {
     EXPECT_NE(memcmp(a, b, 16), 0);
 }
 
+// ── CryptoEngine error-path coverage ────────────────────────────────────────
+
+TEST(CryptoEngineErrorTest, DecryptWithSmallPlainBufferFails) {
+    CryptoEngine eng;
+    uint8_t key[CryptoEngine::kKeyLen];
+    makeTestKey(key);
+    ASSERT_EQ(eng.Init(key), ESP_OK);
+
+    // Encrypt a 100-byte plaintext
+    uint8_t plain[100];
+    for (int i = 0; i < 100; i++) plain[i] = static_cast<uint8_t>(i);
+    uint8_t cipher[200];
+    size_t cipherLen = 0;
+    ASSERT_TRUE(eng.Encrypt(plain, 100, cipher, sizeof(cipher), cipherLen));
+
+    // Decrypt into a buffer that's too small for the ciphertext payload
+    uint8_t smallBuf[50];
+    size_t plainLen = 0;
+    EXPECT_FALSE(eng.Decrypt(cipher, cipherLen, smallBuf, sizeof(smallBuf), plainLen));
+}
+
+TEST(CryptoEngineErrorTest, ReinitFreesPreviousContext) {
+    // Init twice → second Init's `if (mInitialized) mbedtls_ccm_free(...)`
+    // path runs (covers L19-20)
+    CryptoEngine eng;
+    uint8_t key1[CryptoEngine::kKeyLen];
+    uint8_t key2[CryptoEngine::kKeyLen];
+    makeTestKey(key1);
+    for (size_t i = 0; i < CryptoEngine::kKeyLen; i++) key2[i] = static_cast<uint8_t>(0xFF - i);
+
+    ASSERT_EQ(eng.Init(key1), ESP_OK);
+    EXPECT_EQ(eng.Init(key2), ESP_OK);  // re-init triggers free of previous ctx
+}
+
 // Helper: 32-byte test key
 static void makeTestKey(uint8_t key[CryptoEngine::kKeyLen]) {
     for (size_t i = 0; i < CryptoEngine::kKeyLen; i++) {

@@ -123,6 +123,30 @@ TEST(CommandDispatcherTest, StopWithoutStartIsSafe) {
 
 // ── Multiple subscribers ────────────────────────────────────────────────────
 
+// ── Async queue overflow (covers L58 Post failure) ────────────────────────
+
+TEST(CommandDispatcherTest, AsyncQueueOverflowDropsExcess) {
+    CommandFactory::Dependencies deps;
+    CommandFactory factory(deps);
+    CommandDispatcher dispatcher(factory);
+    dispatcher.Init();
+    ASSERT_EQ(dispatcher.Start(), ESP_OK);
+
+    // BleScan is async (IsAsync() == true). Dispatch many requests; the
+    // queue depth is 10, so the 11th+ Post will fail and be logged.
+    // (The async task never actually drains the queue in tests because
+    // xTaskCreate is a no-op stub.)
+    for (int i = 0; i < 20; i++) {
+        CommandRequest req;
+        req.ClusterId = Cluster::Ble;
+        req.Command = BleCmd::Scan;
+        req.PayloadLen = 0;
+        dispatcher.Dispatch(req);
+    }
+    SUCCEED();  // no crash; the drop branch executes
+    dispatcher.Stop();
+}
+
 TEST(CommandDispatcherTest, MultipleResponseObserversAllNotified) {
     CommandFactory::Dependencies deps;
     CommandFactory factory(deps);
