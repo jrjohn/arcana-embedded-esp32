@@ -63,6 +63,11 @@ add_executable(test_chacha20 test_chacha20.cpp)
 target_include_directories(test_chacha20 PRIVATE ${COMMON_INCS})
 target_link_libraries(test_chacha20 PRIVATE GTest::gtest_main)
 
+# ── test_ats_schema (header-only schema builder + CRC32) ─────────────────────
+add_executable(test_ats_schema test_ats_schema.cpp)
+target_include_directories(test_ats_schema PRIVATE ${COMMON_INCS})
+target_link_libraries(test_ats_schema PRIVATE GTest::gtest_main)
+
 # ── test_crypto_engine (AES-256-CCM, requires real mbedtls) ──────────────────
 # Try to find system mbedtls. If found, build the test; otherwise skip.
 find_library(MBEDCRYPTO_LIB NAMES mbedcrypto)
@@ -102,3 +107,4 @@ add_test(NAME test_observable   COMMAND test_observable)
 add_test(NAME test_sensor_types COMMAND test_sensor_types)
 add_test(NAME test_commands     COMMAND test_commands)
 add_test(NAME test_chacha20     COMMAND test_chacha20)
+add_test(NAME test_ats_schema   COMMAND test_ats_schema)
