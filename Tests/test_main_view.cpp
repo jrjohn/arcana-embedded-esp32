@@ -137,6 +137,36 @@ TEST(MainViewTest, OnExitClearsDisplay) {
     EXPECT_GT(g_ssdCounters.clearCount, clearsBefore);
 }
 
+// ── Toast expiry triggers redraw via onEnter ──────────────────────────────
+
+extern TickType_t g_test_tick_count;  // defined in mocks/esp_stubs.cpp
+
+TEST(MainViewTest, ToastExpiryRedrawsNormalView) {
+    MainView view;
+    auto display = makeDisplay();
+    LcdOutput output;
+    strncpy(output.toastMsg, "Saving", sizeof(output.toastMsg) - 1);
+    output.toastExpiry = 100;  // expires at tick 100
+    output.dirty = DIRTY_TOAST;
+
+    g_test_tick_count = 200;  // already past expiry → redraw
+    view.render(display, output);
+    g_test_tick_count = 0;  // restore for other tests
+
+    EXPECT_EQ(output.toastMsg[0], '\0');
+    EXPECT_EQ(output.toastExpiry, 0u);
+}
+
+TEST(MainViewTest, StartCreatesRenderTask) {
+    MainView view;
+    LcdViewModel vm;
+    auto display = makeDisplay();
+    view.input.viewModel = &vm;
+    view.input.display = &display;
+    view.start();
+    EXPECT_NE(view.taskHandle(), nullptr);
+}
+
 // ── Combined sensor + storage update ────────────────────────────────────────
 
 TEST(MainViewTest, CombinedSensorAndStorageUpdate) {

@@ -2,6 +2,8 @@
 #include "CommandFactory.hpp"
 #include "ICommand.hpp"
 #include "ObservableSensor.hpp"
+#include "BleTypes.hpp"
+#include "BleService.hpp"
 
 using namespace Arcana::Command;
 
@@ -305,6 +307,36 @@ TEST(CommandFactoryTest, CreateKeyExchangeCommand) {
 TEST(CommandFactoryTest, SecurityUnknownCommand) {
     auto factory = makeFactory();
     EXPECT_EQ(factory.Create(Cluster::Security, 0xFF).get(), nullptr);
+}
+
+// ── BleTypes default constructors ───────────────────────────────────────────
+
+TEST(BleTypesTest, BleConnectionEventDefaultConstructor) {
+    Arcana::Ble::BleConnectionEvent ev;
+    EXPECT_EQ(ev.Role, Arcana::Ble::BleRole::Server);
+    EXPECT_EQ(ev.State, Arcana::Ble::ConnectionState::Disconnected);
+    EXPECT_EQ(ev.ConnId, 0);
+}
+
+TEST(BleTypesTest, BleSensorNotificationDefaultConstructor) {
+    Arcana::Ble::BleSensorNotification n;
+    EXPECT_EQ(n.CharUuid, 0);
+    EXPECT_EQ(n.DataLen, 0);
+}
+
+TEST(BleTypesTest, BleClientDiscoveryDefaultConstructor) {
+    Arcana::Ble::BleClientDiscovery d;
+    EXPECT_EQ(d.Rssi, 0);
+    EXPECT_EQ(d.Name[0], '\0');
+}
+
+TEST(BleTypesTest, ServerClientInfoDefaultConstructor) {
+    Arcana::Ble::ServerClientInfo c;
+    EXPECT_FALSE(c.Connected);
+    EXPECT_EQ(c.ConnId, 0);
+    EXPECT_FALSE(c.TempCccdEnabled);
+    EXPECT_FALSE(c.HumidCccdEnabled);
+    EXPECT_FALSE(c.RspCccdEnabled);
 }
 
 // ── Invalid cluster ─────────────────────────────────────────────────────────

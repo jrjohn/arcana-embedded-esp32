@@ -6,6 +6,7 @@
 #include "AtsAppender.hpp"
 #include "DeviceAppender.hpp"
 #include "ChaCha20Cipher.hpp"
+#include "FreeRtosMutex.hpp"
 #include "Log.hpp"
 #include <cstdio>
 #include <cstdlib>
@@ -762,6 +763,29 @@ TEST_F(ArcanaTsDbTest, RecoveryFromExistingWithIndex) {
     AtsConfig cfg = makeConfig(/*primaryChannel=*/0);
     ASSERT_TRUE(db.open(fileName.c_str(), cfg));
     EXPECT_GE(db.getChannelCount(), 1);
+}
+
+// ── FreeRtosMutex (header-only IMutex impl) ────────────────────────────────
+
+TEST(FreeRtosMutexTest, LockUnlockBeforeInitFails) {
+    arcana::ats::FreeRtosMutex m;
+    EXPECT_FALSE(m.lock(100));
+    m.unlock();  // no-op when uninitialized
+    SUCCEED();
+}
+
+TEST(FreeRtosMutexTest, InitThenLockUnlockSucceeds) {
+    arcana::ats::FreeRtosMutex m;
+    m.init();
+    EXPECT_TRUE(m.lock());
+    m.unlock();
+}
+
+TEST(FreeRtosMutexTest, LockWithExplicitTimeout) {
+    arcana::ats::FreeRtosMutex m;
+    m.init();
+    EXPECT_TRUE(m.lock(500));
+    m.unlock();
 }
 
 // ── ChaCha20Cipher (real encryption, exercises cipher integration) ─────────

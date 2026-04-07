@@ -21,6 +21,11 @@
 extern "C" SemaphoreHandle_t xSemaphoreCreateMutex(void) {
     return (SemaphoreHandle_t)malloc(1);
 }
+extern "C" SemaphoreHandle_t xSemaphoreCreateMutexStatic(StaticSemaphore_t* buf) {
+    // Return a non-null pointer (use buf itself); FreeRtosMutex only checks
+    // mHandle != nullptr.
+    return (SemaphoreHandle_t)buf;
+}
 extern "C" SemaphoreHandle_t xSemaphoreCreateBinary(void) {
     return (SemaphoreHandle_t)malloc(1);
 }
@@ -92,7 +97,10 @@ extern "C" BaseType_t xTaskCreate(TaskFunction_t, const char*, uint32_t, void*,
 }
 extern "C" void       vTaskDelete(TaskHandle_t)        {}
 extern "C" void       vTaskDelay(TickType_t)           {}
-extern "C" TickType_t xTaskGetTickCount(void)          { return 0; }
+
+// Settable tick — tests that need a non-zero clock can set this directly.
+TickType_t g_test_tick_count = 0;
+extern "C" TickType_t xTaskGetTickCount(void)          { return g_test_tick_count; }
 extern "C" BaseType_t xTaskNotifyGive(TaskHandle_t)    { return pdTRUE; }
 extern "C" uint32_t   ulTaskNotifyTake(BaseType_t, TickType_t) { return 0; }
 

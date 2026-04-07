@@ -109,7 +109,7 @@ target_include_directories(test_arcana_ts_db PRIVATE
     ${ATS_INC}/ats   # ArcanaTsDb.cpp uses #include "ArcanaTsDb.hpp" without ats/ prefix
     ${LOG_INC}       # AtsAppender.hpp + EventCodes.hpp
 )
-target_link_libraries(test_arcana_ts_db PRIVATE GTest::gtest_main)
+target_link_libraries(test_arcana_ts_db PRIVATE GTest::gtest_main esp_stubs)
 
 # ── test_lcd_viewmodel (header-only MVVM ViewModel) ──────────────────────────
 add_executable(test_lcd_viewmodel test_lcd_viewmodel.cpp)
