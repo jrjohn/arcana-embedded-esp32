@@ -47,6 +47,11 @@ find_library(MBEDCRYPTO_LIB NAMES mbedcrypto)
 find_library(MBEDTLS_LIB    NAMES mbedtls)
 find_path(MBEDTLS_INCLUDE_DIR mbedtls/ccm.h)
 
+# Production code uses MBEDTLS_PRIVATE(field) accessors from mbedtls 3.x.
+# Debian's gcc:12 base ships mbedtls 2.28 which exposes fields directly and
+# lacks the macro. Force-include a compat shim before mbedtls headers.
+set(MBEDTLS_COMPAT_FLAGS "-include${MOCKS_DIR}/mbedtls_compat.h")
+
 # ── test_frame_codec ──────────────────────────────────────────────────────────
 add_executable(test_frame_codec test_frame_codec.cpp)
 target_include_directories(test_frame_codec PRIVATE ${COMMON_INCS})
@@ -139,6 +144,7 @@ if(MBEDTLS_INCLUDE_DIR AND MBEDCRYPTO_LIB)
         ${COMMON_INCS}
         ${MBEDTLS_INCLUDE_DIR}
     )
+    target_compile_options(test_command_factory PRIVATE ${MBEDTLS_COMPAT_FLAGS})
     target_link_libraries(test_command_factory PRIVATE
         GTest::gtest_main
         esp_stubs
@@ -158,6 +164,7 @@ if(MBEDTLS_INCLUDE_DIR AND MBEDCRYPTO_LIB)
         ${COMMON_INCS}
         ${MBEDTLS_INCLUDE_DIR}
     )
+    target_compile_options(test_command_dispatcher PRIVATE ${MBEDTLS_COMPAT_FLAGS})
     target_link_libraries(test_command_dispatcher PRIVATE
         GTest::gtest_main
         esp_stubs
@@ -181,6 +188,7 @@ if(MBEDTLS_INCLUDE_DIR AND MBEDCRYPTO_LIB)
             ${MBEDTLS_INCLUDE_DIR}
             ${NANOPB_DIR}/include
         )
+        target_compile_options(test_command_codec PRIVATE ${MBEDTLS_COMPAT_FLAGS})
         target_link_libraries(test_command_codec PRIVATE
             GTest::gtest_main
             esp_stubs
@@ -201,6 +209,7 @@ if(MBEDTLS_INCLUDE_DIR AND MBEDCRYPTO_LIB)
         ${COMMON_INCS}
         ${MBEDTLS_INCLUDE_DIR}
     )
+    target_compile_options(test_key_exchange_manager PRIVATE ${MBEDTLS_COMPAT_FLAGS})
     target_link_libraries(test_key_exchange_manager PRIVATE
         GTest::gtest_main
         esp_stubs
@@ -221,6 +230,7 @@ if(MBEDTLS_INCLUDE_DIR AND MBEDCRYPTO_LIB)
         ${COMMON_INCS}
         ${MBEDTLS_INCLUDE_DIR}
     )
+    target_compile_options(test_command_service PRIVATE ${MBEDTLS_COMPAT_FLAGS})
     target_link_libraries(test_command_service PRIVATE
         GTest::gtest_main
         esp_stubs
@@ -248,6 +258,7 @@ if(MBEDCRYPTO_LIB AND MBEDTLS_INCLUDE_DIR)
     if(MBEDTLS_INCLUDE_DIR)
         target_include_directories(test_crypto_engine PRIVATE ${MBEDTLS_INCLUDE_DIR})
     endif()
+    target_compile_options(test_crypto_engine PRIVATE ${MBEDTLS_COMPAT_FLAGS})
     target_link_libraries(test_crypto_engine PRIVATE
         GTest::gtest_main
         esp_stubs
