@@ -1693,6 +1693,58 @@ TEST_F(ArcanaTsDbTest, FindChannelBySchemaIdReturnsNeg1ForUnknown) {
     EXPECT_EQ(db.findChannelBySchemaId(0xDEADBEEFu), -1);
 }
 
+// Force full-scan recovery by patching mStats.blocksWritten=0 in the
+// persisted header. recoverFromExisting()'s fast recovery requires
+// blocksWritten > 0; with 0, it falls through to the full block scan
+// (L1265-1314), which exercises the per-block validate + index-add +
+// mNextSeqNo update path. Covers L1304.
+TEST_F(ArcanaTsDbTest, FullScanRecoveryHitsSeqNoUpdate) {
+    uint8_t headerKey[32];
+    for (int i = 0; i < 32; i++) headerKey[i] = static_cast<uint8_t>(0xD0 + i);
+
+    // Step 1: write a file with several data blocks via the encrypted header
+    // path (so the patch site at base+0x940 is plaintext-stored).
+    {
+        AtsConfig cfg = makeConfig(/*primaryChannel=*/0);
+        cfg.headerKey = headerKey;
+        ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+        ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::dht11()));
+        ASSERT_TRUE(db.start());
+        uint8_t rec[8];
+        for (int i = 0; i < 2000; i++) {
+            writeDhtRecord(rec, g_fakeTime + i, static_cast<int16_t>(i), 600);
+            db.append(0, rec);
+        }
+        ASSERT_TRUE(db.close());
+    }
+
+    // Step 2: patch the persisted mStats.blocksWritten to 0. With 0, fast
+    // recovery's `if (blocksWritten > 0 && ...)` is false, and the code
+    // falls through to full scan.
+    {
+        std::string fullPath = std::string(MOUNT) + "/" + fileName;
+        FILE* fp = fopen(fullPath.c_str(), "r+b");
+        ASSERT_NE(fp, nullptr);
+
+        const uint16_t base = 16;
+        uint32_t patchedBlocks = 0;
+        fseek(fp, base + 0x940, SEEK_SET);
+        ASSERT_EQ(fwrite(&patchedBlocks, 1, sizeof(patchedBlocks), fp),
+                  sizeof(patchedBlocks));
+        fclose(fp);
+    }
+
+    // Step 3: reopen → full scan finds blocks, mNextSeqNo updated per block
+    {
+        AtsConfig cfg = makeConfig(/*primaryChannel=*/0);
+        cfg.headerKey = headerKey;
+        ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+        EXPECT_TRUE(db.isOpen());
+        // Full scan should have found at least a couple of blocks.
+        EXPECT_GT(db.getStats().blocksWritten, 0u);
+    }
+}
+
 // queryLatest on a slow channel with records still buffered (not flushed)
 // exercises the slow-channel scan path inside queryLatest (L1425-1457):
 // the count + copy passes over mSlow.buf's tagged records.
