@@ -23,6 +23,9 @@ extern int g_fail_ecdh_compute_shared;
 extern int g_fail_mpi_read_binary;
 extern int g_fail_mpi_write_binary;
 extern int g_fail_ctr_drbg_seed;
+extern int g_fail_ccm_setkey;
+extern int g_fail_ccm_encrypt_and_tag;
+extern int g_fail_ccm_auth_decrypt;
 void mbedtls_test_reset_failures();
 }
 
@@ -217,4 +220,47 @@ TEST_F(KexFailInject, CtrDrbgSeedFailureAborts) {
     uint8_t serverPub[64], authTag[32];
     EXPECT_FALSE(kex.PerformKeyExchange(CommandSource::BLE, 19,
                                           clientPub, serverPub, authTag));
+}
+
+// ── CryptoEngine: ccm_setkey + encrypt failure paths ─────────────────────
+
+TEST_F(KexFailInject, CryptoEngineInitFailsWhenCcmSetkeyFails) {
+    g_fail_ccm_setkey = 1;
+    CryptoEngine eng;
+    uint8_t key[CryptoEngine::kKeyLen];
+    makePsk(key);
+    EXPECT_NE(eng.Init(key), ESP_OK);
+}
+
+TEST_F(KexFailInject, CryptoEngineEncryptFailsWhenCcmEncryptFails) {
+    CryptoEngine eng;
+    uint8_t key[CryptoEngine::kKeyLen];
+    makePsk(key);
+    ASSERT_EQ(eng.Init(key), ESP_OK);
+
+    g_fail_ccm_encrypt_and_tag = 1;
+    uint8_t plain[16] = {0};
+    uint8_t out[64];
+    size_t outLen = 0;
+    EXPECT_FALSE(eng.Encrypt(plain, sizeof(plain), out, sizeof(out), outLen));
+}
+
+TEST_F(KexFailInject, CryptoEngineDecryptFailsWhenCcmDecryptFails) {
+    CryptoEngine eng;
+    uint8_t key[CryptoEngine::kKeyLen];
+    makePsk(key);
+    ASSERT_EQ(eng.Init(key), ESP_OK);
+
+    // First encrypt successfully
+    uint8_t plain[16];
+    for (int i = 0; i < 16; i++) plain[i] = static_cast<uint8_t>(i);
+    uint8_t cipher[64];
+    size_t cipherLen = 0;
+    ASSERT_TRUE(eng.Encrypt(plain, sizeof(plain), cipher, sizeof(cipher), cipherLen));
+
+    // Now poison the decrypt
+    g_fail_ccm_auth_decrypt = 1;
+    uint8_t decoded[64];
+    size_t decodedLen = 0;
+    EXPECT_FALSE(eng.Decrypt(cipher, cipherLen, decoded, sizeof(decoded), decodedLen));
 }

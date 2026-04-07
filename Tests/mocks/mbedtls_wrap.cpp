@@ -11,6 +11,7 @@
 #include "mbedtls/entropy.h"
 #include "mbedtls/ctr_drbg.h"
 #include "mbedtls/bignum.h"
+#include "mbedtls/ccm.h"
 #include <cstdint>
 
 extern "C" {
@@ -27,6 +28,9 @@ int g_fail_ecdh_compute_shared = 0;
 int g_fail_mpi_read_binary    = 0;
 int g_fail_mpi_write_binary   = 0;
 int g_fail_ctr_drbg_seed      = 0;
+int g_fail_ccm_setkey         = 0;
+int g_fail_ccm_encrypt_and_tag = 0;
+int g_fail_ccm_auth_decrypt   = 0;
 
 void mbedtls_test_reset_failures() {
     g_fail_md_setup           = 0;
@@ -40,6 +44,9 @@ void mbedtls_test_reset_failures() {
     g_fail_mpi_read_binary    = 0;
     g_fail_mpi_write_binary   = 0;
     g_fail_ctr_drbg_seed      = 0;
+    g_fail_ccm_setkey         = 0;
+    g_fail_ccm_encrypt_and_tag = 0;
+    g_fail_ccm_auth_decrypt   = 0;
 }
 
 // ── Real symbols (resolved by --wrap) ──────────────────────────────────────
@@ -59,6 +66,18 @@ int __real_mbedtls_mpi_write_binary(const mbedtls_mpi*, unsigned char*, size_t);
 int __real_mbedtls_ctr_drbg_seed(mbedtls_ctr_drbg_context*,
                                   int (*)(void*, unsigned char*, size_t), void*,
                                   const unsigned char*, size_t);
+int __real_mbedtls_ccm_setkey(mbedtls_ccm_context*, mbedtls_cipher_id_t,
+                               const unsigned char*, unsigned int);
+int __real_mbedtls_ccm_encrypt_and_tag(mbedtls_ccm_context*, size_t,
+                                        const unsigned char*, size_t,
+                                        const unsigned char*, size_t,
+                                        const unsigned char*, unsigned char*,
+                                        unsigned char*, size_t);
+int __real_mbedtls_ccm_auth_decrypt(mbedtls_ccm_context*, size_t,
+                                     const unsigned char*, size_t,
+                                     const unsigned char*, size_t,
+                                     const unsigned char*, unsigned char*,
+                                     const unsigned char*, size_t);
 
 // ── Wrappers ───────────────────────────────────────────────────────────────
 
@@ -121,6 +140,32 @@ int __wrap_mbedtls_ctr_drbg_seed(mbedtls_ctr_drbg_context* ctx,
                                   const unsigned char* custom, size_t len) {
     if (g_fail_ctr_drbg_seed) return -0x0034;
     return __real_mbedtls_ctr_drbg_seed(ctx, f_entropy, p_entropy, custom, len);
+}
+
+int __wrap_mbedtls_ccm_setkey(mbedtls_ccm_context* ctx, mbedtls_cipher_id_t cipher,
+                               const unsigned char* key, unsigned int keybits) {
+    if (g_fail_ccm_setkey) return -0x000D;
+    return __real_mbedtls_ccm_setkey(ctx, cipher, key, keybits);
+}
+
+int __wrap_mbedtls_ccm_encrypt_and_tag(mbedtls_ccm_context* ctx, size_t length,
+                                        const unsigned char* iv, size_t iv_len,
+                                        const unsigned char* add, size_t add_len,
+                                        const unsigned char* input, unsigned char* output,
+                                        unsigned char* tag, size_t tag_len) {
+    if (g_fail_ccm_encrypt_and_tag) return -0x000F;
+    return __real_mbedtls_ccm_encrypt_and_tag(ctx, length, iv, iv_len, add, add_len,
+                                                input, output, tag, tag_len);
+}
+
+int __wrap_mbedtls_ccm_auth_decrypt(mbedtls_ccm_context* ctx, size_t length,
+                                     const unsigned char* iv, size_t iv_len,
+                                     const unsigned char* add, size_t add_len,
+                                     const unsigned char* input, unsigned char* output,
+                                     const unsigned char* tag, size_t tag_len) {
+    if (g_fail_ccm_auth_decrypt) return -0x000F;
+    return __real_mbedtls_ccm_auth_decrypt(ctx, length, iv, iv_len, add, add_len,
+                                             input, output, tag, tag_len);
 }
 
 } // extern "C"
