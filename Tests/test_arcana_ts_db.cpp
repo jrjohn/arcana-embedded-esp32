@@ -700,6 +700,78 @@ TEST_F(ArcanaTsDbTest, AtsAppenderMapsAllSeverityLevels) {
     EXPECT_EQ(db.getStats().perChannelRecords[0], 6u);
 }
 
+// ── openReadOnly failure paths + index fallback scan ──────────────────────
+
+TEST_F(ArcanaTsDbTest, OpenReadOnlyTinyFileRejected) {
+    // Create a sub-block-size file directly via fopen
+    std::string fullPath = std::string(MOUNT) + "/tiny_" + fileName;
+    FILE* fp = fopen(fullPath.c_str(), "wb");
+    ASSERT_NE(fp, nullptr);
+    uint8_t junk[100] = {0};
+    fwrite(junk, 1, sizeof(junk), fp);
+    fclose(fp);
+
+    // Use the relative name (without prefix) since VfsFilePort prepends mount
+    std::string tinyName = "tiny_" + fileName;
+    AtsConfig cfg = makeConfig();
+    EXPECT_FALSE(db.openReadOnly(tinyName.c_str(), cfg));
+
+    unlink(fullPath.c_str());
+}
+
+TEST_F(ArcanaTsDbTest, OpenReadOnlyGarbageFileRejected) {
+    // Create a 4KB file full of garbage (no valid ATS2 magic)
+    std::string fullPath = std::string(MOUNT) + "/garbage_" + fileName;
+    FILE* fp = fopen(fullPath.c_str(), "wb");
+    ASSERT_NE(fp, nullptr);
+    uint8_t junk[4096];
+    memset(junk, 0xFF, sizeof(junk));
+    fwrite(junk, 1, sizeof(junk), fp);
+    fclose(fp);
+
+    std::string garbageName = "garbage_" + fileName;
+    AtsConfig cfg = makeConfig();
+    EXPECT_FALSE(db.openReadOnly(garbageName.c_str(), cfg));
+
+    unlink(fullPath.c_str());
+}
+
+TEST_F(ArcanaTsDbTest, OpenReadOnlyScansBlocksWhenNoIndex) {
+    // Plaintext header (no headerKey) → close() never sets ATS_FLAG_HAS_INDEX,
+    // so on openReadOnly, readIndex returns false and the fallback block-scan
+    // path (L167-169) executes.
+    {
+        AtsConfig cfg = makeConfig();
+        ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+        ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::dht11()));
+        ASSERT_TRUE(db.start());
+        uint8_t rec[8];
+        for (int i = 0; i < 1500; i++) {  // ~3 blocks of slow buffer
+            writeDhtRecord(rec, g_fakeTime + i, static_cast<int16_t>(i), 600);
+            db.append(0, rec);
+        }
+        ASSERT_TRUE(db.close());
+    }
+    AtsConfig cfg = makeConfig();
+    ASSERT_TRUE(db.openReadOnly(fileName.c_str(), cfg));
+    EXPECT_TRUE(db.isOpen());
+    EXPECT_TRUE(db.isReadOnly());
+}
+
+// ── addChannelLive with encrypted header (covers L216) ─────────────────────
+
+TEST_F(ArcanaTsDbTest, AddChannelLiveWithEncryptedHeader) {
+    uint8_t headerKey[32];
+    for (int i = 0; i < 32; i++) headerKey[i] = static_cast<uint8_t>(0xC0 + i);
+
+    AtsConfig cfg = makeConfig();
+    cfg.headerKey = headerKey;
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::dht11()));
+    ASSERT_TRUE(db.start());
+    EXPECT_TRUE(db.addChannelLive(1, ArcanaTsSchema::deviceStatus()));
+}
+
 // ── Encrypted header path (mCfg.headerKey != nullptr) ────────────────────────
 
 TEST_F(ArcanaTsDbTest, EncryptedHeaderWriteThenRead) {
