@@ -164,6 +164,23 @@ if(MBEDTLS_INCLUDE_DIR AND MBEDCRYPTO_LIB)
     )
     add_test(NAME test_command_dispatcher COMMAND test_command_dispatcher)
 
+    # ── test_key_exchange_manager (ECDH P-256 + HKDF + HMAC, real mbedtls) ──
+    add_executable(test_key_exchange_manager
+        test_key_exchange_manager.cpp
+        ${CMD_SRC}/KeyExchangeManager.cpp
+        ${CMD_SRC}/CryptoEngine.cpp
+    )
+    target_include_directories(test_key_exchange_manager PRIVATE
+        ${COMMON_INCS}
+        ${MBEDTLS_INCLUDE_DIR}
+    )
+    target_link_libraries(test_key_exchange_manager PRIVATE
+        GTest::gtest_main
+        esp_stubs
+        ${MBEDCRYPTO_LIB}
+    )
+    add_test(NAME test_key_exchange_manager COMMAND test_key_exchange_manager)
+
     # ── test_command_service (Meyer singleton lifecycle + request routing) ──
     add_executable(test_command_service
         test_command_service.cpp
