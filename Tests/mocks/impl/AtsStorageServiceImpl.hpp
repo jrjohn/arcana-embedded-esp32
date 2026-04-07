@@ -11,6 +11,7 @@
 #include "AtsStorageService.hpp"
 #include "esp_err.h"
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 
 namespace Arcana::Storage {
@@ -38,8 +39,14 @@ public:
     };
     static const uint8_t MAX_PENDING = 8;
 
-    uint8_t listPendingUploads(PendingFile* /*out*/, uint8_t /*maxCount*/) {
-        return mPendingCount;
+    uint8_t listPendingUploads(PendingFile* out, uint8_t maxCount) {
+        uint8_t n = mPendingCount < maxCount ? mPendingCount : maxCount;
+        for (uint8_t i = 0; i < n; i++) {
+            snprintf(out[i].name, sizeof(out[i].name), "pending%u.ats", i);
+            out[i].size = 1024;
+            out[i].date = 20260101 + i;
+        }
+        return n;
     }
     bool isDateUploaded(uint32_t)  { return false; }
     void markUploaded(uint32_t)    {}
