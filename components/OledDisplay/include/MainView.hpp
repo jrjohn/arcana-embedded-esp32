@@ -95,6 +95,22 @@ public:
 
     TaskHandle_t taskHandle() const { return mTaskHandle; }
 
+    /**
+     * @brief Initialize wired display + perform one render iteration.
+     *        Public for tests so the render-task body can be exercised
+     *        without spawning a real FreeRTOS task. Returns false if
+     *        viewModel/display weren't wired.
+     */
+    bool renderTaskStep() {
+        auto* vm = input.viewModel;
+        auto* disp = input.display;
+        if (!vm || !disp) return false;
+        if (vm->output().dirty) {
+            render(*disp, vm->output());
+        }
+        return true;
+    }
+
 private:
     TaskHandle_t mTaskHandle = nullptr;
 

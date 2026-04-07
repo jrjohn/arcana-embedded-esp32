@@ -194,3 +194,76 @@ TEST(ObservableTest, DefaultSubscriptionIsInactive) {
     sub.Unsubscribe();  // safe no-op
     SUCCEED();
 }
+
+// ── ProcessOneAsyncEvent: drives the AsyncTaskLoop body without a real task
+
+TEST(ObservableTest, ProcessOneAsyncEventDispatchesQueuedEvents) {
+    Observable<TestEvent> obs("AsyncProcessOne", /*queueDepth=*/8);
+    int count = 0;
+    int lastValue = 0;
+    obs.Subscribe([&](const TestEvent& e) {
+        count++;
+        lastValue = e.value;
+    });
+
+    obs.Notify(TestEvent{11});
+    obs.Notify(TestEvent{22});
+    obs.Notify(TestEvent{33});
+
+    // Drain via the test-public hook
+    while (obs.ProcessOneAsyncEvent()) {}
+
+    EXPECT_EQ(count, 3);
+    EXPECT_EQ(lastValue, 33);
+}
+
+TEST(ObservableTest, ProcessOneAsyncEventOnEmptyQueueReturnsFalse) {
+    Observable<TestEvent> obs("AsyncEmpty");
+    EXPECT_FALSE(obs.ProcessOneAsyncEvent());
+}
+
+TEST(ObservableTest, ProcessOneAsyncEventOnSyncObservableReturnsFalse) {
+    Observable<TestEvent> obs;  // sync, no queue
+    EXPECT_FALSE(obs.ProcessOneAsyncEvent());
+}
+
+// ── EventQueue::ProcessOneEvent — drives the TaskLoop body ─────────────────
+
+TEST(EventQueueTest, ProcessOneEventDispatchesQueuedItem) {
+    EventQueue<int, 8> eq;
+    int sum = 0;
+    ASSERT_TRUE(eq.Start([&](int v) { sum += v; }, 4096, 5));
+
+    eq.Post(10);
+    eq.Post(20);
+    eq.Post(30);
+
+    while (eq.ProcessOneEvent()) {}
+
+    EXPECT_EQ(sum, 60);
+    eq.Stop();
+}
+
+TEST(EventQueueTest, ProcessOneEventOnEmptyQueueReturnsFalse) {
+    EventQueue<int, 4> eq;
+    eq.Start([](int){}, 4096, 5);
+    EXPECT_FALSE(eq.ProcessOneEvent());
+    eq.Stop();
+}
+
+TEST(EventQueueTest, ProcessOneEventBeforeStartReturnsFalse) {
+    EventQueue<int, 4> eq;
+    EXPECT_FALSE(eq.ProcessOneEvent());
+}
+
+TEST(EventQueueTest, IsRunningAndPendingCount) {
+    EventQueue<int, 4> eq;
+    EXPECT_FALSE(eq.IsRunning());
+    eq.Start([](int){}, 4096, 5);
+    EXPECT_TRUE(eq.IsRunning());
+    eq.Post(1);
+    eq.Post(2);
+    EXPECT_EQ(eq.GetPendingCount(), 2u);
+    eq.Stop();
+    EXPECT_FALSE(eq.IsRunning());
+}

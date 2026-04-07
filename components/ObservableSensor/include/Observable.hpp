@@ -305,14 +305,27 @@ private:
     }
 
     /**
+     * @brief Process at most one queued async event. Public for tests so
+     *        the loop body can be exercised without spawning a real task.
+     */
+public:
+    bool ProcessOneAsyncEvent() {
+        if (!mQueue) return false;
+        T Event;
+        if (xQueueReceive(mQueue, &Event, portMAX_DELAY) == pdTRUE) {
+            NotifySync(Event);
+            return true;
+        }
+        return false;
+    }
+
+private:
+    /**
      * @brief Async task loop - dequeues events and dispatches to subscribers
      */
     void AsyncTaskLoop() {
-        T Event;
         while (true) {
-            if (xQueueReceive(mQueue, &Event, portMAX_DELAY) == pdTRUE) {
-                NotifySync(Event);
-            }
+            ProcessOneAsyncEvent();
         }
     }
 
@@ -550,6 +563,23 @@ public:
         return GetPendingCount() >= QueueSize;
     }
 
+public:
+    /**
+     * @brief Process at most one queued event. Public for tests so the
+     *        loop body can be exercised without spawning a real task.
+     */
+    bool ProcessOneEvent() {
+        if (!mQueue) return false;
+        T Event;
+        if (xQueueReceive(mQueue, &Event, pdMS_TO_TICKS(100)) == pdTRUE) {
+            if (mRunning && mHandler) {
+                mHandler(Event);
+                return true;
+            }
+        }
+        return false;
+    }
+
 private:
     static void TaskEntry(void* Arg) {
         auto* Self = static_cast<EventQueue*>(Arg);
@@ -558,13 +588,8 @@ private:
     }
 
     void TaskLoop() {
-        T Event;
         while (mRunning) {
-            if (xQueueReceive(mQueue, &Event, pdMS_TO_TICKS(100)) == pdTRUE) {
-                if (mRunning && mHandler) {
-                    mHandler(Event);
-                }
-            }
+            ProcessOneEvent();
         }
     }
 

@@ -167,6 +167,44 @@ TEST(MainViewTest, StartCreatesRenderTask) {
     EXPECT_NE(view.taskHandle(), nullptr);
 }
 
+// ── renderTaskStep: cover the render-task body without spawning a task ────
+
+TEST(MainViewTest, RenderTaskStepReturnsFalseWithoutWiring) {
+    MainView view;
+    EXPECT_FALSE(view.renderTaskStep());  // viewModel/display nullptr
+}
+
+TEST(MainViewTest, RenderTaskStepRendersDirtyOutput) {
+    MainView view;
+    LcdViewModel vm;
+    auto display = makeDisplay();
+    view.input.viewModel = &vm;
+    view.input.display = &display;
+
+    // Mark output dirty so render() will run
+    Arcana::Observable<Arcana::Sensor::SensorData> sensorObs;
+    vm.input.SensorData = &sensorObs;
+    vm.init();
+    Arcana::Sensor::SensorData d;
+    d.Temperature = 24.5f;
+    d.Humidity = 55.0f;
+    sensorObs.Notify(d);
+
+    EXPECT_TRUE(view.renderTaskStep());
+    // The render call should have produced display draw operations
+    EXPECT_GT(g_ssdCounters.drawnStrings.size(), 0u);
+}
+
+TEST(MainViewTest, RenderTaskStepNoOpWhenNotDirty) {
+    MainView view;
+    LcdViewModel vm;
+    auto display = makeDisplay();
+    view.input.viewModel = &vm;
+    view.input.display = &display;
+    // No dirty flags → renderTaskStep returns true but doesn't draw
+    EXPECT_TRUE(view.renderTaskStep());
+}
+
 // ── Combined sensor + storage update ────────────────────────────────────────
 
 TEST(MainViewTest, CombinedSensorAndStorageUpdate) {
