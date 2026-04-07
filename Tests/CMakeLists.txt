@@ -28,6 +28,10 @@ set(ATS_INC       ${PROJECT_ROOT}/components/ArcanaTs/include)
 set(ATS_SRC       ${PROJECT_ROOT}/components/ArcanaTs/src)
 set(LOG_INC       ${PROJECT_ROOT}/components/LogService/include)
 set(BLE_INC       ${PROJECT_ROOT}/components/BleService/include)
+set(REG_INC       ${PROJECT_ROOT}/components/RegistrationService/include)
+set(REG_SRC       ${PROJECT_ROOT}/components/RegistrationService)
+set(IO_INC        ${PROJECT_ROOT}/components/IoService/include)
+set(STORAGE_INC   ${PROJECT_ROOT}/components/AtsStorageService/include)
 set(NANOPB_DIR    ${PROJECT_ROOT}/managed_components/nikas-belogolov__nanopb)
 
 # Common includes — mocks FIRST so they override real ESP-IDF / FreeRTOS headers
@@ -220,6 +224,26 @@ if(MBEDTLS_INCLUDE_DIR AND MBEDCRYPTO_LIB)
         ${MBEDCRYPTO_LIB}
     )
     add_test(NAME test_key_exchange_manager COMMAND test_key_exchange_manager)
+
+    # ── test_registration_service (Phase D — needs http_client + storage stubs)
+    add_executable(test_registration_service
+        test_registration_service.cpp
+        ${REG_SRC}/RegistrationServiceImpl.cpp
+        mocks/esp_http_client_stub.cpp
+    )
+    target_include_directories(test_registration_service PRIVATE
+        ${COMMON_INCS}
+        ${MBEDTLS_INCLUDE_DIR}
+        ${REG_INC}
+        ${STORAGE_INC}
+    )
+    target_compile_options(test_registration_service PRIVATE ${MBEDTLS_COMPAT_FLAGS})
+    target_link_libraries(test_registration_service PRIVATE
+        GTest::gtest_main
+        esp_stubs
+        ${MBEDCRYPTO_LIB}
+    )
+    add_test(NAME test_registration_service COMMAND test_registration_service)
 
     # ── test_command_service (Meyer singleton lifecycle + request routing) ──
     add_executable(test_command_service
