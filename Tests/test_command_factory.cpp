@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include "CommandFactory.hpp"
 #include "ICommand.hpp"
+#include "ObservableSensor.hpp"
 
 using namespace Arcana::Command;
 
@@ -8,6 +9,16 @@ using namespace Arcana::Command;
 static CommandFactory makeFactory() {
     CommandFactory::Dependencies deps;
     deps.Sensor = nullptr;
+    deps.KeyExchangeMgr = nullptr;
+    return CommandFactory(deps);
+}
+
+// Helper: factory with a real (stub-backed) ObservableSensor for the
+// success path of GetSensorData / SetNotifyInterval. The stub
+// constructor sets sane defaults; method calls are no-ops.
+static CommandFactory makeFactoryWithSensor(Arcana::Sensor::ObservableSensor* s) {
+    CommandFactory::Dependencies deps;
+    deps.Sensor = s;
     deps.KeyExchangeMgr = nullptr;
     return CommandFactory(deps);
 }
@@ -62,6 +73,70 @@ TEST(CommandFactoryTest, CreateSetNotifyIntervalCommand) {
 TEST(CommandFactoryTest, SensorUnknownCommand) {
     auto factory = makeFactory();
     EXPECT_EQ(factory.Create(Cluster::Sensor, 0xFF).get(), nullptr);
+}
+
+// ── Sensor cluster (success paths with a real-but-stubbed sensor) ──────────
+
+TEST(CommandFactoryTest, GetSensorDataReturnsPayloadOnSuccess) {
+    Arcana::Sensor::ObservableSensor sensor;
+    auto factory = makeFactoryWithSensor(&sensor);
+    auto cmd = factory.Create(Cluster::Sensor, SensorCmd::GetData);
+    ASSERT_NE(cmd.get(), nullptr);
+    CommandRequest req;
+    req.ClusterId = Cluster::Sensor;
+    req.Command = SensorCmd::GetData;
+    auto rsp = cmd->Execute(req);
+    EXPECT_EQ(rsp.Status, kStatusOk);
+    EXPECT_EQ(rsp.PayloadLen, 12);  // float + float + uint32_t
+}
+
+TEST(CommandFactoryTest, SetNotifyIntervalRejectsOutOfRangeValues) {
+    Arcana::Sensor::ObservableSensor sensor;
+    auto factory = makeFactoryWithSensor(&sensor);
+    auto cmd = factory.Create(Cluster::Sensor, SensorCmd::SetNotifyInterval);
+    ASSERT_NE(cmd.get(), nullptr);
+    CommandRequest req;
+    req.ClusterId = Cluster::Sensor;
+    req.Command = SensorCmd::SetNotifyInterval;
+    req.PayloadLen = sizeof(uint32_t);
+
+    // Below valid range (< 100)
+    uint32_t tooSmall = 50;
+    memcpy(req.Payload, &tooSmall, sizeof(uint32_t));
+    EXPECT_EQ(cmd->Execute(req).Status, kStatusInvalidParam);
+
+    // Above valid range (> 60000)
+    uint32_t tooBig = 70000;
+    memcpy(req.Payload, &tooBig, sizeof(uint32_t));
+    EXPECT_EQ(cmd->Execute(req).Status, kStatusInvalidParam);
+}
+
+TEST(CommandFactoryTest, SetNotifyIntervalAcceptsValidValue) {
+    Arcana::Sensor::ObservableSensor sensor;
+    auto factory = makeFactoryWithSensor(&sensor);
+    auto cmd = factory.Create(Cluster::Sensor, SensorCmd::SetNotifyInterval);
+    CommandRequest req;
+    req.ClusterId = Cluster::Sensor;
+    req.Command = SensorCmd::SetNotifyInterval;
+    req.PayloadLen = sizeof(uint32_t);
+    uint32_t valid = 5000;
+    memcpy(req.Payload, &valid, sizeof(uint32_t));
+    auto rsp = cmd->Execute(req);
+    EXPECT_EQ(rsp.Status, kStatusOk);
+    uint32_t echoed = 0;
+    memcpy(&echoed, rsp.Payload, sizeof(uint32_t));
+    EXPECT_EQ(echoed, 5000u);
+}
+
+TEST(CommandFactoryTest, SetNotifyIntervalShortPayloadRejected) {
+    Arcana::Sensor::ObservableSensor sensor;
+    auto factory = makeFactoryWithSensor(&sensor);
+    auto cmd = factory.Create(Cluster::Sensor, SensorCmd::SetNotifyInterval);
+    CommandRequest req;
+    req.ClusterId = Cluster::Sensor;
+    req.Command = SensorCmd::SetNotifyInterval;
+    req.PayloadLen = 2;  // < 4
+    EXPECT_EQ(cmd->Execute(req).Status, kStatusInvalidParam);
 }
 
 // ── BLE cluster ─────────────────────────────────────────────────────────────
