@@ -236,6 +236,24 @@ TEST(SensorTypesTest, ToVariantConvertsAllTypes) {
     EXPECT_TRUE(std::holds_alternative<Variant::LifecycleEventV>(ev4));
 }
 
+namespace {
+class UnknownTypeModel : public IModel {
+public:
+    ModelType GetType() const override { return ModelType::Unknown; }
+    const char* GetTypeName() const override { return "Unknown"; }
+    uint32_t GetTimestampMs() const override { return 0; }
+    uint8_t GetSensorId() const override { return 0; }
+};
+} // namespace
+
+// ToVariant's default-case fallback returns LifecycleEventV{} for any
+// unknown ModelType — covers SensorTypes.hpp L449-450.
+TEST(SensorTypesTest, ToVariantUnknownTypeReturnsFallback) {
+    UnknownTypeModel m;
+    SensorEvent ev = ToVariant(m);
+    EXPECT_TRUE(std::holds_alternative<Variant::LifecycleEventV>(ev));
+}
+
 TEST(SensorTypesTest, EventVisitorPatternMatching) {
     SensorEvent e = Variant::SensorDataV{};
     int dataCount = 0, errorCount = 0;
