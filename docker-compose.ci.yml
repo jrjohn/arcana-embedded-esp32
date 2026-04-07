@@ -4,6 +4,15 @@ services:
     working_dir: /project
     environment:
       - HOME=/tmp
+      # ESP-IDF's cmake/kconfig step calls `git rev-parse` on /project to
+      # detect the project's git state. When the workspace files on the
+      # host are owned by a non-root user (e.g. CI agent) but the container
+      # runs as root, git fails with "fatal: detected dubious ownership"
+      # and the kconfig step silently fails to generate sdkconfig.h.
+      # Mark every directory as safe to silence the check.
+      - GIT_CONFIG_COUNT=1
+      - GIT_CONFIG_KEY_0=safe.directory
+      - GIT_CONFIG_VALUE_0=*
     volumes:
       - .:/project
     command: bash -c "rm -rf build && idf.py set-target esp32 build"
