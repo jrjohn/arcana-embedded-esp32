@@ -2,7 +2,11 @@
 #include "CommandCodec.hpp"
 #include "FrameCodec.hpp"
 #include "CommandTypes.hpp"
+#include "KeyExchangeManager.hpp"
 #include "arcana_cmd.pb.h"
+#include "mbedtls/ecp.h"
+#include "mbedtls/entropy.h"
+#include "mbedtls/ctr_drbg.h"
 #include <pb_encode.h>
 #include <pb_decode.h>
 #include <cstring>
@@ -107,6 +111,133 @@ TEST(CommandCodecEncryptedTest, MultipleEncodesDoNotCorrupt) {
         EXPECT_TRUE(codec.EncodeResponse(rsp, buf, sizeof(buf), outLen));
         EXPECT_GT(outLen, 0u);
     }
+}
+
+// ── Helper: generate a real client keypair so we can run a session install ─
+
+static bool generateClientKeypair(uint8_t pubOut[64]) {
+    mbedtls_entropy_context entropy;
+    mbedtls_ctr_drbg_context ctr;
+    mbedtls_ecp_group grp;
+    mbedtls_mpi d;
+    mbedtls_ecp_point Q;
+
+    mbedtls_entropy_init(&entropy);
+    mbedtls_ctr_drbg_init(&ctr);
+    mbedtls_ecp_group_init(&grp);
+    mbedtls_mpi_init(&d);
+    mbedtls_ecp_point_init(&Q);
+
+    const char* pers = "codec_encrypted_test";
+    bool ok = false;
+    do {
+        if (mbedtls_ctr_drbg_seed(&ctr, mbedtls_entropy_func, &entropy,
+                                   reinterpret_cast<const unsigned char*>(pers),
+                                   strlen(pers)) != 0) break;
+        if (mbedtls_ecp_group_load(&grp, MBEDTLS_ECP_DP_SECP256R1) != 0) break;
+        if (mbedtls_ecp_gen_keypair(&grp, &d, &Q,
+                                     mbedtls_ctr_drbg_random, &ctr) != 0) break;
+        if (mbedtls_mpi_write_binary(&Q.MBEDTLS_PRIVATE(X), pubOut, 32) != 0) break;
+        if (mbedtls_mpi_write_binary(&Q.MBEDTLS_PRIVATE(Y), pubOut + 32, 32) != 0) break;
+        ok = true;
+    } while (false);
+
+    mbedtls_ecp_point_free(&Q);
+    mbedtls_mpi_free(&d);
+    mbedtls_ecp_group_free(&grp);
+    mbedtls_ctr_drbg_free(&ctr);
+    mbedtls_entropy_free(&entropy);
+    return ok;
+}
+
+// ── Session-key encrypt path: install a real session, then encode a non-
+//    KeyExchange response so it goes through EncryptWithSession (L160-161)
+//    and the post-encrypt `if (!encrypted)` PSK fallback is skipped (L166-171
+//    bypassed for the success case).
+
+TEST(CommandCodecEncryptedTest, EncodeWithInstalledSessionEncryptsViaSession) {
+    // Build a real KeyExchangeManager + install a session for (BLE, 1)
+    KeyExchangeManager kex;
+    uint8_t psk[CryptoEngine::kKeyLen];
+    for (size_t i = 0; i < sizeof(psk); i++) psk[i] = static_cast<uint8_t>(i);
+    ASSERT_EQ(kex.Init(psk), ESP_OK);
+
+    uint8_t clientPub[64];
+    ASSERT_TRUE(generateClientKeypair(clientPub));
+    uint8_t serverPub[64], authTag[32];
+    ASSERT_TRUE(kex.PerformKeyExchange(CommandSource::BLE, 1,
+                                          clientPub, serverPub, authTag));
+    ASSERT_TRUE(kex.InstallPendingSession(CommandSource::BLE, 1));
+
+    CommandCodec codec;
+    ASSERT_EQ(codec.Init(), ESP_OK);
+    codec.SetKeyExchangeManager(&kex);
+
+    // Non-KeyExchange response → goes through session encrypt path
+    CommandResponse rsp{};
+    rsp.Source = CommandSource::BLE;
+    rsp.ConnectionId = 1;
+    rsp.ClusterId = Cluster::System;
+    rsp.Command = SystemCmd::Ping;
+    rsp.Status = kStatusOk;
+    rsp.PayloadLen = 4;
+    rsp.Payload[0] = 0x10; rsp.Payload[1] = 0x20;
+    rsp.Payload[2] = 0x30; rsp.Payload[3] = 0x40;
+    rsp.StreamId = 9;
+    rsp.Fin = true;
+
+    uint8_t buf[512];
+    size_t outLen = 0;
+    EXPECT_TRUE(codec.EncodeResponse(rsp, buf, sizeof(buf), outLen));
+    EXPECT_GT(outLen, FrameCodec::kOverhead);
+}
+
+// ── Session-key decrypt path: encode then decode using the same session ────
+
+TEST(CommandCodecEncryptedTest, RoundTripViaSession) {
+    KeyExchangeManager kex;
+    uint8_t psk[CryptoEngine::kKeyLen];
+    for (size_t i = 0; i < sizeof(psk); i++) psk[i] = static_cast<uint8_t>(0xA0 + i);
+    ASSERT_EQ(kex.Init(psk), ESP_OK);
+
+    uint8_t clientPub[64];
+    ASSERT_TRUE(generateClientKeypair(clientPub));
+    uint8_t serverPub[64], authTag[32];
+    ASSERT_TRUE(kex.PerformKeyExchange(CommandSource::BLE, 2,
+                                          clientPub, serverPub, authTag));
+    ASSERT_TRUE(kex.InstallPendingSession(CommandSource::BLE, 2));
+
+    CommandCodec codec;
+    ASSERT_EQ(codec.Init(), ESP_OK);
+    codec.SetKeyExchangeManager(&kex);
+
+    // Use EncryptWithSession directly to build a wire request, then deframe
+    // by hand to get an encrypted protobuf payload. We send that through
+    // DecodeRequest which will call DecryptWithSession (L67) and decode.
+    arcana_CmdRequest msg = arcana_CmdRequest_init_zero;
+    msg.cluster = static_cast<uint32_t>(Cluster::System);
+    msg.command = SystemCmd::Ping;
+    msg.payload.size = 0;
+    uint8_t pbBuf[arcana_CmdRequest_size];
+    pb_ostream_t stream = pb_ostream_from_buffer(pbBuf, sizeof(pbBuf));
+    ASSERT_TRUE(pb_encode(&stream, arcana_CmdRequest_fields, &msg));
+    size_t pbLen = stream.bytes_written;
+
+    uint8_t encBuf[256];
+    size_t encLen = 0;
+    ASSERT_TRUE(kex.EncryptWithSession(CommandSource::BLE, 2,
+                                         pbBuf, pbLen,
+                                         encBuf, sizeof(encBuf), encLen));
+
+    uint8_t frame[300];
+    size_t frameLen = 0;
+    ASSERT_TRUE(FrameCodec::Frame(encBuf, encLen, frame, sizeof(frame), frameLen,
+                                    FrameCodec::kFlagFin, 1));
+
+    CommandRequest req;
+    EXPECT_TRUE(codec.DecodeRequest(CommandSource::BLE, 2, frame, frameLen, req));
+    EXPECT_EQ(req.ClusterId, Cluster::System);
+    EXPECT_EQ(req.Command, SystemCmd::Ping);
 }
 
 TEST(CommandCodecEncryptedTest, DecodeRejectsRandomGarbage) {
