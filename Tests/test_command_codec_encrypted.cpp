@@ -16,6 +16,11 @@
 
 using namespace Arcana::Command;
 
+// Forward declaration so KeyExchangeResponseInstallsSessionWithRealManager
+// (defined below near the top) can call into the helper that's defined
+// further down the file alongside the round-trip session tests.
+static bool generateClientKeypair(uint8_t pubOut[64]);
+
 // ── Round-trip via the encryption-enabled codec ────────────────────────────
 
 TEST(CommandCodecEncryptedTest, InitWithValidPskSucceeds) {
@@ -70,6 +75,47 @@ TEST(CommandCodecEncryptedTest, KeyExchangeResponseInstallsSession) {
     uint8_t buf[512];
     size_t outLen = 0;
     EXPECT_TRUE(codec.EncodeResponse(rsp, buf, sizeof(buf), outLen));
+}
+
+// With a real KeyExchangeManager wired in, encoding a successful KeyExchange
+// response should call InstallPendingSession (CommandCodec.cpp L175).
+TEST(CommandCodecEncryptedTest, KeyExchangeResponseInstallsSessionWithRealManager) {
+    KeyExchangeManager kex;
+    uint8_t psk[CryptoEngine::kKeyLen];
+    for (size_t i = 0; i < sizeof(psk); i++) psk[i] = static_cast<uint8_t>(0xB0 + i);
+    ASSERT_EQ(kex.Init(psk), ESP_OK);
+
+    // Stage a pending session via PerformKeyExchange so InstallPendingSession
+    // has something to install.
+    uint8_t clientPub[64];
+    ASSERT_TRUE(generateClientKeypair(clientPub));
+    uint8_t serverPub[64], authTag[32];
+    ASSERT_TRUE(kex.PerformKeyExchange(CommandSource::BLE, 11,
+                                          clientPub, serverPub, authTag));
+
+    CommandCodec codec;
+    ASSERT_EQ(codec.Init(), ESP_OK);
+    codec.SetKeyExchangeManager(&kex);
+
+    // Encode a successful KeyExchange response → triggers L174-176
+    CommandResponse rsp{};
+    rsp.Source = CommandSource::BLE;
+    rsp.ConnectionId = 11;
+    rsp.ClusterId = Cluster::Security;
+    rsp.Command = SecurityCmd::KeyExchange;
+    rsp.Status = kStatusOk;
+    rsp.PayloadLen = 96;
+    memcpy(rsp.Payload, serverPub, 64);
+    memcpy(rsp.Payload + 64, authTag, 32);
+    rsp.StreamId = 0;
+    rsp.Fin = true;
+
+    uint8_t buf[512];
+    size_t outLen = 0;
+    EXPECT_TRUE(codec.EncodeResponse(rsp, buf, sizeof(buf), outLen));
+
+    // After InstallPendingSession, the session should be live for (BLE, 11).
+    EXPECT_NE(kex.GetSession(CommandSource::BLE, 11), nullptr);
 }
 
 // ── Helper: build encrypted protobuf frame for round-trip test ─────────────
