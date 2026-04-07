@@ -1688,6 +1688,42 @@ TEST_F(ArcanaTsDbTest, FindChannelBySchemaIdReturnsNeg1ForUnknown) {
     EXPECT_EQ(db.findChannelBySchemaId(0xDEADBEEFu), -1);
 }
 
+// Regression: writeShadowHeader() must not extend past block 0 and corrupt
+// block 1's seqNo. Earlier versions wrote 2560 bytes at SHADOW_OFFSET=0x0A00,
+// overwriting offsets 4096-5119 (block 1's first quarter) and clobbering its
+// sequence number on every close. This test exercises a plaintext close and
+// verifies block 1's seqNo and channelId survive.
+TEST_F(ArcanaTsDbTest, ShadowHeaderDoesNotCorruptBlock1) {
+    {
+        AtsConfig cfg = makeConfig(/*primaryChannel=*/0);
+        ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+        ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::dht11()));
+        ASSERT_TRUE(db.start());
+        // Write enough records to flush a couple of full blocks
+        uint8_t rec[8];
+        for (int i = 0; i < 1500; i++) {
+            writeDhtRecord(rec, g_fakeTime + i, static_cast<int16_t>(i), 600);
+            db.append(0, rec);
+        }
+        ASSERT_TRUE(db.close());
+    }
+
+    // Read block 1's header directly off disk and verify it's intact.
+    std::string fullPath = std::string(MOUNT) + "/" + fileName;
+    FILE* fp = fopen(fullPath.c_str(), "rb");
+    ASSERT_NE(fp, nullptr);
+    AtsBlockHeader bhdr;
+    fseek(fp, 4096, SEEK_SET);
+    ASSERT_EQ(fread(&bhdr, 1, sizeof(bhdr), fp), sizeof(bhdr));
+    fclose(fp);
+
+    // Block 1 must have a valid (non-zero) sequence number and the channel
+    // we registered. If the shadow region overlapped, both would be 0.
+    EXPECT_NE(bhdr.blockSeqNo, 0u);
+    EXPECT_NE(bhdr.blockSeqNo, 0xFFFFFFFFu);
+    EXPECT_EQ(bhdr.channelId, 0u);
+}
+
 TEST_F(ArcanaTsDbTest, GetReadCacheFallsBackToSlowBuffer) {
     // Hits getReadCache fallback (L1348): readCache=null → return slowBuf.
     AtsConfig cfg = makeConfig(/*primaryChannel=*/0);

@@ -968,16 +968,22 @@ bool ArcanaTsDb::updateFileHeader() {
 }
 
 bool ArcanaTsDb::writeShadowHeader() {
-    // Read primary header area (0x0000-0x09FF = 2560 bytes)
-    uint8_t* cache = getReadCache();
-    if (!cache) return false;
-
+    // Mirror only the 64-byte AtsFileHeader at SHADOW_OFFSET. Earlier
+    // versions wrote 2560 bytes here, which extended past the end of
+    // block 0 (4096 bytes) and corrupted the first 1024 bytes of block 1 —
+    // including its sequence number — on every close. The read side
+    // (readFileHeader) only ever reads sizeof(AtsFileHeader) bytes from
+    // SHADOW_OFFSET, so writing only that range is fully backward-
+    // compatible with files written by previous versions.
+    uint8_t headerBuf[sizeof(AtsFileHeader)];
     if (!mCfg.file->seek(0)) return false;
-    if (mCfg.file->read(cache, SHADOW_OFFSET) != static_cast<int32_t>(SHADOW_OFFSET)) return false;
-
-    // Write shadow at 0x0A00
+    if (mCfg.file->read(headerBuf, sizeof(headerBuf))
+        != static_cast<int32_t>(sizeof(headerBuf))) {
+        return false;
+    }
     if (!mCfg.file->seek(SHADOW_OFFSET)) return false;
-    return mCfg.file->write(cache, SHADOW_OFFSET) == static_cast<int32_t>(SHADOW_OFFSET);
+    return mCfg.file->write(headerBuf, sizeof(headerBuf))
+        == static_cast<int32_t>(sizeof(headerBuf));
 }
 
 // ---------------------------------------------------------------------------
