@@ -698,6 +698,71 @@ TEST_F(ArcanaTsDbTest, AtsAppenderMapsAllSeverityLevels) {
     EXPECT_EQ(db.getStats().perChannelRecords[0], 6u);
 }
 
+// ── Encrypted header path (mCfg.headerKey != nullptr) ────────────────────────
+
+TEST_F(ArcanaTsDbTest, EncryptedHeaderWriteThenRead) {
+    uint8_t headerKey[32];
+    for (int i = 0; i < 32; i++) headerKey[i] = static_cast<uint8_t>(0xC0 + i);
+
+    {
+        AtsConfig cfg = makeConfig();
+        cfg.headerKey = headerKey;
+        ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+        ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::dht11()));
+        ASSERT_TRUE(db.start());
+        uint8_t rec[8];
+        for (int i = 0; i < 20; i++) {
+            writeDhtRecord(rec, g_fakeTime + i, 250 + i, 600);
+            db.append(0, rec);
+        }
+        ASSERT_TRUE(db.close());
+    }
+
+    // Reopen with the same headerKey — must successfully decrypt header
+    AtsConfig cfg = makeConfig();
+    cfg.headerKey = headerKey;
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    EXPECT_GE(db.getChannelCount(), 1);
+    EXPECT_NE(db.getSchema(0), nullptr);
+}
+
+// ── Heavy load: many blocks + recovery with index ──────────────────────────
+
+TEST_F(ArcanaTsDbTest, HeavyLoadManyBlocksFlush) {
+    AtsConfig cfg = makeConfig(/*primaryChannel=*/0);
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::dht11()));
+    ASSERT_TRUE(db.start());
+
+    uint8_t rec[8];
+    // 8-byte records, ~508/block. Push 5000 → ~10 blocks
+    for (int i = 0; i < 5000; i++) {
+        writeDhtRecord(rec, g_fakeTime + i, static_cast<int16_t>(i & 0x7FFF), 600);
+        db.append(0, rec);
+    }
+    db.flush();
+    EXPECT_GE(db.getStats().blocksWritten, 5u);
+    EXPECT_GE(db.getStats().totalRecords, 5000u);
+}
+
+TEST_F(ArcanaTsDbTest, RecoveryFromExistingWithIndex) {
+    {
+        AtsConfig cfg = makeConfig(/*primaryChannel=*/0);
+        ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+        ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::dht11()));
+        ASSERT_TRUE(db.start());
+        uint8_t rec[8];
+        for (int i = 0; i < 2000; i++) {
+            writeDhtRecord(rec, g_fakeTime + i, static_cast<int16_t>(i), 600);
+            db.append(0, rec);
+        }
+        ASSERT_TRUE(db.close());  // close() writes index
+    }
+    AtsConfig cfg = makeConfig(/*primaryChannel=*/0);
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    EXPECT_GE(db.getChannelCount(), 1);
+}
+
 // ── DeviceAppender (LogService → device.ats LIFECYCLE channel) ─────────────
 
 TEST_F(ArcanaTsDbTest, DeviceAppenderMinLevelIsFatal) {
