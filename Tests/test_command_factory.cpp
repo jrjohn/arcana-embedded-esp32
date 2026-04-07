@@ -339,6 +339,56 @@ TEST(BleTypesTest, ServerClientInfoDefaultConstructor) {
     EXPECT_FALSE(c.RspCccdEnabled);
 }
 
+// ── ObservableSensor accessor coverage ─────────────────────────────────────
+
+TEST(CommandFactoryTest, ObservableSensorIsRunningAccessor) {
+    Arcana::Sensor::ObservableSensor sensor;
+    EXPECT_FALSE(sensor.IsRunning());
+}
+
+TEST(CommandFactoryTest, CreateSensorFactoryFunction) {
+    auto ptr = Arcana::Sensor::CreateSensor();
+    EXPECT_NE(ptr.get(), nullptr);
+}
+
+// ── Stub-failure paths for BLE commands ───────────────────────────────────
+
+extern "C" esp_err_t g_bt_set_name_result;
+
+TEST(CommandFactoryTest, BleScanReturnsErrorWhenStartScanningFails) {
+    // Force BleGap::StartScanning to fail
+    Arcana::Ble::BleGap::Instance().test_setScanResult(ESP_FAIL);
+
+    auto factory = makeFactory();
+    auto cmd = factory.Create(Cluster::Ble, BleCmd::Scan);
+    CommandRequest req;
+    req.ClusterId = Cluster::Ble;
+    req.Command = BleCmd::Scan;
+    req.PayloadLen = 0;  // default duration
+    auto rsp = cmd->Execute(req);
+    EXPECT_EQ(rsp.Status, kStatusError);
+
+    // Restore default for other tests
+    Arcana::Ble::BleGap::Instance().test_setScanResult(ESP_OK);
+}
+
+TEST(CommandFactoryTest, SetDeviceNameReturnsErrorWhenStubFails) {
+    g_bt_set_name_result = ESP_FAIL;
+
+    auto factory = makeFactory();
+    auto cmd = factory.Create(Cluster::Ble, BleCmd::SetDeviceName);
+    CommandRequest req;
+    req.ClusterId = Cluster::Ble;
+    req.Command = BleCmd::SetDeviceName;
+    const char* name = "Test";
+    req.PayloadLen = strlen(name);
+    memcpy(req.Payload, name, req.PayloadLen);
+    auto rsp = cmd->Execute(req);
+    EXPECT_EQ(rsp.Status, kStatusError);
+
+    g_bt_set_name_result = ESP_OK;
+}
+
 // ── Invalid cluster ─────────────────────────────────────────────────────────
 
 TEST(CommandFactoryTest, InvalidClusterReturnsNullptr) {

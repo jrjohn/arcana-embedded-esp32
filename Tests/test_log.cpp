@@ -300,6 +300,17 @@ TEST(SerialAppenderTest, OutOfRangeSourceFallsBackToUnknown) {
     SUCCEED();
 }
 
+TEST(SerialAppenderTest, OutOfRangeLevelHitsDefaultBranch) {
+    // Pass a Level value outside the enum so the switch hits the default arm
+    SerialAppender app;
+    LogEvent ev{};
+    ev.level = 99;  // not Trace/Debug/Info/Warn/Error/Fatal
+    ev.source = 0;
+    ev.code = 0x0007;
+    app.append(ev);
+    SUCCEED();
+}
+
 // ── EventCodes constants ────────────────────────────────────────────────────
 
 TEST(EventCodesTest, ReservedCodesHaveStableValues) {

@@ -392,6 +392,32 @@ TEST_F(RegistrationServiceTest, DoRegistrationRetryOnSaveFailure) {
 
 // ── refreshToken success path ──────────────────────────────────────────────
 
+// ── Malformed protobuf wire type (covers pbDecode L83 break) ───────────────
+
+TEST_F(RegistrationServiceTest, MalformedProtobufWireTypeBreaksDecode) {
+    auto& svc = RegistrationServiceImpl::getInstance();
+    auto& storage = Arcana::Storage::AtsStorageServiceImpl::getInstance();
+    storage.test_setReady(true);
+    storage.test_setLoadOk(false);
+
+    // Build a frame whose protobuf payload starts with a wire-type-1 tag
+    // (64-bit fixed) which the minimal pbDecode in RegistrationServiceImpl
+    // doesn't handle → it breaks out of the loop. The result has zero
+    // recognized fields → parseResponse fails → httpRegister returns false.
+    uint8_t pbBuf[16];
+    pbBuf[0] = (1 << 3) | 1;  // field 1, wire type 1 (unsupported)
+    pbBuf[1] = 0; pbBuf[2] = 0; pbBuf[3] = 0; pbBuf[4] = 0;  // garbage 64-bit
+    pbBuf[5] = 0; pbBuf[6] = 0; pbBuf[7] = 0; pbBuf[8] = 0;
+
+    uint8_t frame[64];
+    size_t frameLen = 0;
+    ASSERT_TRUE(FrameCodec::Frame(pbBuf, 9, frame, sizeof(frame), frameLen,
+                                    FrameCodec::kFlagFin, 0x80));
+
+    http_test_set_response(frame, (int)frameLen, 200);
+    EXPECT_FALSE(svc.doRegistration());
+}
+
 TEST_F(RegistrationServiceTest, RefreshTokenSuccessPath) {
     auto& svc = RegistrationServiceImpl::getInstance();
     auto& storage = Arcana::Storage::AtsStorageServiceImpl::getInstance();

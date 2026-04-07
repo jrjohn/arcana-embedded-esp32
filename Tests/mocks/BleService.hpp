@@ -31,9 +31,16 @@ public:
         static BleGap g;
         return g;
     }
-    esp_err_t StartScanning(uint32_t /*durationSec*/) { return ESP_OK; }
+    esp_err_t StartScanning(uint32_t /*durationSec*/) {
+        return mScanResult;
+    }
+
+    // Test injection
+    void test_setScanResult(esp_err_t r) { mScanResult = r; }
+
 private:
     BleGap() = default;
+    esp_err_t mScanResult = ESP_OK;
 };
 
 } // namespace Ble

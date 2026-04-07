@@ -155,6 +155,32 @@ TEST_F(HttpUploadServiceTest, ProgressCallbackInvocation) {
     SUCCEED();  // setter is no-op-tested; firing requires a real upload
 }
 
+TEST_F(HttpUploadServiceTest, ProgressCallbackFiresDuringUpload) {
+    if (!g_sdcardAvailable) GTEST_SKIP() << "/sdcard not available";
+
+    auto& svc = HttpUploadServiceImpl::getInstance();
+    s_cbCalls = 0;
+    svc.setProgressCallback(test_progress_cb, nullptr);
+
+    // Small file so the upload write loop runs at least once
+    uint8_t data[2048];
+    memset(data, 0xCC, sizeof(data));
+    writeFile("progress.ats", data, sizeof(data));
+
+    // queryServerOffset returns 0 (404)
+    const char* body = "404";
+    http_test_set_response(reinterpret_cast<const uint8_t*>(body), 3, 404);
+
+    (void)svc.uploadFile("progress.ats", "DEV001", "tok|9999|sig");
+
+    // notifyProgress() should have invoked the callback at least once during
+    // the write loop (covers HttpUploadServiceImpl.hpp L31-32 inline body).
+    EXPECT_GT(s_cbCalls, 0);
+
+    svc.setProgressCallback(nullptr, nullptr);
+    removeFile("progress.ats");
+}
+
 TEST_F(HttpUploadServiceTest, SetProgressCallbackNullClears) {
     auto& svc = HttpUploadServiceImpl::getInstance();
     svc.setProgressCallback(nullptr, nullptr);

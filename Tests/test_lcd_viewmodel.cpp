@@ -132,6 +132,22 @@ TEST(LcdViewModelTest, NoInputWiringIsSafe) {
     SUCCEED();
 }
 
+// ── notifyRender path: init() with non-null render task ───────────────────
+
+TEST(LcdViewModelTest, NotifyRenderHitsXTaskNotifyGiveWhenTaskSet) {
+    Observable<Sensor::SensorData> sensorObs;
+    LcdViewModel vm;
+    vm.input.SensorData = &sensorObs;
+    // Provide a non-null fake task handle so notifyRender() reaches
+    // xTaskNotifyGive (covered by esp_stubs).
+    vm.init(reinterpret_cast<TaskHandle_t>(0xDEADBEEF));
+
+    Sensor::SensorData d;
+    d.Temperature = 22.0f;
+    sensorObs.Notify(d);
+    SUCCEED();
+}
+
 // ── DirtyFlag enum ──────────────────────────────────────────────────────────
 
 TEST(LcdViewModelTest, DirtyFlagValuesAreUnique) {

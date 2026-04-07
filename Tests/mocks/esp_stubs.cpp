@@ -101,6 +101,11 @@ extern "C" void       vTaskDelay(TickType_t)           {}
 // Settable tick — tests that need a non-zero clock can set this directly.
 TickType_t g_test_tick_count = 0;
 extern "C" TickType_t xTaskGetTickCount(void)          { return g_test_tick_count; }
+
+// Settable BLE name set result — used by SetDeviceNameCommand failure tests.
+extern "C" {
+esp_err_t g_bt_set_name_result = ESP_OK;
+}
 extern "C" BaseType_t xTaskNotifyGive(TaskHandle_t)    { return pdTRUE; }
 extern "C" uint32_t   ulTaskNotifyTake(BaseType_t, TickType_t) { return 0; }
 

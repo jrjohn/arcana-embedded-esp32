@@ -299,6 +299,29 @@ TEST(KeyExchangeManagerTest, SlotExhaustionAfterFourSessions) {
     EXPECT_FALSE(kex.InstallPendingSession(CommandSource::BLE, 200));
 }
 
+// ── Active session rejects new key exchange (covers L97/L100) ──────────────
+
+TEST(KeyExchangeManagerTest, PerformKeyExchangeWhenActiveSessionExistsRejected) {
+    KeyExchangeManager kex;
+    uint8_t psk[CryptoEngine::kKeyLen];
+    makePsk(psk);
+    ASSERT_EQ(kex.Init(psk), ESP_OK);
+
+    uint8_t clientPub[64];
+    ASSERT_TRUE(generateClientKeypair(clientPub));
+    uint8_t serverPub[64], authTag[32];
+
+    // Establish active session for (BLE, 70)
+    ASSERT_TRUE(kex.PerformKeyExchange(CommandSource::BLE, 70, clientPub, serverPub, authTag));
+    ASSERT_TRUE(kex.InstallPendingSession(CommandSource::BLE, 70));
+    ASSERT_NE(kex.GetSession(CommandSource::BLE, 70), nullptr);
+
+    // A second PerformKeyExchange for the SAME (source, connId) must be
+    // rejected by the active-session check at L93-101.
+    EXPECT_FALSE(kex.PerformKeyExchange(CommandSource::BLE, 70,
+                                          clientPub, serverPub, authTag));
+}
+
 // ── Re-key after RemoveSession (covers slot reuse path) ────────────────────
 
 TEST(KeyExchangeManagerTest, ReKeyAfterRemoveSessionReusesSlot) {
