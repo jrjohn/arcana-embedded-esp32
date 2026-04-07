@@ -108,6 +108,7 @@ if(MBEDTLS_INCLUDE_DIR)
     add_executable(test_command_factory
         test_command_factory.cpp
         ${CMD_SRC}/CommandFactory.cpp
+        mocks/sensor_kex_stubs.cpp
     )
     target_include_directories(test_command_factory PRIVATE
         ${COMMON_INCS}
@@ -121,6 +122,7 @@ if(MBEDTLS_INCLUDE_DIR)
         test_command_dispatcher.cpp
         ${CMD_SRC}/CommandDispatcher.cpp
         ${CMD_SRC}/CommandFactory.cpp
+        mocks/sensor_kex_stubs.cpp
     )
     target_include_directories(test_command_dispatcher PRIVATE
         ${COMMON_INCS}
