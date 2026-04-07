@@ -111,9 +111,11 @@ public:
         return true;
     }
 
-private:
-    TaskHandle_t mTaskHandle = nullptr;
-
+    /**
+     * @brief Render task function — public so tests can invoke it via the
+     *        same call shape as xTaskCreate. Production code uses it only
+     *        as the function pointer passed to xTaskCreate.
+     */
     static void renderTaskFunc(void* param) {
         auto* self = static_cast<MainView*>(param);
         auto* vm = self->input.viewModel;
@@ -131,6 +133,9 @@ private:
             }
         }
     }
+
+private:
+    TaskHandle_t mTaskHandle = nullptr;
 };
 
 } // namespace Arcana::Lcd

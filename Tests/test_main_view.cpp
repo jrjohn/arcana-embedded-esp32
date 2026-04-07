@@ -2,6 +2,7 @@
 #include <vector>
 #include <string>
 #include <utility>
+#include <setjmp.h>
 #include "MainView.hpp"
 #include "LcdViewModel.hpp"
 #include "Ssd1306.hpp"
@@ -203,6 +204,44 @@ TEST(MainViewTest, RenderTaskStepNoOpWhenNotDirty) {
     view.input.display = &display;
     // No dirty flags → renderTaskStep returns true but doesn't draw
     EXPECT_TRUE(view.renderTaskStep());
+}
+
+// ── Drive renderTaskFunc body via ulTaskNotifyTake longjmp escape ─────────
+
+extern sigjmp_buf g_test_unotify_escape_buf;
+extern int g_test_unotify_escape_after;
+extern int g_test_unotify_take_calls;
+
+TEST(MainViewTest, RenderTaskFuncRunsLoopBody) {
+    MainView view;
+    LcdViewModel vm;
+    auto display = makeDisplay();
+    view.input.viewModel = &vm;
+    view.input.display = &display;
+
+    // Mark dirty so render() inside the loop body executes
+    Arcana::Observable<Arcana::Sensor::SensorData> sensorObs;
+    vm.input.SensorData = &sensorObs;
+    vm.init();
+    Arcana::Sensor::SensorData d;
+    d.Temperature = 26.0f;
+    sensorObs.Notify(d);
+
+    g_test_unotify_take_calls = 0;
+    g_test_unotify_escape_after = 3;  // exit after 3 notify-take calls
+    if (sigsetjmp(g_test_unotify_escape_buf, 1) == 0) {
+        MainView::renderTaskFunc(&view);  // never returns normally
+    }
+    g_test_unotify_escape_after = -1;
+
+    EXPECT_GT(g_ssdCounters.drawnStrings.size(), 0u);
+}
+
+TEST(MainViewTest, RenderTaskFuncEarlyExitWithoutWiring) {
+    MainView view;
+    // No viewModel/display wired → early return + vTaskDelete
+    MainView::renderTaskFunc(&view);
+    SUCCEED();
 }
 
 // ── Combined sensor + storage update ────────────────────────────────────────

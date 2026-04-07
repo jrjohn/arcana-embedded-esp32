@@ -119,7 +119,21 @@ extern "C" {
 esp_err_t g_bt_set_name_result = ESP_OK;
 }
 extern "C" BaseType_t xTaskNotifyGive(TaskHandle_t)    { return pdTRUE; }
-extern "C" uint32_t   ulTaskNotifyTake(BaseType_t, TickType_t) { return 0; }
+
+// Test escape for ulTaskNotifyTake — used to drive infinite for(;;) loops
+// in MainView::renderTaskFunc.
+sigjmp_buf g_test_unotify_escape_buf;
+int g_test_unotify_escape_after = -1;
+int g_test_unotify_take_calls = 0;
+
+extern "C" uint32_t ulTaskNotifyTake(BaseType_t, TickType_t) {
+    g_test_unotify_take_calls++;
+    if (g_test_unotify_escape_after >= 0 &&
+        g_test_unotify_take_calls > g_test_unotify_escape_after) {
+        siglongjmp(g_test_unotify_escape_buf, 1);
+    }
+    return 0;
+}
 
 // ────────────────────────────────────────────────────────────────────────────
 // esp_timer stubs

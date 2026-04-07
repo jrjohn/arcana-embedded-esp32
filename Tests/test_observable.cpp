@@ -282,6 +282,48 @@ TEST(ObservableTest, AsyncTaskLoopDrainsQueueViaLongjmpEscape) {
     EXPECT_EQ(sum, 6);  // 1+2+3 dispatched before the loop ran out
 }
 
+TEST(EventQueueTest, TaskLoopExitsCleanlyWhenHandlerStops) {
+    // Cover L595-596 (vTaskDelete after TaskLoop returns) by having the
+    // event handler call Stop() — this sets mRunning=false so the next
+    // loop iteration exits and TaskEntry runs the vTaskDelete cleanup.
+    EventQueue<int, 4> eq;
+    int processed = 0;
+    eq.Start([&](int) {
+        processed++;
+        eq.Stop();  // sets mRunning=false → loop exits next iteration
+    }, 4096, 5);
+    eq.Post(1);
+    EventQueue<int, 4>::TaskEntry(&eq);  // returns cleanly
+    EXPECT_EQ(processed, 1);
+}
+
+TEST(EventQueueTest, StartTwiceReturnsFalse) {
+    EventQueue<int, 4> eq;
+    EXPECT_TRUE(eq.Start([](int){}, 4096, 5));
+    EXPECT_FALSE(eq.Start([](int){}, 4096, 5));  // already running
+    eq.Stop();
+}
+
+TEST(EventQueueTest, PostWaitOnUnstartedQueueReturnsFalse) {
+    EventQueue<int, 4> eq;
+    EXPECT_FALSE(eq.PostWait(42, 100));  // mQueue null → L545-547
+}
+
+TEST(EventQueueTest, PostOnUnstartedQueueReturnsFalse) {
+    EventQueue<int, 4> eq;
+    EXPECT_FALSE(eq.Post(42));  // covers L530-532
+}
+
+TEST(EventQueueTest, IsFullWithEmptyQueue) {
+    EventQueue<int, 4> eq;
+    EXPECT_FALSE(eq.IsFull());  // mQueue null → GetPendingCount=0 → false
+    eq.Start([](int){}, 4096, 5);
+    EXPECT_FALSE(eq.IsFull());
+    for (int i = 0; i < 4; i++) eq.Post(i);
+    EXPECT_TRUE(eq.IsFull());
+    eq.Stop();
+}
+
 TEST(EventQueueTest, TaskLoopDrainsQueueViaLongjmpEscape) {
     EventQueue<int, 8> eq;
     int sum = 0;
