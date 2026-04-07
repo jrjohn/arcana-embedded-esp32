@@ -178,6 +178,7 @@ if(MBEDTLS_INCLUDE_DIR AND MBEDCRYPTO_LIB)
             test_command_codec.cpp
             ${CMD_SRC}/CommandCodec.cpp
             ${CMD_SRC}/CryptoEngine.cpp
+            ${CMD_SRC}/KeyExchangeManager.cpp   # CommandCodec references kex symbols even in plaintext mode
             ${CMD_SRC}/arcana_cmd.pb.c
             ${NANOPB_DIR}/pb_common.c
             ${NANOPB_DIR}/pb_encode.c
