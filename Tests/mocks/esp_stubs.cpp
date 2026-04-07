@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <setjmp.h>
 #include <vector>
 
 #include "freertos/FreeRTOS.h"
@@ -68,7 +69,18 @@ extern "C" BaseType_t xQueueSendToBackFromISR(QueueHandle_t q, const void* item,
     if (hp) *hp = pdFALSE;
     return xQueueSendToBack(q, item, 0);
 }
+// Test escape: tests can install a sigjmp_buf so xQueueReceive longjmps out
+// after N calls. Used to drive infinite-loop task bodies in unit tests.
+sigjmp_buf g_test_xqueue_escape_buf;
+int g_test_xqueue_escape_after = -1;
+int g_test_xqueue_receive_calls = 0;
+
 extern "C" BaseType_t xQueueReceive(QueueHandle_t q, void* out, TickType_t) {
+    g_test_xqueue_receive_calls++;
+    if (g_test_xqueue_escape_after >= 0 &&
+        g_test_xqueue_receive_calls > g_test_xqueue_escape_after) {
+        siglongjmp(g_test_xqueue_escape_buf, 1);
+    }
     auto* fq = static_cast<FakeQueue*>(q);
     if (!fq || !out || fq->data.empty()) return pdFALSE;
     memcpy(out, fq->data.data(), fq->item_size);

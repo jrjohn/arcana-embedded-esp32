@@ -296,8 +296,11 @@ private:
         }
     }
 
+public:
     /**
-     * @brief Async task entry point
+     * @brief Async task entry point. Public so tests can invoke it via the
+     *        same call-site shape as xTaskCreate. Production code uses it
+     *        only as the function pointer passed to xTaskCreate.
      */
     static void AsyncTaskEntry(void* Arg) {
         auto* Self = static_cast<Observable*>(Arg);
@@ -308,7 +311,6 @@ private:
      * @brief Process at most one queued async event. Public for tests so
      *        the loop body can be exercised without spawning a real task.
      */
-public:
     bool ProcessOneAsyncEvent() {
         if (!mQueue) return false;
         T Event;
@@ -319,15 +321,18 @@ public:
         return false;
     }
 
-private:
     /**
-     * @brief Async task loop - dequeues events and dispatches to subscribers
+     * @brief Async task loop - dequeues events and dispatches to subscribers.
+     *        Public so tests can drive it (the host xQueueReceive stub
+     *        supports a longjmp escape via test_set_xqueue_escape_after).
      */
     void AsyncTaskLoop() {
         while (true) {
             ProcessOneAsyncEvent();
         }
     }
+
+private:
 
     std::vector<std::pair<SubscriptionId, Observer<T>>> mObservers;
     mutable SemaphoreHandle_t mMutex;

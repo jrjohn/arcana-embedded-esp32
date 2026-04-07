@@ -1,6 +1,11 @@
 #include <gtest/gtest.h>
 #include "Observable.hpp"
 #include <cstdint>
+#include <setjmp.h>
+
+extern sigjmp_buf g_test_xqueue_escape_buf;
+extern int g_test_xqueue_escape_after;
+extern int g_test_xqueue_receive_calls;
 
 using namespace Arcana;
 
@@ -254,6 +259,27 @@ TEST(EventQueueTest, ProcessOneEventOnEmptyQueueReturnsFalse) {
 TEST(EventQueueTest, ProcessOneEventBeforeStartReturnsFalse) {
     EventQueue<int, 4> eq;
     EXPECT_FALSE(eq.ProcessOneEvent());
+}
+
+// ── Drive AsyncTaskLoop via xQueueReceive longjmp escape ───────────────────
+
+TEST(ObservableTest, AsyncTaskLoopDrainsQueueViaLongjmpEscape) {
+    Observable<TestEvent> obs("AsyncDrain", /*queueDepth=*/8);
+    int sum = 0;
+    obs.Subscribe([&](const TestEvent& e) { sum += e.value; });
+
+    obs.Notify(TestEvent{1});
+    obs.Notify(TestEvent{2});
+    obs.Notify(TestEvent{3});
+
+    g_test_xqueue_receive_calls = 0;
+    g_test_xqueue_escape_after = 5;  // exit after 5 receive calls
+    if (sigsetjmp(g_test_xqueue_escape_buf, 1) == 0) {
+        Observable<TestEvent>::AsyncTaskEntry(&obs);  // never returns normally
+    }
+    g_test_xqueue_escape_after = -1;
+
+    EXPECT_EQ(sum, 6);  // 1+2+3 dispatched before the loop ran out
 }
 
 TEST(EventQueueTest, IsRunningAndPendingCount) {
