@@ -68,6 +68,23 @@ add_executable(test_ats_schema test_ats_schema.cpp)
 target_include_directories(test_ats_schema PRIVATE ${COMMON_INCS})
 target_link_libraries(test_ats_schema PRIVATE GTest::gtest_main)
 
+# ── test_command_factory (links CommandFactory.cpp; needs mbedtls headers
+#    via KeyExchangeCommand → KeyExchangeManager → CryptoEngine → mbedtls/ccm.h)
+if(MBEDTLS_INCLUDE_DIR)
+    add_executable(test_command_factory
+        test_command_factory.cpp
+        ${CMD_SRC}/CommandFactory.cpp
+    )
+    target_include_directories(test_command_factory PRIVATE
+        ${COMMON_INCS}
+        ${MBEDTLS_INCLUDE_DIR}
+    )
+    target_link_libraries(test_command_factory PRIVATE GTest::gtest_main esp_stubs)
+    add_test(NAME test_command_factory COMMAND test_command_factory)
+else()
+    message(WARNING "mbedtls not found — skipping test_command_factory (needs mbedtls/ccm.h)")
+endif()
+
 # ── test_crypto_engine (AES-256-CCM, requires real mbedtls) ──────────────────
 # Try to find system mbedtls. If found, build the test; otherwise skip.
 find_library(MBEDCRYPTO_LIB NAMES mbedcrypto)
@@ -107,4 +124,4 @@ add_test(NAME test_observable   COMMAND test_observable)
 add_test(NAME test_sensor_types COMMAND test_sensor_types)
 add_test(NAME test_commands     COMMAND test_commands)
 add_test(NAME test_chacha20     COMMAND test_chacha20)
-add_test(NAME test_ats_schema   COMMAND test_ats_schema)
+add_test(NAME test_ats_schema     COMMAND test_ats_schema)
