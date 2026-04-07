@@ -205,6 +205,39 @@ if(MBEDTLS_INCLUDE_DIR AND MBEDCRYPTO_LIB)
             ${MBEDCRYPTO_LIB}
         )
         add_test(NAME test_command_codec COMMAND test_command_codec)
+
+        # ── test_command_codec_encrypted (same .cpp built with encryption define)
+        # Re-uses CommandCodec.cpp + nanopb but compiles with the production
+        # CONFIG_CMD_ENCRYPTION_ENABLED branch active to cover the encryption
+        # paths in CommandCodec.cpp.
+        add_executable(test_command_codec_encrypted
+            test_command_codec_encrypted.cpp
+            ${CMD_SRC}/CommandCodec.cpp
+            ${CMD_SRC}/CryptoEngine.cpp
+            ${CMD_SRC}/KeyExchangeManager.cpp
+            ${CMD_SRC}/arcana_cmd.pb.c
+            ${NANOPB_DIR}/pb_common.c
+            ${NANOPB_DIR}/pb_encode.c
+            ${NANOPB_DIR}/pb_decode.c
+        )
+        target_include_directories(test_command_codec_encrypted PRIVATE
+            ${COMMON_INCS}
+            ${MBEDTLS_INCLUDE_DIR}
+            ${NANOPB_DIR}/include
+        )
+        target_compile_options(test_command_codec_encrypted PRIVATE
+            ${MBEDTLS_COMPAT_FLAGS}
+        )
+        target_compile_definitions(test_command_codec_encrypted PRIVATE
+            CONFIG_CMD_ENCRYPTION_ENABLED=1
+            CONFIG_CMD_ENCRYPTION_PSK="000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F"
+        )
+        target_link_libraries(test_command_codec_encrypted PRIVATE
+            GTest::gtest_main
+            esp_stubs
+            ${MBEDCRYPTO_LIB}
+        )
+        add_test(NAME test_command_codec_encrypted COMMAND test_command_codec_encrypted)
     else()
         message(WARNING "nanopb not vendored — skipping test_command_codec")
     endif()
