@@ -39,6 +39,12 @@ set(COMMON_INCS
 add_library(esp_stubs STATIC ${MOCKS_DIR}/esp_stubs.cpp)
 target_include_directories(esp_stubs PUBLIC ${MOCKS_DIR})
 
+# Try to find system mbedtls early — needed by multiple test targets that
+# transitively include CryptoEngine.hpp via KeyExchangeCommand etc.
+find_library(MBEDCRYPTO_LIB NAMES mbedcrypto)
+find_library(MBEDTLS_LIB    NAMES mbedtls)
+find_path(MBEDTLS_INCLUDE_DIR mbedtls/ccm.h)
+
 # ── test_frame_codec ──────────────────────────────────────────────────────────
 add_executable(test_frame_codec test_frame_codec.cpp)
 target_include_directories(test_frame_codec PRIVATE ${COMMON_INCS})
@@ -109,16 +115,24 @@ if(MBEDTLS_INCLUDE_DIR)
     )
     target_link_libraries(test_command_factory PRIVATE GTest::gtest_main esp_stubs)
     add_test(NAME test_command_factory COMMAND test_command_factory)
+
+    # ── test_command_dispatcher (uses CommandFactory which needs mbedtls headers)
+    add_executable(test_command_dispatcher
+        test_command_dispatcher.cpp
+        ${CMD_SRC}/CommandDispatcher.cpp
+        ${CMD_SRC}/CommandFactory.cpp
+    )
+    target_include_directories(test_command_dispatcher PRIVATE
+        ${COMMON_INCS}
+        ${MBEDTLS_INCLUDE_DIR}
+    )
+    target_link_libraries(test_command_dispatcher PRIVATE GTest::gtest_main esp_stubs)
+    add_test(NAME test_command_dispatcher COMMAND test_command_dispatcher)
 else()
-    message(WARNING "mbedtls not found — skipping test_command_factory (needs mbedtls/ccm.h)")
+    message(WARNING "mbedtls not found — skipping test_command_factory and test_command_dispatcher (need mbedtls/ccm.h)")
 endif()
 
 # ── test_crypto_engine (AES-256-CCM, requires real mbedtls) ──────────────────
-# Try to find system mbedtls. If found, build the test; otherwise skip.
-find_library(MBEDCRYPTO_LIB NAMES mbedcrypto)
-find_library(MBEDTLS_LIB    NAMES mbedtls)
-find_path(MBEDTLS_INCLUDE_DIR mbedtls/ccm.h)
-
 if(MBEDCRYPTO_LIB AND MBEDTLS_INCLUDE_DIR)
     message(STATUS "Building test_crypto_engine with mbedtls: ${MBEDCRYPTO_LIB}")
     add_executable(test_crypto_engine
