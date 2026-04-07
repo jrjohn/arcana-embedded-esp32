@@ -132,3 +132,65 @@ TEST(ObservableTest, NotifyNoSubscribersIsNoOp) {
     obs.Notify(TestEvent{123});
     SUCCEED();
 }
+
+// ── Async (named) Observable construction + destruction ───────────────────
+//
+// The named ctor creates a FreeRTOS queue + task. Our esp_stubs xTaskCreate
+// returns success without actually running the task body, but the queue is a
+// real fake (std::vector backed). Notify() goes through the async path and
+// pushes to the queue; ~Observable() tears down the queue + task handle.
+
+TEST(ObservableTest, AsyncObservableConstructsAndDestructs) {
+    Observable<TestEvent> obs("AsyncTest");
+    EXPECT_TRUE(obs.IsAsync());
+    EXPECT_NE(obs.GetName(), nullptr);
+}
+
+TEST(ObservableTest, AsyncObservableNotifyEnqueues) {
+    Observable<TestEvent> obs("AsyncEnqueue", /*queueDepth=*/10);
+    // Should push into the fake queue without crashing
+    obs.Notify(TestEvent{1});
+    obs.Notify(TestEvent{2});
+    obs.Notify(TestEvent{3});
+    SUCCEED();
+}
+
+TEST(ObservableTest, AsyncObservableQueueOverflowDrops) {
+    // Tiny queue depth so we can fill it
+    Observable<TestEvent> obs("AsyncOverflow", /*queueDepth=*/3);
+    for (int i = 0; i < 100; i++) {
+        obs.Notify(TestEvent{i});  // queue fills, excess dropped (no crash)
+    }
+    SUCCEED();
+}
+
+// ── Subscription RAII guard ────────────────────────────────────────────────
+
+TEST(ObservableTest, SubscriptionAutoUnsubscribesOnScopeExit) {
+    Observable<TestEvent> obs;
+    auto id = obs.Subscribe([](const TestEvent&) {});
+    EXPECT_EQ(obs.GetSubscriberCount(), 1u);
+    {
+        Subscription<TestEvent> sub(obs, id);
+        EXPECT_TRUE(sub.IsActive());
+    }
+    // sub destructor calls Unsubscribe → count drops
+    EXPECT_EQ(obs.GetSubscriberCount(), 0u);
+}
+
+TEST(ObservableTest, SubscriptionMoveTransfersOwnership) {
+    Observable<TestEvent> obs;
+    auto id = obs.Subscribe([](const TestEvent&) {});
+    Subscription<TestEvent> sub1(obs, id);
+    Subscription<TestEvent> sub2(std::move(sub1));
+    EXPECT_FALSE(sub1.IsActive());
+    EXPECT_TRUE(sub2.IsActive());
+    EXPECT_EQ(obs.GetSubscriberCount(), 1u);
+}
+
+TEST(ObservableTest, DefaultSubscriptionIsInactive) {
+    Subscription<TestEvent> sub;
+    EXPECT_FALSE(sub.IsActive());
+    sub.Unsubscribe();  // safe no-op
+    SUCCEED();
+}
