@@ -355,3 +355,14 @@ TEST(EventQueueTest, IsRunningAndPendingCount) {
     eq.Stop();
     EXPECT_FALSE(eq.IsRunning());
 }
+
+// Cover EventQueue::PostWait's xQueueSend-with-timeout path (L548) by
+// invoking it on a started queue. Existing PostWaitOnUnstartedQueueReturnsFalse
+// only covers the !mQueue early return.
+TEST(EventQueueTest, PostWaitOnStartedQueueSucceeds) {
+    EventQueue<int, 4> eq;
+    ASSERT_TRUE(eq.Start([](int){}, 4096, 5));
+    EXPECT_TRUE(eq.PostWait(42, 50));
+    EXPECT_GE(eq.GetPendingCount(), 1u);
+    eq.Stop();
+}
