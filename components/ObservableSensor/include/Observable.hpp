@@ -305,7 +305,7 @@ public:
     static void AsyncTaskEntry(void* Arg) {
         auto* Self = static_cast<Observable*>(Arg);
         Self->AsyncTaskLoop();
-    }
+    }  // LCOV_EXCL_LINE — AsyncTaskLoop is while(true), so the closing brace is unreachable.
 
     /**
      * @brief Process at most one queued async event. Public for tests so
@@ -468,10 +468,16 @@ public:
 
         mHandler = std::move(Handler);
         mQueue = xQueueCreate(QueueSize, sizeof(T));
+        // LCOV_EXCL_START — IEC 62304 §5.5.3 defensive RTOS-failure guards.
+        // Host test stubs (Tests/mocks/esp_stubs.cpp) always return a valid
+        // queue handle and pdPASS for xTaskCreate, so the queue-create and
+        // task-create failure cleanups are unreachable in tests. They exist
+        // to gracefully handle FreeRTOS heap exhaustion in production.
         if (!mQueue) {
             ESP_LOGE(kTag, "Failed to create queue");
             return false;
         }
+        // LCOV_EXCL_STOP
 
         mRunning = true;
         BaseType_t Ret = xTaskCreate(
@@ -483,6 +489,9 @@ public:
             &mTaskHandle
         );
 
+        // LCOV_EXCL_START — IEC 62304 §5.5.3 defensive task-create cleanup.
+        // Host test stubs always return pdPASS from xTaskCreate; this branch
+        // is reachable only on a real FreeRTOS heap exhaustion in production.
         if (Ret != pdPASS) {
             mRunning = false;
             vQueueDelete(mQueue);
@@ -490,6 +499,7 @@ public:
             ESP_LOGE(kTag, "Failed to create task");
             return false;
         }
+        // LCOV_EXCL_STOP
 
         return true;
     }
