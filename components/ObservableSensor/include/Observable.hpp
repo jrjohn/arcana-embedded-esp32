@@ -585,18 +585,27 @@ public:
         return false;
     }
 
-private:
+    /**
+     * @brief Task entry — public so tests can invoke it via the same call
+     *        shape as xTaskCreate.
+     */
     static void TaskEntry(void* Arg) {
         auto* Self = static_cast<EventQueue*>(Arg);
         Self->TaskLoop();
         vTaskDelete(nullptr);
     }
 
+    /**
+     * @brief Task loop — public so tests can drive it (the host
+     *        xQueueReceive stub supports a longjmp escape).
+     */
     void TaskLoop() {
         while (mRunning) {
             ProcessOneEvent();
         }
     }
+
+private:
 
     QueueHandle_t mQueue;
     TaskHandle_t mTaskHandle;

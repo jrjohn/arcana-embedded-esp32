@@ -282,6 +282,26 @@ TEST(ObservableTest, AsyncTaskLoopDrainsQueueViaLongjmpEscape) {
     EXPECT_EQ(sum, 6);  // 1+2+3 dispatched before the loop ran out
 }
 
+TEST(EventQueueTest, TaskLoopDrainsQueueViaLongjmpEscape) {
+    EventQueue<int, 8> eq;
+    int sum = 0;
+    ASSERT_TRUE(eq.Start([&](int v) { sum += v; }, 4096, 5));
+
+    eq.Post(100);
+    eq.Post(200);
+    eq.Post(300);
+
+    g_test_xqueue_receive_calls = 0;
+    g_test_xqueue_escape_after = 5;
+    if (sigsetjmp(g_test_xqueue_escape_buf, 1) == 0) {
+        EventQueue<int, 8>::TaskEntry(&eq);  // never returns normally
+    }
+    g_test_xqueue_escape_after = -1;
+
+    EXPECT_EQ(sum, 600);
+    eq.Stop();
+}
+
 TEST(EventQueueTest, IsRunningAndPendingCount) {
     EventQueue<int, 4> eq;
     EXPECT_FALSE(eq.IsRunning());
