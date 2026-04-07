@@ -75,13 +75,16 @@ if(MBEDCRYPTO_LIB AND MBEDTLS_INCLUDE_DIR)
         test_crypto_engine.cpp
         ${CMD_SRC}/CryptoEngine.cpp
     )
-    # Real mbedtls headers must come BEFORE our mock — drop mocks dir for this target
+    # Use system include paths for real mbedtls (no mock override needed since
+    # we removed Tests/mocks/mbedtls/)
     target_include_directories(test_crypto_engine PRIVATE
-        ${MBEDTLS_INCLUDE_DIR}
         ${MOCKS_DIR}
         ${CMD_INC}
         ${OBS_INC}
     )
+    if(MBEDTLS_INCLUDE_DIR)
+        target_include_directories(test_crypto_engine PRIVATE ${MBEDTLS_INCLUDE_DIR})
+    endif()
     target_link_libraries(test_crypto_engine PRIVATE
         GTest::gtest_main
         esp_stubs
