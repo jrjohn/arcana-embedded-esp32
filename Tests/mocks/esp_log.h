@@ -6,6 +6,7 @@
 #define ESP_LOGI(tag, fmt, ...) do { (void)(tag); } while (0)
 #define ESP_LOGD(tag, fmt, ...) do { (void)(tag); } while (0)
 #define ESP_LOGV(tag, fmt, ...) do { (void)(tag); } while (0)
+#define ESP_LOG_LEVEL(level, tag, fmt, ...) do { (void)(level); (void)(tag); } while (0)
 
 typedef enum {
     ESP_LOG_NONE,

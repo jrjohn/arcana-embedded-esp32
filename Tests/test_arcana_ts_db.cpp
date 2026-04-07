@@ -4,6 +4,7 @@
 #include "NullCipher.hpp"
 #include "VfsFilePort.hpp"
 #include "AtsAppender.hpp"
+#include "DeviceAppender.hpp"
 #include "Log.hpp"
 #include <cstdio>
 #include <cstdlib>
@@ -695,6 +696,57 @@ TEST_F(ArcanaTsDbTest, AtsAppenderMapsAllSeverityLevels) {
         app.append(ev);
     }
     EXPECT_EQ(db.getStats().perChannelRecords[0], 6u);
+}
+
+// ── DeviceAppender (LogService → device.ats LIFECYCLE channel) ─────────────
+
+TEST_F(ArcanaTsDbTest, DeviceAppenderMinLevelIsFatal) {
+    arcana::log::DeviceAppender app;
+    EXPECT_EQ(app.minLevel(), arcana::log::Level::Fatal);
+}
+
+TEST_F(ArcanaTsDbTest, DeviceAppenderAppendWithoutDbIsSafe) {
+    arcana::log::DeviceAppender app;
+    arcana::log::LogEvent ev{};
+    ev.level = static_cast<uint8_t>(arcana::log::Level::Fatal);
+    app.append(ev);  // mDb nullptr → early return
+    SUCCEED();
+}
+
+TEST_F(ArcanaTsDbTest, DeviceAppenderWritesLifecycleEvent) {
+    AtsConfig cfg = makeConfig();
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::lifecycleEvent()));
+    ASSERT_TRUE(db.start());
+
+    arcana::log::DeviceAppender app;
+    app.attach(&db);
+
+    arcana::log::LogEvent ev{};
+    ev.timestamp = 1700000000;
+    ev.level = static_cast<uint8_t>(arcana::log::Level::Fatal);
+    ev.source = 0x05;
+    ev.code = 0xFEED;
+    ev.param = 0xABCD1234;
+    app.append(ev);
+
+    EXPECT_EQ(db.getStats().perChannelRecords[0], 1u);
+}
+
+TEST_F(ArcanaTsDbTest, DeviceAppenderDetachClearsDb) {
+    AtsConfig cfg = makeConfig();
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::lifecycleEvent()));
+    ASSERT_TRUE(db.start());
+
+    arcana::log::DeviceAppender app;
+    app.attach(&db);
+    app.detach();
+
+    arcana::log::LogEvent ev{};
+    ev.level = static_cast<uint8_t>(arcana::log::Level::Fatal);
+    app.append(ev);
+    EXPECT_EQ(db.getStats().perChannelRecords[0], 0u);
 }
 
 // ── Multi-channel: write/read independence ──────────────────────────────────

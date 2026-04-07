@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include "Log.hpp"
 #include "EventCodes.hpp"
+#include "SerialAppender.hpp"
 #include <vector>
 
 // NOTE: AtsAppender.hpp pulls in ArcanaTsDb.hpp + the entire storage stack.
@@ -256,6 +257,47 @@ TEST_F(LoggerFixture, MacroSkipsBelowGlobalLevel) {
     lg.drain(8);
 
     EXPECT_EQ(g_appA.events.size(), 2u);
+}
+
+// ── SerialAppender (routes through ESP_LOG → esp_stubs) ───────────────────
+
+TEST(SerialAppenderTest, MinLevelIsTrace) {
+    SerialAppender app;
+    EXPECT_EQ(app.minLevel(), Level::Trace);
+}
+
+TEST(SerialAppenderTest, AppendDoesNotCrashAcrossAllLevels) {
+    SerialAppender app;
+    LogEvent ev{};
+    ev.timestamp = 1700000000;
+    ev.code = 0x0123;
+    for (int lvl : {0, 1, 2, 3, 4, 5}) {
+        ev.level = static_cast<uint8_t>(lvl);
+        ev.source = 0x05;  // Crypto
+        ev.param = 42;
+        app.append(ev);
+    }
+    SUCCEED();
+}
+
+TEST(SerialAppenderTest, AppendWithZeroParamUsesShortFormat) {
+    SerialAppender app;
+    LogEvent ev{};
+    ev.level = static_cast<uint8_t>(Level::Info);
+    ev.code = 0x0042;
+    ev.param = 0;  // triggers the no-param branch
+    app.append(ev);
+    SUCCEED();
+}
+
+TEST(SerialAppenderTest, OutOfRangeSourceFallsBackToUnknown) {
+    SerialAppender app;
+    LogEvent ev{};
+    ev.level = static_cast<uint8_t>(Level::Info);
+    ev.source = 0xFF;  // > SRC_COUNT → "???"
+    ev.code = 0x0001;
+    app.append(ev);
+    SUCCEED();
 }
 
 // ── EventCodes constants ────────────────────────────────────────────────────
