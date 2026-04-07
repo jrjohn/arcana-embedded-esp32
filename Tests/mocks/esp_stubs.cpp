@@ -12,6 +12,8 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "esp_timer.h"
+#include "esp_system.h"
+#include "esp_mac.h"
 
 // ────────────────────────────────────────────────────────────────────────────
 // Mutex stubs (use placeholder pointer; reentrant fine for single-thread tests)
@@ -103,3 +105,20 @@ extern "C" esp_err_t esp_timer_start_periodic(esp_timer_handle_t, uint64_t) { re
 extern "C" esp_err_t esp_timer_stop(esp_timer_handle_t)                     { return ESP_OK; }
 extern "C" esp_err_t esp_timer_delete(esp_timer_handle_t)                   { return ESP_OK; }
 extern "C" int64_t   esp_timer_get_time(void)                               { return 0; }
+
+// ────────────────────────────────────────────────────────────────────────────
+// esp_system / esp_mac stubs
+// ────────────────────────────────────────────────────────────────────────────
+extern "C" const char* esp_get_idf_version(void)        { return "v5.5.2-test"; }
+extern "C" uint32_t    esp_get_free_heap_size(void)     { return 100000; }
+extern "C" uint32_t    esp_get_minimum_free_heap_size(void) { return 50000; }
+extern "C" void        esp_restart(void)                {}
+
+extern "C" esp_err_t esp_read_mac(uint8_t* mac, esp_mac_type_t) {
+    static const uint8_t fake[6] = {0xA4, 0xE5, 0x7C, 0xDA, 0x59, 0x2C};
+    if (mac) memcpy(mac, fake, 6);
+    return ESP_OK;
+}
+extern "C" esp_err_t esp_efuse_mac_get_default(uint8_t* mac) {
+    return esp_read_mac(mac, ESP_MAC_BT);
+}

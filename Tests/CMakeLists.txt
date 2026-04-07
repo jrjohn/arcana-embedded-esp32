@@ -46,7 +46,19 @@ add_executable(test_observable test_observable.cpp)
 target_include_directories(test_observable PRIVATE ${COMMON_INCS})
 target_link_libraries(test_observable PRIVATE GTest::gtest_main esp_stubs)
 
+# ── test_sensor_types ─────────────────────────────────────────────────────────
+add_executable(test_sensor_types test_sensor_types.cpp)
+target_include_directories(test_sensor_types PRIVATE ${COMMON_INCS})
+target_link_libraries(test_sensor_types PRIVATE GTest::gtest_main esp_stubs)
+
+# ── test_commands (Ping + GetDeviceInfo + GetMqttStatus) ─────────────────────
+add_executable(test_commands test_commands.cpp)
+target_include_directories(test_commands PRIVATE ${COMMON_INCS})
+target_link_libraries(test_commands PRIVATE GTest::gtest_main esp_stubs)
+
 # ── CTest registration ────────────────────────────────────────────────────────
 enable_testing()
-add_test(NAME test_frame_codec COMMAND test_frame_codec)
-add_test(NAME test_observable  COMMAND test_observable)
+add_test(NAME test_frame_codec  COMMAND test_frame_codec)
+add_test(NAME test_observable   COMMAND test_observable)
+add_test(NAME test_sensor_types COMMAND test_sensor_types)
+add_test(NAME test_commands     COMMAND test_commands)
