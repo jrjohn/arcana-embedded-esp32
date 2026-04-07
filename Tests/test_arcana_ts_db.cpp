@@ -1572,3 +1572,125 @@ TEST_F(ArcanaTsDbFlakyTest, ReadIndexShortReadRejected) {
     (void)db.openReadOnly(fileName.c_str(), cfg);
     SUCCEED();  // L1116 branch executes regardless of overall outcome
 }
+
+// ── Query-side coverage tests ─────────────────────────────────────────────
+//
+// The existing query tests use the default primaryChannel (0xFF), so the
+// in-RAM "primary channel" path of queryLatest never executes. These tests
+// configure a real primary channel and exercise both the in-RAM and on-disk
+// branches of queryLatest, queryByTime, and queryAllChannelsByTime.
+
+TEST_F(ArcanaTsDbTest, QueryLatestPrimaryChannelFromRam) {
+    // Records still in primary bufA (no flush) — exercises L1417-1423
+    AtsConfig cfg = makeConfig(/*primaryChannel=*/0);
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::dht11()));
+    ASSERT_TRUE(db.start());
+
+    uint8_t rec[8];
+    for (int i = 0; i < 10; i++) {
+        writeDhtRecord(rec, g_fakeTime + i, static_cast<int16_t>(i), 600);
+        db.append(0, rec);
+    }
+    uint8_t out[8 * 10];
+    uint16_t got = db.queryLatest(0, out, 10);
+    EXPECT_EQ(got, 10u);
+    // Latest record should be index 9
+    int16_t lastTemp;
+    memcpy(&lastTemp, out + 9 * 8 + 4, 2);
+    EXPECT_EQ(lastTemp, 9);
+}
+
+TEST_F(ArcanaTsDbTest, QueryLatestPrimaryChannelFromDiskViaIndex) {
+    // Write enough records to flush several blocks, then query latest —
+    // hits the index walk + readAndDecryptBlock + memmove path (L1462+).
+    AtsConfig cfg = makeConfig(/*primaryChannel=*/0);
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::dht11()));
+    ASSERT_TRUE(db.start());
+
+    uint8_t rec[8];
+    for (int i = 0; i < 2000; i++) {
+        writeDhtRecord(rec, g_fakeTime + i, static_cast<int16_t>(i & 0x7FFF), 600);
+        db.append(0, rec);
+    }
+    db.flush();  // ensures index entries exist
+
+    uint8_t out[8 * 100];
+    uint16_t got = db.queryLatest(0, out, 100);
+    EXPECT_GT(got, 0u);
+}
+
+TEST_F(ArcanaTsDbTest, QueryByTimePrimaryChannelOverFlushedBlocks) {
+    // Hits queryByTime's index walk + single-channel block iteration path
+    // (L1572-1580) over a real index populated by primary-channel flushes.
+    AtsConfig cfg = makeConfig(/*primaryChannel=*/0);
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::dht11()));
+    ASSERT_TRUE(db.start());
+
+    uint8_t rec[8];
+    for (int i = 0; i < 2000; i++) {
+        writeDhtRecord(rec, g_fakeTime + i, static_cast<int16_t>(i & 0x7FFF), 600);
+        db.append(0, rec);
+    }
+    db.flush();
+
+    g_queryHits = false;
+    g_queryCount = 0;
+    bool ok = db.queryByTime(0, g_fakeTime, g_fakeTime + 5000, recordCb, nullptr);
+    EXPECT_TRUE(ok);
+    EXPECT_GT(g_queryCount, 0);
+}
+
+TEST_F(ArcanaTsDbTest, QueryAllChannelsByTimePrimarySingleChannelBlock) {
+    // Hits queryAllChannelsByTime's single-channel block iteration path
+    // (L1635-1646) over a real index populated by primary-channel flushes.
+    AtsConfig cfg = makeConfig(/*primaryChannel=*/0);
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::dht11()));
+    ASSERT_TRUE(db.start());
+
+    uint8_t rec[8];
+    for (int i = 0; i < 2000; i++) {
+        writeDhtRecord(rec, g_fakeTime + i, static_cast<int16_t>(i & 0x7FFF), 600);
+        db.append(0, rec);
+    }
+    db.flush();
+
+    g_queryHits = false;
+    g_queryCount = 0;
+    bool ok = db.queryAllChannelsByTime(g_fakeTime, g_fakeTime + 5000, recordCb, nullptr);
+    EXPECT_TRUE(ok);
+    EXPECT_GT(g_queryCount, 0);
+}
+
+TEST_F(ArcanaTsDbTest, FindChannelBySchemaIdReturnsNeg1ForUnknown) {
+    AtsConfig cfg = makeConfig();
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::dht11()));
+    ASSERT_TRUE(db.start());
+    EXPECT_EQ(db.findChannelBySchemaId(0xDEADBEEFu), -1);
+}
+
+TEST_F(ArcanaTsDbTest, GetReadCacheFallsBackToSlowBuffer) {
+    // Hits getReadCache fallback (L1348): readCache=null → return slowBuf.
+    AtsConfig cfg = makeConfig(/*primaryChannel=*/0);
+    cfg.readCache = nullptr;  // force fallback
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::dht11()));
+    ASSERT_TRUE(db.start());
+
+    // Generate flushed blocks so any subsequent query exercises getReadCache
+    uint8_t rec[8];
+    for (int i = 0; i < 1000; i++) {
+        writeDhtRecord(rec, g_fakeTime + i, static_cast<int16_t>(i), 600);
+        db.append(0, rec);
+    }
+    db.flush();
+
+    // Trigger a query that calls getReadCache via readAndDecryptBlock
+    g_queryCount = 0;
+    db.queryByTime(0, g_fakeTime, g_fakeTime + 5000, recordCb, nullptr);
+    SUCCEED();
+}
