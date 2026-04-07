@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include "KeyExchangeManager.hpp"
 #include "CryptoEngine.hpp"
+#include "commands/KeyExchangeCommand.hpp"
 #include <cstring>
 
 #include "mbedtls/ecp.h"
@@ -296,6 +297,66 @@ TEST(KeyExchangeManagerTest, SlotExhaustionAfterFourSessions) {
     ASSERT_TRUE(kex.PerformKeyExchange(CommandSource::BLE, 200,
                                          clientPub, serverPub, authTag));
     EXPECT_FALSE(kex.InstallPendingSession(CommandSource::BLE, 200));
+}
+
+// ── KeyExchangeCommand integration with real KeyExchangeManager ────────────
+
+TEST(KeyExchangeCommandTest, ExecuteWithValidPubKeySucceeds) {
+    KeyExchangeManager kex;
+    uint8_t psk[CryptoEngine::kKeyLen];
+    makePsk(psk);
+    ASSERT_EQ(kex.Init(psk), ESP_OK);
+
+    uint8_t clientPub[64];
+    ASSERT_TRUE(generateClientKeypair(clientPub));
+
+    KeyExchangeCommand cmd(&kex);
+    CommandRequest req;
+    req.Source = CommandSource::BLE;
+    req.ConnectionId = 8;
+    req.ClusterId = Cluster::Security;
+    req.Command = SecurityCmd::KeyExchange;
+    req.PayloadLen = 64;
+    memcpy(req.Payload, clientPub, 64);
+
+    auto rsp = cmd.Execute(req);
+    EXPECT_EQ(rsp.Status, kStatusOk);
+    EXPECT_EQ(rsp.PayloadLen, 96);  // 64 serverPub + 32 authTag
+}
+
+TEST(KeyExchangeCommandTest, ExecuteWithNullManagerFails) {
+    KeyExchangeCommand cmd(nullptr);
+    CommandRequest req;
+    req.PayloadLen = 64;
+    auto rsp = cmd.Execute(req);
+    EXPECT_EQ(rsp.Status, kStatusError);
+}
+
+TEST(KeyExchangeCommandTest, ExecuteWithWrongPayloadLenFails) {
+    KeyExchangeManager kex;
+    uint8_t psk[CryptoEngine::kKeyLen];
+    makePsk(psk);
+    ASSERT_EQ(kex.Init(psk), ESP_OK);
+
+    KeyExchangeCommand cmd(&kex);
+    CommandRequest req;
+    req.PayloadLen = 32;  // wrong: should be 64
+    auto rsp = cmd.Execute(req);
+    EXPECT_EQ(rsp.Status, kStatusInvalidParam);
+}
+
+TEST(KeyExchangeCommandTest, ExecuteWithBogusPubKeyFails) {
+    KeyExchangeManager kex;
+    uint8_t psk[CryptoEngine::kKeyLen];
+    makePsk(psk);
+    ASSERT_EQ(kex.Init(psk), ESP_OK);
+
+    KeyExchangeCommand cmd(&kex);
+    CommandRequest req;
+    req.PayloadLen = 64;
+    memset(req.Payload, 0, 64);  // not on the curve
+    auto rsp = cmd.Execute(req);
+    EXPECT_EQ(rsp.Status, kStatusError);
 }
 
 // ── Independent BLE / MQTT slots ────────────────────────────────────────────

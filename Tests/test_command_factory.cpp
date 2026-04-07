@@ -147,6 +147,19 @@ TEST(CommandFactoryTest, CreateGetBleStatusCommand) {
     ASSERT_NE(cmd.get(), nullptr);
 }
 
+TEST(CommandFactoryTest, GetBleStatusReturnsConnectionCount) {
+    auto factory = makeFactory();
+    auto cmd = factory.Create(Cluster::Ble, BleCmd::GetStatus);
+    CommandRequest req;
+    req.ClusterId = Cluster::Ble;
+    req.Command = BleCmd::GetStatus;
+    auto rsp = cmd->Execute(req);
+    EXPECT_EQ(rsp.Status, kStatusOk);
+    EXPECT_EQ(rsp.PayloadLen, 1);
+    // Stub BleGattServer::GetConnectionCount() always returns 0
+    EXPECT_EQ(rsp.Payload[0], 0);
+}
+
 TEST(CommandFactoryTest, CreateSetDeviceNameCommand) {
     auto factory = makeFactory();
     auto cmd = factory.Create(Cluster::Ble, BleCmd::SetDeviceName);
