@@ -6,6 +6,10 @@
 
 using namespace Arcana::Command;
 
+// Forward declaration so the new tests above can use this helper before its
+// definition further down in the file.
+static void makeTestKey(uint8_t key[CryptoEngine::kKeyLen]);
+
 // ── Esp32AesCtrCipher (mbedtls AES-256-CTR — works on host with libmbedcrypto)
 
 TEST(Esp32AesCtrCipherTest, CipherTypeIsTwo) {
