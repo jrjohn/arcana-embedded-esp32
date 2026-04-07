@@ -27,6 +27,7 @@ set(OBS_INC       ${PROJECT_ROOT}/components/ObservableSensor/include)
 set(ATS_INC       ${PROJECT_ROOT}/components/ArcanaTs/include)
 set(ATS_SRC       ${PROJECT_ROOT}/components/ArcanaTs/src)
 set(LOG_INC       ${PROJECT_ROOT}/components/LogService/include)
+set(NANOPB_DIR    ${PROJECT_ROOT}/managed_components/nikas-belogolov__nanopb)
 
 # Common includes — mocks FIRST so they override real ESP-IDF / FreeRTOS headers
 set(COMMON_INCS
@@ -163,6 +164,32 @@ if(MBEDTLS_INCLUDE_DIR AND MBEDCRYPTO_LIB)
         ${MBEDCRYPTO_LIB}
     )
     add_test(NAME test_command_dispatcher COMMAND test_command_dispatcher)
+
+    # ── test_command_codec (protobuf + frame wrapping, plaintext mode) ─────
+    if(EXISTS ${NANOPB_DIR}/pb_encode.c)
+        add_executable(test_command_codec
+            test_command_codec.cpp
+            ${CMD_SRC}/CommandCodec.cpp
+            ${CMD_SRC}/CryptoEngine.cpp
+            ${CMD_SRC}/arcana_cmd.pb.c
+            ${NANOPB_DIR}/pb_common.c
+            ${NANOPB_DIR}/pb_encode.c
+            ${NANOPB_DIR}/pb_decode.c
+        )
+        target_include_directories(test_command_codec PRIVATE
+            ${COMMON_INCS}
+            ${MBEDTLS_INCLUDE_DIR}
+            ${NANOPB_DIR}/include
+        )
+        target_link_libraries(test_command_codec PRIVATE
+            GTest::gtest_main
+            esp_stubs
+            ${MBEDCRYPTO_LIB}
+        )
+        add_test(NAME test_command_codec COMMAND test_command_codec)
+    else()
+        message(WARNING "nanopb not vendored — skipping test_command_codec")
+    endif()
 
     # ── test_key_exchange_manager (ECDH P-256 + HKDF + HMAC, real mbedtls) ──
     add_executable(test_key_exchange_manager
