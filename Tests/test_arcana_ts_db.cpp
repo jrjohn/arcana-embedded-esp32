@@ -700,6 +700,15 @@ TEST_F(ArcanaTsDbTest, AtsAppenderMapsAllSeverityLevels) {
     EXPECT_EQ(db.getStats().perChannelRecords[0], 6u);
 }
 
+// ── Open with invalid path → fopen fails on both attempts (L100) ──────────
+
+TEST_F(ArcanaTsDbTest, OpenFailsWhenFopenCannotCreate) {
+    AtsConfig cfg = makeConfig();
+    // Path with non-existent parent directory → both r+b and w+b fopen fail
+    EXPECT_FALSE(db.open("nonexistent_subdir/cannot_create.ats", cfg));
+    EXPECT_FALSE(db.isOpen());
+}
+
 // ── Shadow header fallback paths ───────────────────────────────────────────
 //
 // These tests corrupt the primary header bytes via direct fopen, then reopen
