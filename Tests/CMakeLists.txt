@@ -104,17 +104,24 @@ target_link_libraries(test_main_view PRIVATE GTest::gtest_main esp_stubs)
 
 # ── test_command_factory (links CommandFactory.cpp; needs mbedtls headers
 #    via KeyExchangeCommand → KeyExchangeManager → CryptoEngine → mbedtls/ccm.h)
-if(MBEDTLS_INCLUDE_DIR)
+#    Also links CryptoEngine.cpp + mbedcrypto for ~CryptoEngine() symbol that
+#    KeyExchangeManager::Session's implicit destructor pulls in.
+if(MBEDTLS_INCLUDE_DIR AND MBEDCRYPTO_LIB)
     add_executable(test_command_factory
         test_command_factory.cpp
         ${CMD_SRC}/CommandFactory.cpp
+        ${CMD_SRC}/CryptoEngine.cpp
         mocks/sensor_kex_stubs.cpp
     )
     target_include_directories(test_command_factory PRIVATE
         ${COMMON_INCS}
         ${MBEDTLS_INCLUDE_DIR}
     )
-    target_link_libraries(test_command_factory PRIVATE GTest::gtest_main esp_stubs)
+    target_link_libraries(test_command_factory PRIVATE
+        GTest::gtest_main
+        esp_stubs
+        ${MBEDCRYPTO_LIB}
+    )
     add_test(NAME test_command_factory COMMAND test_command_factory)
 
     # ── test_command_dispatcher (uses CommandFactory which needs mbedtls headers)
@@ -122,16 +129,21 @@ if(MBEDTLS_INCLUDE_DIR)
         test_command_dispatcher.cpp
         ${CMD_SRC}/CommandDispatcher.cpp
         ${CMD_SRC}/CommandFactory.cpp
+        ${CMD_SRC}/CryptoEngine.cpp
         mocks/sensor_kex_stubs.cpp
     )
     target_include_directories(test_command_dispatcher PRIVATE
         ${COMMON_INCS}
         ${MBEDTLS_INCLUDE_DIR}
     )
-    target_link_libraries(test_command_dispatcher PRIVATE GTest::gtest_main esp_stubs)
+    target_link_libraries(test_command_dispatcher PRIVATE
+        GTest::gtest_main
+        esp_stubs
+        ${MBEDCRYPTO_LIB}
+    )
     add_test(NAME test_command_dispatcher COMMAND test_command_dispatcher)
 else()
-    message(WARNING "mbedtls not found — skipping test_command_factory and test_command_dispatcher (need mbedtls/ccm.h)")
+    message(WARNING "mbedtls/mbedcrypto not found — skipping test_command_factory and test_command_dispatcher")
 endif()
 
 # ── test_crypto_engine (AES-256-CCM, requires real mbedtls) ──────────────────
