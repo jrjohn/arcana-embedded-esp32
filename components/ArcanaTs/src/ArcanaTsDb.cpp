@@ -60,6 +60,7 @@ ArcanaTsDb::ArcanaTsDb()
     , mNextBlockOffset(DATA_START_OFFSET)
     , mHeaderBase(0)
     , mIndexCount(0)
+    , mIndexBlockNum(0)
 {
     memset(&mCfg, 0, sizeof(mCfg));
     for (uint8_t i = 0; i < MAX_CHANNELS; i++) {
@@ -105,6 +106,7 @@ bool ArcanaTsDb::open(const char* path, const AtsConfig& cfg) {
     mNextBlockOffset = DATA_START_OFFSET;
     mChannelCount = 0;
     mIndexCount = 0;
+    mIndexBlockNum = 0;
     memset(&mStats, 0, sizeof(mStats));
 
     // Setup primary double-buffer
@@ -290,6 +292,7 @@ bool ArcanaTsDb::close() {
     mNextBlockOffset = DATA_START_OFFSET;
     mHeaderBase = 0;
     mIndexCount = 0;
+    mIndexBlockNum = 0;
     memset(&mStats, 0, sizeof(mStats));
     memset(&mPrimary, 0, sizeof(mPrimary));
     memset(&mSlow, 0, sizeof(mSlow));
@@ -644,7 +647,7 @@ bool ArcanaTsDb::writeEntireHeaderBlock() {
         hdr.flags = ATS_FLAG_HAS_SHADOW;
         if (mCfg.cipher) hdr.flags |= ATS_FLAG_ENCRYPTED;
         if (mCfg.headerKey) hdr.flags |= ATS_FLAG_ENC_HEADER;
-        if (mIndexCount > 0) hdr.flags |= ATS_FLAG_HAS_INDEX;
+        if (mIndexBlockNum > 0) hdr.flags |= ATS_FLAG_HAS_INDEX;
         hdr.cipherType = mCfg.cipher ? mCfg.cipher->cipherType() : 0;
         hdr.channelCount = mChannelCount;
         hdr.overflowPolicy = static_cast<uint8_t>(mCfg.overflow);
@@ -657,7 +660,7 @@ bool ArcanaTsDb::writeEntireHeaderBlock() {
         }
         hdr.totalBlockCount = mStats.blocksWritten;
         hdr.lastSeqNo = mNextSeqNo > 0 ? mNextSeqNo - 1 : 0;
-        hdr.indexBlockOffset = 0;
+        hdr.indexBlockOffset = mIndexBlockNum;
         hdr.headerCrc32 = computeIeeeCrc32(
             reinterpret_cast<const uint8_t*>(&hdr), 44);
         memcpy(buf + base, &hdr, sizeof(hdr));
@@ -787,6 +790,7 @@ bool ArcanaTsDb::tryDecryptHeaderFromBuf(uint8_t* buf, uint16_t base) {
     mCreatedEpoch = hdr.createdEpoch;
     mNextSeqNo = hdr.lastSeqNo + 1;
     mChannelCount = 0;
+    mIndexBlockNum = (hdr.flags & ATS_FLAG_HAS_INDEX) ? hdr.indexBlockOffset : 0;
 
     // Parse channel descriptors from buf[base + 0x40]
     for (uint8_t i = 0; i < MAX_CHANNELS; i++) {
@@ -842,6 +846,7 @@ bool ArcanaTsDb::writeFileHeader() {
     hdr.headerBlocks = 1;
     hdr.flags = ATS_FLAG_HAS_SHADOW;
     if (mCfg.cipher) hdr.flags |= ATS_FLAG_ENCRYPTED;
+    if (mIndexBlockNum > 0) hdr.flags |= ATS_FLAG_HAS_INDEX;
     hdr.cipherType = mCfg.cipher ? mCfg.cipher->cipherType() : 0;
     hdr.channelCount = mChannelCount;
     hdr.overflowPolicy = static_cast<uint8_t>(mCfg.overflow);
@@ -854,7 +859,7 @@ bool ArcanaTsDb::writeFileHeader() {
     }
     hdr.totalBlockCount = mStats.blocksWritten;
     hdr.lastSeqNo = mNextSeqNo > 0 ? mNextSeqNo - 1 : 0;
-    hdr.indexBlockOffset = 0;  // updated on close
+    hdr.indexBlockOffset = mIndexBlockNum;  // 0 until writeIndex() runs at close
 
     // Compute header CRC (bytes 0x0000-0x002B = 44 bytes, everything before headerCrc32)
     hdr.headerCrc32 = computeIeeeCrc32(reinterpret_cast<const uint8_t*>(&hdr), 44);
@@ -884,6 +889,9 @@ bool ArcanaTsDb::readFileHeader() {
     mCreatedEpoch = hdr.createdEpoch;
     mNextSeqNo = hdr.lastSeqNo + 1;
     mChannelCount = 0;  // will be populated by readChannelDescriptors
+    // Restore index block number so readIndex() can locate the persisted
+    // sparse index. Only set if the HAS_INDEX flag is on.
+    mIndexBlockNum = (hdr.flags & ATS_FLAG_HAS_INDEX) ? hdr.indexBlockOffset : 0;
 
     // Restore stats
     if (mCfg.file->seek(STATS_OFFSET)) {
@@ -902,7 +910,7 @@ bool ArcanaTsDb::updateFileHeader() {
     hdr.headerBlocks = 1;
     hdr.flags = ATS_FLAG_HAS_SHADOW;
     if (mCfg.cipher) hdr.flags |= ATS_FLAG_ENCRYPTED;
-    if (mIndexCount > 0) hdr.flags |= ATS_FLAG_HAS_INDEX;
+    if (mIndexBlockNum > 0) hdr.flags |= ATS_FLAG_HAS_INDEX;
     hdr.cipherType = mCfg.cipher ? mCfg.cipher->cipherType() : 0;
     hdr.channelCount = mChannelCount;
     hdr.overflowPolicy = static_cast<uint8_t>(mCfg.overflow);
@@ -915,7 +923,7 @@ bool ArcanaTsDb::updateFileHeader() {
     }
     hdr.totalBlockCount = mStats.blocksWritten;
     hdr.lastSeqNo = mNextSeqNo > 0 ? mNextSeqNo - 1 : 0;
-    hdr.indexBlockOffset = 0;  // TODO: set if index written
+    hdr.indexBlockOffset = mIndexBlockNum;
 
     hdr.headerCrc32 = computeIeeeCrc32(reinterpret_cast<const uint8_t*>(&hdr), 44);
 
@@ -1054,6 +1062,7 @@ bool ArcanaTsDb::writeIndex() {
 
     // Write index at current end of file
     uint64_t indexOffset = mNextBlockOffset;
+    uint32_t indexBlockNum = static_cast<uint32_t>(indexOffset / BLOCK_SIZE);
 
     // Index header
     AtsIndexHeader idxHdr;
@@ -1075,6 +1084,10 @@ bool ArcanaTsDb::writeIndex() {
         return false;
     }
 
+    // Persist the block number so subsequent writeFileHeader/
+    // writeEntireHeaderBlock can record it in the on-disk header.
+    // Without this, readIndex() always returns false on reopen.
+    mIndexBlockNum = indexBlockNum;
     return true;
 }
 

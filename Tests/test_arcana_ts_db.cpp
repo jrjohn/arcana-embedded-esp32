@@ -862,6 +862,63 @@ TEST_F(ArcanaTsDbFlakyTest, OpenReadOnlySeekFailureAtSizeCheck) {
     EXPECT_FALSE(db.openReadOnly(fileName.c_str(), cfg));
 }
 
+// ── readIndex() end-to-end: write index in close(), read it back via RO ───
+//
+// Before the indexBlockOffset bug fix, ArcanaTsDb wrote the index data to
+// disk but never recorded its block number in the file header, so readIndex()
+// always returned false. This test exercises the full write→read cycle now
+// that the header carries the correct indexBlockOffset.
+
+TEST_F(ArcanaTsDbTest, ReadIndexLoadsPersistedSparseIndex) {
+    // Step 1: write a file with enough records to populate the index
+    {
+        AtsConfig cfg = makeConfig(/*primaryChannel=*/0);
+        ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+        ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::dht11()));
+        ASSERT_TRUE(db.start());
+        uint8_t rec[8];
+        // ~10 blocks of primary buffer (508 records each → 5000 records)
+        for (int i = 0; i < 5000; i++) {
+            writeDhtRecord(rec, g_fakeTime + i, static_cast<int16_t>(i & 0x7FFF), 600);
+            db.append(0, rec);
+        }
+        ASSERT_TRUE(db.close());  // close() calls writeIndex() + updateFileHeader()
+    }
+
+    // Step 2: openReadOnly should now successfully run readIndex() and
+    // populate the in-memory index from disk (rather than falling back to
+    // a full block scan).
+    AtsConfig cfg = makeConfig(/*primaryChannel=*/0);
+    ASSERT_TRUE(db.openReadOnly(fileName.c_str(), cfg));
+    EXPECT_TRUE(db.isReadOnly());
+    EXPECT_GE(db.getChannelCount(), 1);
+    // Index should be non-empty after readIndex success
+    EXPECT_GT(db.getIndexCount(), 0);
+}
+
+TEST_F(ArcanaTsDbTest, ReadIndexWithEncryptedHeader) {
+    uint8_t headerKey[32];
+    for (int i = 0; i < 32; i++) headerKey[i] = static_cast<uint8_t>(0xC0 + i);
+
+    {
+        AtsConfig cfg = makeConfig(/*primaryChannel=*/0);
+        cfg.headerKey = headerKey;
+        ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+        ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::dht11()));
+        ASSERT_TRUE(db.start());
+        uint8_t rec[8];
+        for (int i = 0; i < 3000; i++) {
+            writeDhtRecord(rec, g_fakeTime + i, static_cast<int16_t>(i & 0x7FFF), 600);
+            db.append(0, rec);
+        }
+        ASSERT_TRUE(db.close());
+    }
+    AtsConfig cfg = makeConfig(/*primaryChannel=*/0);
+    cfg.headerKey = headerKey;
+    ASSERT_TRUE(db.openReadOnly(fileName.c_str(), cfg));
+    EXPECT_GT(db.getIndexCount(), 0);
+}
+
 // ── Open with invalid path → fopen fails on both attempts (L100) ──────────
 
 TEST_F(ArcanaTsDbTest, OpenFailsWhenFopenCannotCreate) {
