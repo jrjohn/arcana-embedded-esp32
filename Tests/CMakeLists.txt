@@ -260,6 +260,45 @@ if(MBEDTLS_INCLUDE_DIR AND MBEDCRYPTO_LIB)
     )
     add_test(NAME test_key_exchange_manager COMMAND test_key_exchange_manager)
 
+    # ── test_kex_failure_injection: --wrap mbedtls fault injection ─────────
+    # Drives the mbedtls failure paths in KeyExchangeManager via linker
+    # symbol wrapping. Each call to mbedtls_md_setup etc. is rerouted to
+    # __wrap_mbedtls_md_setup in mocks/mbedtls_wrap.cpp which can inject
+    # failures via global flags. Linux/gold ld supports --wrap; macOS
+    # ld does not, so this target is Linux-only (Docker CI).
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_executable(test_kex_failure_injection
+            test_kex_failure_injection.cpp
+            mocks/mbedtls_wrap.cpp
+            ${CMD_SRC}/KeyExchangeManager.cpp
+            ${CMD_SRC}/CryptoEngine.cpp
+        )
+        target_include_directories(test_kex_failure_injection PRIVATE
+            ${COMMON_INCS}
+            ${MBEDTLS_INCLUDE_DIR}
+        )
+        target_compile_options(test_kex_failure_injection PRIVATE ${MBEDTLS_COMPAT_FLAGS})
+        target_link_options(test_kex_failure_injection PRIVATE
+            -Wl,--wrap=mbedtls_md_setup
+            -Wl,--wrap=mbedtls_md_hmac_starts
+            -Wl,--wrap=mbedtls_md_hmac_update
+            -Wl,--wrap=mbedtls_md_hmac_finish
+            -Wl,--wrap=mbedtls_ecp_group_load
+            -Wl,--wrap=mbedtls_ecp_gen_keypair
+            -Wl,--wrap=mbedtls_ecp_check_pubkey
+            -Wl,--wrap=mbedtls_ecdh_compute_shared
+            -Wl,--wrap=mbedtls_mpi_read_binary
+            -Wl,--wrap=mbedtls_mpi_write_binary
+            -Wl,--wrap=mbedtls_ctr_drbg_seed
+        )
+        target_link_libraries(test_kex_failure_injection PRIVATE
+            GTest::gtest_main
+            esp_stubs
+            ${MBEDCRYPTO_LIB}
+        )
+        add_test(NAME test_kex_failure_injection COMMAND test_kex_failure_injection)
+    endif()
+
     # ── test_registration_service (Phase D — needs http_client + storage stubs)
     add_executable(test_registration_service
         test_registration_service.cpp
