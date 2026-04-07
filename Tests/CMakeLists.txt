@@ -27,6 +27,7 @@ set(OBS_INC       ${PROJECT_ROOT}/components/ObservableSensor/include)
 set(ATS_INC       ${PROJECT_ROOT}/components/ArcanaTs/include)
 set(ATS_SRC       ${PROJECT_ROOT}/components/ArcanaTs/src)
 set(LOG_INC       ${PROJECT_ROOT}/components/LogService/include)
+set(BLE_INC       ${PROJECT_ROOT}/components/BleService/include)
 set(NANOPB_DIR    ${PROJECT_ROOT}/managed_components/nikas-belogolov__nanopb)
 
 # Common includes — mocks FIRST so they override real ESP-IDF / FreeRTOS headers
@@ -144,6 +145,7 @@ if(MBEDTLS_INCLUDE_DIR AND MBEDCRYPTO_LIB)
     target_include_directories(test_command_factory PRIVATE
         ${COMMON_INCS}
         ${MBEDTLS_INCLUDE_DIR}
+        ${BLE_INC}
     )
     target_compile_options(test_command_factory PRIVATE ${MBEDTLS_COMPAT_FLAGS})
     target_link_libraries(test_command_factory PRIVATE
