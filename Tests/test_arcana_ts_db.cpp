@@ -1370,6 +1370,11 @@ TEST_F(ArcanaTsDbTest, WalkForwardRecoveryFindsExtraBlocks) {
     // it directly. The mStats record sits at base+0x940 = 16 + 0x940 = 0x950
     // for the encrypted layout. We patch the first 4 bytes (blocksWritten)
     // and recompute the AtsFileHeader CRC at base offset.
+    //
+    // Use a value of 10 (not 5) so that fast recovery's verifyStart
+    // computation hits the L1196 branch (verifyStart = estimatedEnd -
+    // VERIFY_COUNT * BLOCK_SIZE), which only triggers when there are at
+    // least VERIFY_COUNT=8 blocks before estimatedEnd.
     {
         std::string fullPath = std::string(MOUNT) + "/" + fileName;
         FILE* fp = fopen(fullPath.c_str(), "r+b");
@@ -1384,8 +1389,8 @@ TEST_F(ArcanaTsDbTest, WalkForwardRecoveryFindsExtraBlocks) {
         ASSERT_EQ(memcmp(hdr.magic, "ATS2", 4), 0);
         ASSERT_GE(hdr.totalBlockCount, 10u);
 
-        // Patch the in-header totalBlockCount to 5 and recompute CRC
-        hdr.totalBlockCount = 5;
+        // Patch the in-header totalBlockCount to 10 and recompute CRC
+        hdr.totalBlockCount = 10;
         hdr.flags &= ~ATS_FLAG_HAS_INDEX;
         hdr.indexBlockOffset = 0;
         hdr.headerCrc32 = ~arcana::ats::crc32(
@@ -1394,7 +1399,7 @@ TEST_F(ArcanaTsDbTest, WalkForwardRecoveryFindsExtraBlocks) {
         ASSERT_EQ(fwrite(&hdr, 1, sizeof(hdr), fp), sizeof(hdr));
 
         // Patch the mStats blob at base + 0x940
-        uint32_t patchedBlocks = 5;
+        uint32_t patchedBlocks = 10;
         fseek(fp, base + 0x940, SEEK_SET);
         ASSERT_EQ(fwrite(&patchedBlocks, 1, sizeof(patchedBlocks), fp),
                   sizeof(patchedBlocks));
@@ -1402,16 +1407,16 @@ TEST_F(ArcanaTsDbTest, WalkForwardRecoveryFindsExtraBlocks) {
         fclose(fp);
     }
 
-    // Step 3: reopen → fast recovery sees blocksWritten=5, tail-verifies
-    // blocks 1-5, then walks forward through blocks 6..N picking them up.
+    // Step 3: reopen → fast recovery sees blocksWritten=10, tail-verifies
+    // the last 8 blocks (L1196 branch), then walks forward through any
+    // remaining blocks past block 10.
     {
         AtsConfig cfg = makeConfig(/*primaryChannel=*/0);
         cfg.headerKey = headerKey;
         ASSERT_TRUE(db.open(fileName.c_str(), cfg));
         EXPECT_TRUE(db.isOpen());
-        // Walk-forward should have picked up at least a few blocks past
-        // the patched count of 5.
-        EXPECT_GT(db.getStats().blocksWritten, 5u);
+        // Walk-forward should have picked up at least one block past 10.
+        EXPECT_GE(db.getStats().blocksWritten, 10u);
     }
 }
 
