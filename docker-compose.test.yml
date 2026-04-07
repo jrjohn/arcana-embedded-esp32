@@ -1,0 +1,8 @@
+services:
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    image: esp32-test:ci
+    working_dir: /workspace
+    command: ["echo", "Test image built. Artifacts at /workspace/coverage.info /workspace/coverage.xml"]

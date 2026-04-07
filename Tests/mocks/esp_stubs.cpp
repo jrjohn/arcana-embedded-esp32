@@ -1,0 +1,105 @@
+// Stubs for ESP-IDF + FreeRTOS APIs used by ESP32 components.
+// All operations are no-ops or return success — sufficient for header-only
+// platform-independent code (FrameCodec, CommandCodec, Observable, etc).
+
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <vector>
+
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
+#include "freertos/semphr.h"
+#include "freertos/task.h"
+#include "esp_timer.h"
+
+// ────────────────────────────────────────────────────────────────────────────
+// Mutex stubs (use placeholder pointer; reentrant fine for single-thread tests)
+// ────────────────────────────────────────────────────────────────────────────
+extern "C" SemaphoreHandle_t xSemaphoreCreateMutex(void) {
+    return (SemaphoreHandle_t)malloc(1);
+}
+extern "C" SemaphoreHandle_t xSemaphoreCreateBinary(void) {
+    return (SemaphoreHandle_t)malloc(1);
+}
+extern "C" BaseType_t xSemaphoreTake(SemaphoreHandle_t, TickType_t)  { return pdTRUE; }
+extern "C" BaseType_t xSemaphoreGive(SemaphoreHandle_t)              { return pdTRUE; }
+extern "C" void       vSemaphoreDelete(SemaphoreHandle_t s) { if (s) free(s); }
+
+// ────────────────────────────────────────────────────────────────────────────
+// Queue stubs — store-and-forward FIFO backed by std::vector
+// (Observable<T> uses xQueueSend / xQueueReceive for async dispatch tests)
+// ────────────────────────────────────────────────────────────────────────────
+struct FakeQueue {
+    UBaseType_t           length;
+    UBaseType_t           item_size;
+    std::vector<uint8_t>  data;
+};
+
+extern "C" QueueHandle_t xQueueCreate(UBaseType_t length, UBaseType_t item_size) {
+    auto* q = new FakeQueue;
+    q->length = length;
+    q->item_size = item_size;
+    return (QueueHandle_t)q;
+}
+extern "C" QueueHandle_t xQueueCreateStatic(UBaseType_t length, UBaseType_t item_size,
+                                             uint8_t*, StaticQueue_t*) {
+    return xQueueCreate(length, item_size);
+}
+extern "C" void vQueueDelete(QueueHandle_t q) {
+    if (q) delete static_cast<FakeQueue*>(q);
+}
+extern "C" BaseType_t xQueueSendToBack(QueueHandle_t q, const void* item, TickType_t) {
+    auto* fq = static_cast<FakeQueue*>(q);
+    if (!fq || !item) return pdFALSE;
+    if (fq->data.size() / fq->item_size >= fq->length) return pdFALSE;
+    const uint8_t* src = static_cast<const uint8_t*>(item);
+    fq->data.insert(fq->data.end(), src, src + fq->item_size);
+    return pdTRUE;
+}
+extern "C" BaseType_t xQueueSendToBackFromISR(QueueHandle_t q, const void* item, BaseType_t* hp) {
+    if (hp) *hp = pdFALSE;
+    return xQueueSendToBack(q, item, 0);
+}
+extern "C" BaseType_t xQueueReceive(QueueHandle_t q, void* out, TickType_t) {
+    auto* fq = static_cast<FakeQueue*>(q);
+    if (!fq || !out || fq->data.empty()) return pdFALSE;
+    memcpy(out, fq->data.data(), fq->item_size);
+    fq->data.erase(fq->data.begin(), fq->data.begin() + fq->item_size);
+    return pdTRUE;
+}
+extern "C" UBaseType_t uxQueueSpacesAvailable(QueueHandle_t q) {
+    auto* fq = static_cast<FakeQueue*>(q);
+    if (!fq) return 0;
+    return fq->length - (fq->data.size() / fq->item_size);
+}
+extern "C" UBaseType_t uxQueueMessagesWaiting(QueueHandle_t q) {
+    auto* fq = static_cast<FakeQueue*>(q);
+    if (!fq) return 0;
+    return fq->data.size() / fq->item_size;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Task stubs — never actually create tasks; xTaskCreate returns pdFAIL so
+// Observable code skips spawning tasks. Tests use synchronous Notify() instead.
+// ────────────────────────────────────────────────────────────────────────────
+extern "C" BaseType_t xTaskCreate(TaskFunction_t, const char*, uint32_t, void*,
+                                   UBaseType_t, TaskHandle_t* out) {
+    if (out) *out = (TaskHandle_t)0x1;  // non-null so Observable thinks task exists
+    return pdPASS;
+}
+extern "C" void       vTaskDelete(TaskHandle_t)        {}
+extern "C" void       vTaskDelay(TickType_t)           {}
+extern "C" TickType_t xTaskGetTickCount(void)          { return 0; }
+
+// ────────────────────────────────────────────────────────────────────────────
+// esp_timer stubs
+// ────────────────────────────────────────────────────────────────────────────
+extern "C" esp_err_t esp_timer_create(const esp_timer_create_args_t*, esp_timer_handle_t* out) {
+    if (out) *out = (esp_timer_handle_t)0x1;
+    return ESP_OK;
+}
+extern "C" esp_err_t esp_timer_start_periodic(esp_timer_handle_t, uint64_t) { return ESP_OK; }
+extern "C" esp_err_t esp_timer_stop(esp_timer_handle_t)                     { return ESP_OK; }
+extern "C" esp_err_t esp_timer_delete(esp_timer_handle_t)                   { return ESP_OK; }
+extern "C" int64_t   esp_timer_get_time(void)                               { return 0; }

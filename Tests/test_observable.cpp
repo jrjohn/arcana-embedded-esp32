@@ -1,0 +1,134 @@
+#include <gtest/gtest.h>
+#include "Observable.hpp"
+#include <cstdint>
+
+using namespace Arcana;
+
+struct TestEvent {
+    int value;
+};
+
+// ── Sync Observable basic tests ─────────────────────────────────────────────
+
+TEST(ObservableTest, DefaultConstructorIsSynchronous) {
+    Observable<TestEvent> obs;
+    EXPECT_FALSE(obs.IsAsync());
+    EXPECT_EQ(obs.GetName(), nullptr);
+}
+
+TEST(ObservableTest, NoSubscribersInitially) {
+    Observable<TestEvent> obs;
+    EXPECT_FALSE(obs.HasSubscribers());
+    EXPECT_EQ(obs.GetSubscriberCount(), 0u);
+}
+
+TEST(ObservableTest, SubscribeReturnsValidId) {
+    Observable<TestEvent> obs;
+    auto id = obs.Subscribe([](const TestEvent&) {});
+    EXPECT_GT(id, 0u);
+    EXPECT_TRUE(obs.HasSubscribers());
+    EXPECT_EQ(obs.GetSubscriberCount(), 1u);
+}
+
+TEST(ObservableTest, NotifyDispatchesToSubscriber) {
+    Observable<TestEvent> obs;
+    int received = 0;
+    obs.Subscribe([&received](const TestEvent& e) { received = e.value; });
+
+    obs.Notify(TestEvent{42});
+    EXPECT_EQ(received, 42);
+}
+
+TEST(ObservableTest, NotifyDispatchesToMultipleSubscribers) {
+    Observable<TestEvent> obs;
+    int a = 0, b = 0, c = 0;
+    obs.Subscribe([&a](const TestEvent& e) { a = e.value; });
+    obs.Subscribe([&b](const TestEvent& e) { b = e.value * 2; });
+    obs.Subscribe([&c](const TestEvent& e) { c = e.value * 3; });
+
+    obs.Notify(TestEvent{10});
+    EXPECT_EQ(a, 10);
+    EXPECT_EQ(b, 20);
+    EXPECT_EQ(c, 30);
+}
+
+TEST(ObservableTest, UnsubscribeRemovesSubscriber) {
+    Observable<TestEvent> obs;
+    int counter = 0;
+    auto id = obs.Subscribe([&counter](const TestEvent&) { counter++; });
+
+    obs.Notify(TestEvent{1});
+    EXPECT_EQ(counter, 1);
+
+    EXPECT_TRUE(obs.Unsubscribe(id));
+    EXPECT_EQ(obs.GetSubscriberCount(), 0u);
+
+    obs.Notify(TestEvent{2});
+    EXPECT_EQ(counter, 1);  // unchanged
+}
+
+TEST(ObservableTest, UnsubscribeInvalidIdReturnsFalse) {
+    Observable<TestEvent> obs;
+    obs.Subscribe([](const TestEvent&) {});
+    EXPECT_FALSE(obs.Unsubscribe(999));
+}
+
+TEST(ObservableTest, ClearRemovesAllSubscribers) {
+    Observable<TestEvent> obs;
+    obs.Subscribe([](const TestEvent&) {});
+    obs.Subscribe([](const TestEvent&) {});
+    obs.Subscribe([](const TestEvent&) {});
+    EXPECT_EQ(obs.GetSubscriberCount(), 3u);
+
+    obs.Clear();
+    EXPECT_EQ(obs.GetSubscriberCount(), 0u);
+    EXPECT_FALSE(obs.HasSubscribers());
+}
+
+TEST(ObservableTest, OperatorPlusEqualsSubscribesLambda) {
+    Observable<TestEvent> obs;
+    int received = 0;
+    obs += [&received](const TestEvent& e) { received = e.value; };
+
+    obs.Notify(TestEvent{99});
+    EXPECT_EQ(received, 99);
+}
+
+// ── Bounded Observable tests ────────────────────────────────────────────────
+
+TEST(ObservableTest, BoundedObservableEnforcesLimit) {
+    Observable<TestEvent, 2> obs;  // Max 2 subscribers
+    auto id1 = obs.Subscribe([](const TestEvent&) {});
+    auto id2 = obs.Subscribe([](const TestEvent&) {});
+    auto id3 = obs.Subscribe([](const TestEvent&) {});
+
+    EXPECT_GT(id1, 0u);
+    EXPECT_GT(id2, 0u);
+    EXPECT_EQ(id3, 0u);  // Rejected
+    EXPECT_EQ(obs.GetSubscriberCount(), 2u);
+}
+
+TEST(ObservableTest, BoundedObservableIsFullReturnsTrue) {
+    Observable<TestEvent, 1> obs;
+    EXPECT_FALSE(obs.IsFull());
+    obs.Subscribe([](const TestEvent&) {});
+    EXPECT_TRUE(obs.IsFull());
+}
+
+TEST(ObservableTest, UnboundedObservableIsNeverFull) {
+    Observable<TestEvent> obs;
+    EXPECT_FALSE(obs.IsFull());
+    for (int i = 0; i < 10; i++) {
+        obs.Subscribe([](const TestEvent&) {});
+    }
+    EXPECT_FALSE(obs.IsFull());
+}
+
+// ── Notify with no subscribers (no-op) ──────────────────────────────────────
+
+TEST(ObservableTest, NotifyNoSubscribersIsNoOp) {
+    Observable<TestEvent> obs;
+    // Should not crash
+    obs.Notify(TestEvent{123});
+    SUCCEED();
+}
