@@ -1688,6 +1688,62 @@ TEST_F(ArcanaTsDbTest, FindChannelBySchemaIdReturnsNeg1ForUnknown) {
     EXPECT_EQ(db.findChannelBySchemaId(0xDEADBEEFu), -1);
 }
 
+// queryLatest on a slow channel with records still buffered (not flushed)
+// exercises the slow-channel scan path inside queryLatest (L1425-1457):
+// the count + copy passes over mSlow.buf's tagged records.
+TEST_F(ArcanaTsDbTest, QueryLatestSlowChannelFromBuffer) {
+    AtsConfig cfg = makeConfig();  // primaryChannel=0xFF, all slow
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::dht11()));
+    ASSERT_TRUE(db.addChannel(1, ArcanaTsSchema::deviceStatus()));
+    ASSERT_TRUE(db.start());
+
+    // Interleave records on two slow channels — DON'T flush so they stay
+    // in mSlow.buf for the query to scan.
+    uint8_t dht[8];
+    uint8_t status[16] = {0};
+    for (int i = 0; i < 5; i++) {
+        writeDhtRecord(dht, g_fakeTime + i, static_cast<int16_t>(i), 600);
+        db.append(0, dht);
+        db.append(1, status);
+    }
+
+    uint8_t out[8 * 5];
+    uint16_t got = db.queryLatest(0, out, 5);
+    EXPECT_EQ(got, 5u);
+
+    // Latest record should be the last one we appended (i=4)
+    int16_t lastTemp;
+    memcpy(&lastTemp, out + 4 * 8 + 4, 2);
+    EXPECT_EQ(lastTemp, 4);
+}
+
+// Skip count > 0 path: ask for fewer records than the buffer has so the
+// "matchIdx >= skip" check fires (L1450-1454). Caller asks for 2 of 5.
+TEST_F(ArcanaTsDbTest, QueryLatestSlowChannelWithSkip) {
+    AtsConfig cfg = makeConfig();  // all slow
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::dht11()));
+    ASSERT_TRUE(db.start());
+
+    uint8_t rec[8];
+    for (int i = 0; i < 5; i++) {
+        writeDhtRecord(rec, g_fakeTime + i, static_cast<int16_t>(i), 600);
+        db.append(0, rec);
+    }
+
+    uint8_t out[8 * 2];
+    uint16_t got = db.queryLatest(0, out, 2);
+    EXPECT_EQ(got, 2u);
+
+    // Latest 2 should be records 3 and 4
+    int16_t firstReturnedTemp, lastReturnedTemp;
+    memcpy(&firstReturnedTemp, out + 4, 2);
+    memcpy(&lastReturnedTemp, out + 8 + 4, 2);
+    EXPECT_EQ(firstReturnedTemp, 3);
+    EXPECT_EQ(lastReturnedTemp, 4);
+}
+
 // Regression: writeShadowHeader() must not extend past block 0 and corrupt
 // block 1's seqNo. Earlier versions wrote 2560 bytes at SHADOW_OFFSET=0x0A00,
 // overwriting offsets 4096-5119 (block 1's first quarter) and clobbering its
