@@ -1,9 +1,43 @@
 #include <gtest/gtest.h>
 #include "CryptoEngine.hpp"
+#include "Esp32AesCtrCipher.hpp"
 #include <cstring>
 #include <vector>
 
 using namespace Arcana::Command;
+
+// ── Esp32AesCtrCipher (mbedtls AES-256-CTR — works on host with libmbedcrypto)
+
+TEST(Esp32AesCtrCipherTest, CipherTypeIsTwo) {
+    arcana::ats::Esp32AesCtrCipher c;
+    EXPECT_EQ(c.cipherType(), 2);
+}
+
+TEST(Esp32AesCtrCipherTest, EncryptDecryptRoundTrip) {
+    arcana::ats::Esp32AesCtrCipher c;
+    uint8_t key[32]; for (int i = 0; i < 32; i++) key[i] = static_cast<uint8_t>(i);
+    uint8_t nonce[12]; for (int i = 0; i < 12; i++) nonce[i] = static_cast<uint8_t>(0xA0 + i);
+    uint8_t data[64];
+    for (int i = 0; i < 64; i++) data[i] = static_cast<uint8_t>(i * 3);
+    uint8_t orig[64];
+    memcpy(orig, data, 64);
+
+    c.crypt(key, nonce, 0, data, 64);
+    EXPECT_NE(memcmp(data, orig, 64), 0);  // ciphertext differs
+
+    c.crypt(key, nonce, 0, data, 64);  // CTR: same op decrypts
+    EXPECT_EQ(memcmp(data, orig, 64), 0);
+}
+
+TEST(Esp32AesCtrCipherTest, CounterAffectsKeystream) {
+    arcana::ats::Esp32AesCtrCipher c;
+    uint8_t key[32]{};
+    uint8_t nonce[12]{};
+    uint8_t a[16]{}, b[16]{};
+    c.crypt(key, nonce, 0, a, 16);
+    c.crypt(key, nonce, 1, b, 16);  // different counter
+    EXPECT_NE(memcmp(a, b, 16), 0);
+}
 
 // Helper: 32-byte test key
 static void makeTestKey(uint8_t key[CryptoEngine::kKeyLen]) {

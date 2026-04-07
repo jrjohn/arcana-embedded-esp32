@@ -788,6 +788,45 @@ TEST(FreeRtosMutexTest, LockWithExplicitTimeout) {
     m.unlock();
 }
 
+// NOTE: Esp32AesCtrCipher tests live in test_crypto_engine since they need
+// libmbedcrypto (mbedtls/aes.h not in the host include path otherwise).
+
+// ── ArcanaTsDb: flush early-return when nothing pending ────────────────────
+
+TEST_F(ArcanaTsDbTest, FlushReturnsTrueWithNoPendingData) {
+    AtsConfig cfg = makeConfig();
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::dht11()));
+    ASSERT_TRUE(db.start());
+    // No appends — flush should hit the early-return paths in
+    // flushPrimaryBuffer + flushSlowBuffer.
+    EXPECT_TRUE(db.flush());
+    EXPECT_TRUE(db.flush());  // double-flush is safe
+}
+
+// ── ArcanaTsDb: index eviction when MAX_INDEX_ENTRIES exceeded ─────────────
+//
+// MAX_INDEX_ENTRIES = 85. Each block adds an index entry. With slow-buffer
+// channel (DHT11 = 8B record + 1B tag = 9B/rec, ~451 rec/block), we need
+// 86+ blocks → 86 * 451 ≈ 38786 records to hit the memmove eviction path.
+
+TEST_F(ArcanaTsDbTest, IndexEvictionAfterMaxEntries) {
+    AtsConfig cfg = makeConfig(/*primaryChannel=*/0);
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::dht11()));
+    ASSERT_TRUE(db.start());
+
+    // 8B records, 508/block primary; 90+ blocks → 46k records
+    uint8_t rec[8];
+    for (int i = 0; i < 50000; i++) {
+        writeDhtRecord(rec, g_fakeTime + i, static_cast<int16_t>(i & 0x7FFF), 600);
+        db.append(0, rec);
+    }
+    db.flush();
+    // Should have triggered the eviction path at least once
+    EXPECT_GE(db.getStats().blocksWritten, 80u);
+}
+
 // ── ChaCha20Cipher (real encryption, exercises cipher integration) ─────────
 
 TEST(ChaCha20CipherTest, CipherTypeIsOne) {

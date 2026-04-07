@@ -93,6 +93,8 @@ esp_err_t esp_http_client_close(esp_http_client_handle_t client);
 void http_test_reset(void);
 void http_test_set_response(const uint8_t* data, int len, int status_code);
 void http_test_set_perform_result(esp_err_t result);
+void http_test_set_open_result(esp_err_t result);
+void http_test_set_write_fail_after(int bytes);
 int http_test_get_last_post_len(void);
 const uint8_t* http_test_get_last_post_data(void);
 

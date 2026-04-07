@@ -299,6 +299,36 @@ TEST(KeyExchangeManagerTest, SlotExhaustionAfterFourSessions) {
     EXPECT_FALSE(kex.InstallPendingSession(CommandSource::BLE, 200));
 }
 
+// ── Re-key after RemoveSession (covers slot reuse path) ────────────────────
+
+TEST(KeyExchangeManagerTest, ReKeyAfterRemoveSessionReusesSlot) {
+    KeyExchangeManager kex;
+    uint8_t psk[CryptoEngine::kKeyLen];
+    makePsk(psk);
+    ASSERT_EQ(kex.Init(psk), ESP_OK);
+
+    uint8_t clientPub1[64], clientPub2[64];
+    ASSERT_TRUE(generateClientKeypair(clientPub1));
+    ASSERT_TRUE(generateClientKeypair(clientPub2));
+
+    uint8_t serverPub[64], authTag[32];
+
+    // Session 1
+    ASSERT_TRUE(kex.PerformKeyExchange(CommandSource::BLE, 60,
+                                         clientPub1, serverPub, authTag));
+    ASSERT_TRUE(kex.InstallPendingSession(CommandSource::BLE, 60));
+    ASSERT_NE(kex.GetSession(CommandSource::BLE, 60), nullptr);
+
+    // Disconnect and re-key
+    kex.RemoveSession(CommandSource::BLE, 60);
+    EXPECT_EQ(kex.GetSession(CommandSource::BLE, 60), nullptr);
+
+    ASSERT_TRUE(kex.PerformKeyExchange(CommandSource::BLE, 60,
+                                         clientPub2, serverPub, authTag));
+    ASSERT_TRUE(kex.InstallPendingSession(CommandSource::BLE, 60));
+    EXPECT_NE(kex.GetSession(CommandSource::BLE, 60), nullptr);
+}
+
 // ── KeyExchangeCommand integration with real KeyExchangeManager ────────────
 
 TEST(KeyExchangeCommandTest, ExecuteWithValidPubKeySucceeds) {

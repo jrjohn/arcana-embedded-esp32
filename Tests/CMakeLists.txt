@@ -307,6 +307,7 @@ if(MBEDCRYPTO_LIB AND MBEDTLS_INCLUDE_DIR)
         ${MOCKS_DIR}
         ${CMD_INC}
         ${OBS_INC}
+        ${ATS_INC}   # for Esp32AesCtrCipher.hpp
     )
     if(MBEDTLS_INCLUDE_DIR)
         target_include_directories(test_crypto_engine PRIVATE ${MBEDTLS_INCLUDE_DIR})

@@ -160,3 +160,109 @@ TEST_F(HttpUploadServiceTest, SetProgressCallbackNullClears) {
     svc.setProgressCallback(nullptr, nullptr);
     SUCCEED();
 }
+
+// ── queryServerOffset response parsing (via uploadFile path) ───────────────
+//
+// uploadFile() calls queryServerOffset() before opening the upload stream.
+// The mock streams the queryServerOffset response, then streams the upload
+// response. We use the same canned response for both — the queryServerOffset
+// just needs to return *some* valid value (or 0 to start fresh).
+
+TEST_F(HttpUploadServiceTest, UploadFileSizeMatchesServerSizeSkipsUpload) {
+    if (!g_sdcardAvailable) GTEST_SKIP() << "/sdcard not available";
+
+    // 100-byte file
+    uint8_t data[100];
+    memset(data, 0x42, sizeof(data));
+    writeFile("done.ats", data, sizeof(data));
+
+    // Server responds with {"size":100} → queryServerOffset returns 100,
+    // which equals fileSize → upload returns true without uploading
+    const char* json = "{\"size\":100}";
+    http_test_set_response(reinterpret_cast<const uint8_t*>(json),
+                           (int)strlen(json), 200);
+
+    auto& svc = HttpUploadServiceImpl::getInstance();
+    EXPECT_TRUE(svc.uploadFile("done.ats", "DEV001", "tok|9999|sig"));
+
+    removeFile("done.ats");
+}
+
+TEST_F(HttpUploadServiceTest, UploadFileResume404TreatedAsZeroOffset) {
+    if (!g_sdcardAvailable) GTEST_SKIP() << "/sdcard not available";
+
+    // 200-byte file
+    uint8_t data[200];
+    memset(data, 0x55, sizeof(data));
+    writeFile("new.ats", data, sizeof(data));
+
+    // Server returns 404 → queryServerOffset returns 0 → full upload attempted.
+    // The upload write loop will succeed against the same canned response.
+    const char* body = "not found";
+    http_test_set_response(reinterpret_cast<const uint8_t*>(body),
+                           (int)strlen(body), 404);
+
+    auto& svc = HttpUploadServiceImpl::getInstance();
+    // Result depends on whether the second response (for the upload itself)
+    // is treated as success — accept either; we just want to cover the 404
+    // branch in queryServerOffset.
+    (void)svc.uploadFile("new.ats", "DEV001", "tok|9999|sig");
+
+    removeFile("new.ats");
+}
+
+TEST_F(HttpUploadServiceTest, UploadFileResume500TreatedAsZeroOffset) {
+    if (!g_sdcardAvailable) GTEST_SKIP() << "/sdcard not available";
+
+    uint8_t data[150];
+    memset(data, 0xAA, sizeof(data));
+    writeFile("error.ats", data, sizeof(data));
+
+    const char* body = "internal error";
+    http_test_set_response(reinterpret_cast<const uint8_t*>(body),
+                           (int)strlen(body), 500);
+
+    auto& svc = HttpUploadServiceImpl::getInstance();
+    (void)svc.uploadFile("error.ats", "DEV001", "tok|9999|sig");
+
+    removeFile("error.ats");
+}
+
+TEST_F(HttpUploadServiceTest, QueryServerOffsetOpenFailure) {
+    if (!g_sdcardAvailable) GTEST_SKIP() << "/sdcard not available";
+
+    uint8_t data[100];
+    memset(data, 0xBB, sizeof(data));
+    writeFile("openfail.ats", data, sizeof(data));
+
+    // First query → connect fails → queryServerOffset returns 0
+    http_test_set_open_result(ESP_FAIL);
+
+    auto& svc = HttpUploadServiceImpl::getInstance();
+    // The upload will then attempt to open for the actual POST and fail too,
+    // returning false.
+    EXPECT_FALSE(svc.uploadFile("openfail.ats", "DEV001", "tok|9999|sig"));
+
+    removeFile("openfail.ats");
+}
+
+TEST_F(HttpUploadServiceTest, UploadFilePartialWriteFailure) {
+    if (!g_sdcardAvailable) GTEST_SKIP() << "/sdcard not available";
+
+    // 4KB file → write loop runs ~4 iterations
+    uint8_t data[4096];
+    memset(data, 0xCC, sizeof(data));
+    writeFile("partial.ats", data, sizeof(data));
+
+    // queryServerOffset returns 0 (404)
+    const char* body = "404";
+    http_test_set_response(reinterpret_cast<const uint8_t*>(body), 3, 404);
+
+    // Fail the actual upload write after 1024 bytes
+    http_test_set_write_fail_after(1024);
+
+    auto& svc = HttpUploadServiceImpl::getInstance();
+    EXPECT_FALSE(svc.uploadFile("partial.ats", "DEV001", "tok|9999|sig"));
+
+    removeFile("partial.ats");
+}

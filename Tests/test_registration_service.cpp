@@ -3,6 +3,9 @@
 #include "impl/AtsStorageServiceImpl.hpp"   // stub from Tests/mocks/impl/
 #include "esp_http_client.h"
 #include "FrameCodec.hpp"
+#include "mbedtls/ecp.h"
+#include "mbedtls/entropy.h"
+#include "mbedtls/ctr_drbg.h"
 #include <cstring>
 #include <cstdint>
 
@@ -46,6 +49,44 @@ static void pbWriteBytes(uint8_t*& p, uint8_t fieldNum, const uint8_t* data, siz
 static void pbWriteVarintField(uint8_t*& p, uint8_t fieldNum, uint32_t value) {
     *p++ = (fieldNum << 3) | 0;
     pbWriteVarint(p, value);
+}
+
+// Generate a valid SECP256R1 server keypair → returns 64-byte raw public
+// key (x||y). Caller passes this to buildResponseFrame so the registration
+// flow's ECDH compute_shared (and HKDF derivation) succeeds.
+static bool generateServerPubkey(uint8_t pubOut[64]) {
+    mbedtls_entropy_context entropy;
+    mbedtls_ctr_drbg_context ctr;
+    mbedtls_ecp_keypair kp;
+
+    mbedtls_entropy_init(&entropy);
+    mbedtls_ctr_drbg_init(&ctr);
+    mbedtls_ecp_keypair_init(&kp);
+
+    const char* pers = "test_server";
+    bool ok = false;
+    do {
+        if (mbedtls_ctr_drbg_seed(&ctr, mbedtls_entropy_func, &entropy,
+                                   reinterpret_cast<const unsigned char*>(pers),
+                                   strlen(pers)) != 0) break;
+        if (mbedtls_ecp_gen_key(MBEDTLS_ECP_DP_SECP256R1, &kp,
+                                 mbedtls_ctr_drbg_random, &ctr) != 0) break;
+
+        size_t olen = 0;
+        uint8_t uncomp[65];
+        if (mbedtls_ecp_point_write_binary(&kp.MBEDTLS_PRIVATE(grp),
+                                            &kp.MBEDTLS_PRIVATE(Q),
+                                            MBEDTLS_ECP_PF_UNCOMPRESSED,
+                                            &olen, uncomp, sizeof(uncomp)) != 0) break;
+        if (olen != 65 || uncomp[0] != 0x04) break;
+        memcpy(pubOut, uncomp + 1, 64);  // skip 0x04 prefix
+        ok = true;
+    } while (false);
+
+    mbedtls_ecp_keypair_free(&kp);
+    mbedtls_ctr_drbg_free(&ctr);
+    mbedtls_entropy_free(&entropy);
+    return ok;
 }
 
 // Build a wire-format response: FrameCodec(protobuf payload).
@@ -282,4 +323,92 @@ TEST_F(RegistrationServiceTest, HttpRegisterFailsWhenServerSaysSuccessFalse) {
     http_test_set_response(frame, (int)frameLen, 200);
 
     EXPECT_FALSE(svc.doRegistration());
+}
+
+// ── ECDH success path with valid SECP256R1 server pubkey ───────────────────
+//
+// Drives the full ECDH compute_shared + HKDF-SHA256 derivation in
+// httpRegister so the comm_key derivation lines (~24) get covered.
+
+TEST_F(RegistrationServiceTest, HttpRegisterDerivesCommKeyWithValidServerPubkey) {
+    auto& svc = RegistrationServiceImpl::getInstance();
+    auto& storage = Arcana::Storage::AtsStorageServiceImpl::getInstance();
+    storage.test_setReady(true);
+    storage.test_setSaveOk(true);
+    storage.test_setLoadOk(false);
+
+    // Generate a real server keypair so ECDH compute_shared succeeds
+    uint8_t serverPub[64];
+    ASSERT_TRUE(generateServerPubkey(serverPub));
+
+    uint8_t frame[500];
+    size_t frameLen = buildResponseFrame(frame, sizeof(frame),
+        /*success=*/true,
+        "MAC456", "passwd", "broker.example.com", 8883,
+        "tok|9999999999|sig", "topic", serverPub);
+    ASSERT_GT(frameLen, 0u);
+
+    http_test_set_response(frame, (int)frameLen, 200);
+    EXPECT_TRUE(svc.doRegistration());
+    EXPECT_TRUE(svc.isRegistered());
+    EXPECT_TRUE(svc.credentials().hasCommKey);
+
+    // commKey should be non-zero (HKDF derived it)
+    bool nonZero = false;
+    for (int i = 0; i < 32; i++) {
+        if (svc.credentials().commKey[i] != 0) { nonZero = true; break; }
+    }
+    EXPECT_TRUE(nonZero);
+}
+
+// ── doRegistration save retry path ─────────────────────────────────────────
+//
+// First saveCredentials() fails → vTaskDelay(2000) → retry.
+// We make save fail by leaving test_setSaveOk(false), but http+parse must
+// succeed. The test verifies the retry path doesn't crash.
+
+TEST_F(RegistrationServiceTest, DoRegistrationRetryOnSaveFailure) {
+    auto& svc = RegistrationServiceImpl::getInstance();
+    auto& storage = Arcana::Storage::AtsStorageServiceImpl::getInstance();
+    storage.test_setReady(true);
+    storage.test_setSaveOk(false);   // both saves will fail
+    storage.test_setLoadOk(false);
+
+    uint8_t serverPub[64];
+    ASSERT_TRUE(generateServerPubkey(serverPub));
+
+    uint8_t frame[500];
+    size_t frameLen = buildResponseFrame(frame, sizeof(frame),
+        /*success=*/true,
+        "MAC789", "secret", "broker.example.com", 1883,
+        "tok|9999999999|sig", "topic", serverPub);
+    ASSERT_GT(frameLen, 0u);
+    http_test_set_response(frame, (int)frameLen, 200);
+
+    // doRegistration returns true even if save fails (it's best-effort).
+    // The important thing is the retry path is exercised — no crash.
+    EXPECT_TRUE(svc.doRegistration());
+}
+
+// ── refreshToken success path ──────────────────────────────────────────────
+
+TEST_F(RegistrationServiceTest, RefreshTokenSuccessPath) {
+    auto& svc = RegistrationServiceImpl::getInstance();
+    auto& storage = Arcana::Storage::AtsStorageServiceImpl::getInstance();
+    storage.test_setReady(true);
+    storage.test_setSaveOk(true);
+
+    uint8_t serverPub[64];
+    ASSERT_TRUE(generateServerPubkey(serverPub));
+
+    uint8_t frame[500];
+    size_t frameLen = buildResponseFrame(frame, sizeof(frame),
+        /*success=*/true,
+        "MACABC", "newpass", "broker.example.com", 8883,
+        "newtok|9999999999|newsig", "topic", serverPub);
+    ASSERT_GT(frameLen, 0u);
+    http_test_set_response(frame, (int)frameLen, 200);
+
+    EXPECT_TRUE(svc.refreshToken());
+    EXPECT_TRUE(svc.isRegistered());
 }

@@ -15,12 +15,17 @@ struct FakeClient {
     void* user_data;
     int status;
     std::vector<uint8_t> postData;
+    size_t readOffset = 0;   // for streaming-mode read()
+    bool openFails = false;  // simulate connect failure
 };
 
 static std::vector<uint8_t> g_responseData;
 static int g_responseStatus = 200;
 static esp_err_t g_performResult = ESP_OK;
+static esp_err_t g_openResult = ESP_OK;
 static std::vector<uint8_t> g_lastPost;
+static int g_writeFailAfter = -1;  // -1 = never; otherwise fail after N bytes
+static int g_writeBytesSoFar = 0;
 } // namespace
 
 extern "C" {
@@ -29,7 +34,19 @@ void http_test_reset(void) {
     g_responseData.clear();
     g_responseStatus = 200;
     g_performResult = ESP_OK;
+    g_openResult = ESP_OK;
     g_lastPost.clear();
+    g_writeFailAfter = -1;
+    g_writeBytesSoFar = 0;
+}
+
+void http_test_set_open_result(esp_err_t result) {
+    g_openResult = result;
+}
+
+void http_test_set_write_fail_after(int bytes) {
+    g_writeFailAfter = bytes;
+    g_writeBytesSoFar = 0;
 }
 
 void http_test_set_response(const uint8_t* data, int len, int status_code) {
@@ -114,18 +131,30 @@ esp_err_t esp_http_client_cleanup(esp_http_client_handle_t client) {
     return ESP_OK;
 }
 
-esp_err_t esp_http_client_open(esp_http_client_handle_t, int) { return ESP_OK; }
-int esp_http_client_write(esp_http_client_handle_t, const char*, int len) { return len; }
+esp_err_t esp_http_client_open(esp_http_client_handle_t client, int) {
+    auto* c = reinterpret_cast<FakeClient*>(client);
+    if (c) c->readOffset = 0;
+    return g_openResult;
+}
+int esp_http_client_write(esp_http_client_handle_t, const char* data, int len) {
+    if (g_writeFailAfter >= 0 && g_writeBytesSoFar + len > g_writeFailAfter) {
+        return -1;  // simulate mid-stream failure
+    }
+    g_writeBytesSoFar += len;
+    (void)data;
+    return len;
+}
 int esp_http_client_fetch_headers(esp_http_client_handle_t) {
     return static_cast<int>(g_responseData.size());
 }
-int esp_http_client_read(esp_http_client_handle_t, char* buffer, int len) {
-    static size_t s_readOffset = 0;
-    if (s_readOffset >= g_responseData.size()) { s_readOffset = 0; return 0; }
-    int avail = static_cast<int>(g_responseData.size() - s_readOffset);
+int esp_http_client_read(esp_http_client_handle_t client, char* buffer, int len) {
+    auto* c = reinterpret_cast<FakeClient*>(client);
+    if (!c) return -1;
+    if (c->readOffset >= g_responseData.size()) return 0;
+    int avail = static_cast<int>(g_responseData.size() - c->readOffset);
     int n = (len < avail) ? len : avail;
-    memcpy(buffer, g_responseData.data() + s_readOffset, n);
-    s_readOffset += n;
+    memcpy(buffer, g_responseData.data() + c->readOffset, n);
+    c->readOffset += n;
     return n;
 }
 esp_err_t esp_http_client_close(esp_http_client_handle_t) { return ESP_OK; }
