@@ -92,6 +92,18 @@ target_include_directories(test_log PRIVATE
 )
 target_link_libraries(test_log PRIVATE GTest::gtest_main esp_stubs)
 
+# ── test_arcana_ts_db (full TSDB with NullCipher + VfsFilePort + nop mutex) ─
+add_executable(test_arcana_ts_db
+    test_arcana_ts_db.cpp
+    ${ATS_SRC}/ArcanaTsDb.cpp
+    ${ATS_SRC}/VfsFilePort.cpp
+)
+target_include_directories(test_arcana_ts_db PRIVATE
+    ${COMMON_INCS}
+    ${ATS_INC}/ats   # ArcanaTsDb.cpp uses #include "ArcanaTsDb.hpp" without ats/ prefix
+)
+target_link_libraries(test_arcana_ts_db PRIVATE GTest::gtest_main)
+
 # ── test_lcd_viewmodel (header-only MVVM ViewModel) ──────────────────────────
 add_executable(test_lcd_viewmodel test_lcd_viewmodel.cpp)
 target_include_directories(test_lcd_viewmodel PRIVATE
@@ -212,5 +224,6 @@ add_test(NAME test_chacha20     COMMAND test_chacha20)
 add_test(NAME test_ats_schema     COMMAND test_ats_schema)
 add_test(NAME test_vfs_file_port  COMMAND test_vfs_file_port)
 add_test(NAME test_log            COMMAND test_log)
+add_test(NAME test_arcana_ts_db   COMMAND test_arcana_ts_db)
 add_test(NAME test_lcd_viewmodel  COMMAND test_lcd_viewmodel)
 add_test(NAME test_main_view      COMMAND test_main_view)

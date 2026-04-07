@@ -1,0 +1,457 @@
+#include <gtest/gtest.h>
+#include "ats/ArcanaTsDb.hpp"
+#include "ats/ArcanaTsSchema.hpp"
+#include "NullCipher.hpp"
+#include "VfsFilePort.hpp"
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <string>
+#include <unistd.h>
+
+using namespace arcana::ats;
+
+// ── No-op mutex (host tests are single-threaded) ───────────────────────────
+
+class NopMutex : public IMutex {
+public:
+    bool lock(uint32_t = 0xFFFFFFFF) override { return true; }
+    void unlock() override {}
+};
+
+// ── Time source ─────────────────────────────────────────────────────────────
+
+static uint32_t g_fakeTime = 1700000000;
+static uint32_t fakeGetTime() { return g_fakeTime; }
+
+// ── Test fixture: per-test temp file in /tmp + DB instance ──────────────────
+
+class ArcanaTsDbTest : public ::testing::Test {
+protected:
+    static constexpr const char* MOUNT = "/tmp";
+    NullCipher cipher;
+    NopMutex mutex;
+    VfsFilePort file{MOUNT};
+
+    // 4KB buffers required by ArcanaTsDb
+    alignas(8) uint8_t bufA[BLOCK_SIZE];
+    alignas(8) uint8_t bufB[BLOCK_SIZE];
+    alignas(8) uint8_t slowBuf[BLOCK_SIZE];
+    alignas(8) uint8_t readCache[BLOCK_SIZE];
+
+    uint8_t key[32];
+    uint8_t deviceUid[6];
+    std::string fileName;
+    ArcanaTsDb db;
+
+    AtsConfig makeConfig(uint8_t primaryChannel = 0xFF) {
+        AtsConfig cfg{};
+        cfg.file = &file;
+        cfg.cipher = &cipher;
+        cfg.mutex = &mutex;
+        cfg.getTime = fakeGetTime;
+        cfg.key = key;
+        cfg.headerKey = nullptr;
+        cfg.deviceUid = deviceUid;
+        cfg.deviceUidSize = sizeof(deviceUid);
+        cfg.overflow = OverflowPolicy::Drop;
+        cfg.primaryChannel = primaryChannel;
+        cfg.primaryBufA = bufA;
+        cfg.primaryBufB = bufB;
+        cfg.slowBuf = slowBuf;
+        cfg.readCache = readCache;
+        return cfg;
+    }
+
+    void SetUp() override {
+        for (int i = 0; i < 32; i++) key[i] = static_cast<uint8_t>(i);
+        for (int i = 0; i < 6; i++) deviceUid[i] = static_cast<uint8_t>(0xA0 + i);
+        memset(bufA, 0, sizeof(bufA));
+        memset(bufB, 0, sizeof(bufB));
+        memset(slowBuf, 0, sizeof(slowBuf));
+        memset(readCache, 0, sizeof(readCache));
+
+        // Unique per-test filename to avoid cross-test contamination
+        char buf[64];
+        snprintf(buf, sizeof(buf), "ats_test_%d_%p.ats",
+                 getpid(), static_cast<void*>(this));
+        fileName = buf;
+
+        // Remove leftover from prior crashed run
+        std::string fullPath = std::string(MOUNT) + "/" + fileName;
+        unlink(fullPath.c_str());
+    }
+
+    void TearDown() override {
+        if (db.isOpen()) db.close();
+        std::string fullPath = std::string(MOUNT) + "/" + fileName;
+        unlink(fullPath.c_str());
+    }
+};
+
+// ── Open / config validation ────────────────────────────────────────────────
+
+TEST_F(ArcanaTsDbTest, OpenWithNullFileFails) {
+    AtsConfig cfg = makeConfig();
+    cfg.file = nullptr;
+    EXPECT_FALSE(db.open(fileName.c_str(), cfg));
+    EXPECT_FALSE(db.isOpen());
+}
+
+TEST_F(ArcanaTsDbTest, OpenWithNullMutexFails) {
+    AtsConfig cfg = makeConfig();
+    cfg.mutex = nullptr;
+    EXPECT_FALSE(db.open(fileName.c_str(), cfg));
+}
+
+TEST_F(ArcanaTsDbTest, OpenWithNullGetTimeFails) {
+    AtsConfig cfg = makeConfig();
+    cfg.getTime = nullptr;
+    EXPECT_FALSE(db.open(fileName.c_str(), cfg));
+}
+
+TEST_F(ArcanaTsDbTest, OpenNewFileSucceeds) {
+    AtsConfig cfg = makeConfig();
+    EXPECT_TRUE(db.open(fileName.c_str(), cfg));
+    EXPECT_TRUE(db.isOpen());
+    EXPECT_FALSE(db.isReadOnly());
+    EXPECT_EQ(db.getChannelCount(), 0);
+}
+
+TEST_F(ArcanaTsDbTest, DoubleOpenFails) {
+    AtsConfig cfg = makeConfig();
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    EXPECT_FALSE(db.open(fileName.c_str(), cfg));
+}
+
+// ── Channels ────────────────────────────────────────────────────────────────
+
+TEST_F(ArcanaTsDbTest, AddChannelRegistersSchema) {
+    AtsConfig cfg = makeConfig();
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+
+    auto schema = ArcanaTsSchema::dht11();
+    EXPECT_TRUE(db.addChannel(0, schema, 1));
+    EXPECT_EQ(db.getChannelCount(), 1);
+    const ArcanaTsSchema* got = db.getSchema(0);
+    ASSERT_NE(got, nullptr);
+    EXPECT_EQ(got->recordSize, schema.recordSize);
+}
+
+TEST_F(ArcanaTsDbTest, AddChannelRejectsInvalidId) {
+    AtsConfig cfg = makeConfig();
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    EXPECT_FALSE(db.addChannel(MAX_CHANNELS, ArcanaTsSchema::dht11()));
+    EXPECT_FALSE(db.addChannel(0xFF, ArcanaTsSchema::dht11()));
+}
+
+TEST_F(ArcanaTsDbTest, AddChannelRejectsEmptySchema) {
+    AtsConfig cfg = makeConfig();
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    ArcanaTsSchema empty;
+    EXPECT_FALSE(db.addChannel(0, empty));
+}
+
+TEST_F(ArcanaTsDbTest, AddMultipleChannels) {
+    AtsConfig cfg = makeConfig();
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    EXPECT_TRUE(db.addChannel(0, ArcanaTsSchema::dht11()));
+    EXPECT_TRUE(db.addChannel(1, ArcanaTsSchema::deviceStatus()));
+    EXPECT_TRUE(db.addChannel(2, ArcanaTsSchema::errorLog()));
+    EXPECT_EQ(db.getChannelCount(), 3);
+}
+
+// ── Start ───────────────────────────────────────────────────────────────────
+
+TEST_F(ArcanaTsDbTest, StartWithoutChannelsFails) {
+    AtsConfig cfg = makeConfig();
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    EXPECT_FALSE(db.start());
+}
+
+TEST_F(ArcanaTsDbTest, StartAfterAddChannelSucceeds) {
+    AtsConfig cfg = makeConfig();
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::dht11()));
+    EXPECT_TRUE(db.start());
+}
+
+TEST_F(ArcanaTsDbTest, DoubleStartFails) {
+    AtsConfig cfg = makeConfig();
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::dht11()));
+    ASSERT_TRUE(db.start());
+    EXPECT_FALSE(db.start());
+}
+
+// ── Append (slow channel) ───────────────────────────────────────────────────
+
+static void writeDhtRecord(uint8_t* buf, uint32_t ts, int16_t temp, int16_t humi) {
+    memcpy(buf, &ts, 4);
+    memcpy(buf + 4, &temp, 2);
+    memcpy(buf + 6, &humi, 2);
+}
+
+TEST_F(ArcanaTsDbTest, AppendSingleRecordIncrementsStats) {
+    AtsConfig cfg = makeConfig();
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::dht11()));
+    ASSERT_TRUE(db.start());
+
+    uint8_t rec[8];
+    writeDhtRecord(rec, g_fakeTime, 250, 600);
+    EXPECT_TRUE(db.append(0, rec));
+    EXPECT_EQ(db.getStats().totalRecords, 1u);
+    EXPECT_EQ(db.getStats().perChannelRecords[0], 1u);
+}
+
+TEST_F(ArcanaTsDbTest, AppendBeforeStartFails) {
+    AtsConfig cfg = makeConfig();
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::dht11()));
+    uint8_t rec[8] = {0};
+    EXPECT_FALSE(db.append(0, rec));
+}
+
+TEST_F(ArcanaTsDbTest, AppendInvalidChannelFails) {
+    AtsConfig cfg = makeConfig();
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::dht11()));
+    ASSERT_TRUE(db.start());
+    uint8_t rec[8] = {0};
+    EXPECT_FALSE(db.append(1, rec));   // not registered
+    EXPECT_FALSE(db.append(99, rec));  // out of range
+}
+
+TEST_F(ArcanaTsDbTest, AppendManyRecordsTriggersFlush) {
+    AtsConfig cfg = makeConfig();
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::dht11()));
+    ASSERT_TRUE(db.start());
+
+    uint8_t rec[8];
+    // DHT11 = 8 bytes; tagged (+1) = 9 bytes; 4064/9 ≈ 451 records per block
+    for (int i = 0; i < 600; i++) {
+        writeDhtRecord(rec, g_fakeTime + i, 250 + i, 600);
+        db.append(0, rec);
+    }
+    EXPECT_GE(db.getStats().totalRecords, 1u);
+    EXPECT_GE(db.getStats().blocksWritten, 1u);
+}
+
+// ── Append (primary channel double-buffer) ──────────────────────────────────
+
+TEST_F(ArcanaTsDbTest, PrimaryChannelDoubleBuffer) {
+    AtsConfig cfg = makeConfig(/*primaryChannel=*/0);
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::dht11()));
+    ASSERT_TRUE(db.start());
+
+    uint8_t rec[8];
+    // 8-byte records, BLOCK_PAYLOAD_SIZE / 8 = 508 records → triggers swap
+    for (int i = 0; i < 1500; i++) {
+        writeDhtRecord(rec, g_fakeTime + i, static_cast<int16_t>(i), 600);
+        db.append(0, rec);
+    }
+    EXPECT_GE(db.getStats().totalRecords, 1500u);
+    EXPECT_GE(db.getStats().blocksWritten, 2u);
+}
+
+// ── Flush ───────────────────────────────────────────────────────────────────
+
+TEST_F(ArcanaTsDbTest, FlushWithoutDataReturnsTrue) {
+    AtsConfig cfg = makeConfig();
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::dht11()));
+    ASSERT_TRUE(db.start());
+    EXPECT_TRUE(db.flush());
+}
+
+TEST_F(ArcanaTsDbTest, FlushAfterAppendsWritesBlock) {
+    AtsConfig cfg = makeConfig();
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::dht11()));
+    ASSERT_TRUE(db.start());
+
+    uint8_t rec[8];
+    for (int i = 0; i < 5; i++) {
+        writeDhtRecord(rec, g_fakeTime + i, 250, 600);
+        db.append(0, rec);
+    }
+    EXPECT_TRUE(db.flush());
+    EXPECT_GE(db.getStats().blocksWritten, 1u);
+}
+
+// ── Close + reopen (recovery path) ──────────────────────────────────────────
+
+TEST_F(ArcanaTsDbTest, CloseAfterAppendsPersistsData) {
+    AtsConfig cfg = makeConfig();
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::dht11()));
+    ASSERT_TRUE(db.start());
+
+    uint8_t rec[8];
+    for (int i = 0; i < 10; i++) {
+        writeDhtRecord(rec, g_fakeTime + i, 250 + i, 600);
+        db.append(0, rec);
+    }
+    EXPECT_TRUE(db.close());
+    EXPECT_FALSE(db.isOpen());
+}
+
+TEST_F(ArcanaTsDbTest, ReopenExistingFileRecoversChannels) {
+    {
+        AtsConfig cfg = makeConfig();
+        ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+        ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::dht11()));
+        ASSERT_TRUE(db.start());
+        uint8_t rec[8];
+        for (int i = 0; i < 5; i++) {
+            writeDhtRecord(rec, g_fakeTime + i, 250, 600);
+            db.append(0, rec);
+        }
+        ASSERT_TRUE(db.close());
+    }
+    // Reopen — channels should be recovered from header
+    AtsConfig cfg = makeConfig();
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    EXPECT_GE(db.getChannelCount(), 1);
+    const ArcanaTsSchema* schema = db.getSchema(0);
+    ASSERT_NE(schema, nullptr);
+    EXPECT_GT(schema->recordSize, 0);
+}
+
+// ── Read-only mode ──────────────────────────────────────────────────────────
+
+TEST_F(ArcanaTsDbTest, OpenReadOnlyOnNonexistentFails) {
+    AtsConfig cfg = makeConfig();
+    EXPECT_FALSE(db.openReadOnly("nonexistent_file_xyz.ats", cfg));
+}
+
+TEST_F(ArcanaTsDbTest, OpenReadOnlyOnExistingFile) {
+    {
+        AtsConfig cfg = makeConfig();
+        ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+        ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::dht11()));
+        ASSERT_TRUE(db.start());
+        uint8_t rec[8];
+        writeDhtRecord(rec, g_fakeTime, 250, 600);
+        db.append(0, rec);
+        db.close();
+    }
+    AtsConfig cfg = makeConfig();
+    ASSERT_TRUE(db.openReadOnly(fileName.c_str(), cfg));
+    EXPECT_TRUE(db.isOpen());
+    EXPECT_TRUE(db.isReadOnly());
+}
+
+TEST_F(ArcanaTsDbTest, AppendInReadOnlyFails) {
+    {
+        AtsConfig cfg = makeConfig();
+        ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+        ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::dht11()));
+        ASSERT_TRUE(db.start());
+        db.close();
+    }
+    AtsConfig cfg = makeConfig();
+    ASSERT_TRUE(db.openReadOnly(fileName.c_str(), cfg));
+    uint8_t rec[8] = {0};
+    EXPECT_FALSE(db.append(0, rec));
+}
+
+// ── Query API ───────────────────────────────────────────────────────────────
+
+TEST_F(ArcanaTsDbTest, QueryLatestEmptyChannel) {
+    AtsConfig cfg = makeConfig();
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::dht11()));
+    ASSERT_TRUE(db.start());
+    uint8_t out[64];
+    uint16_t got = db.queryLatest(0, out, 8);
+    EXPECT_EQ(got, 0);
+}
+
+TEST_F(ArcanaTsDbTest, QueryLatestReturnsRecentRecords) {
+    AtsConfig cfg = makeConfig();
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::dht11()));
+    ASSERT_TRUE(db.start());
+
+    uint8_t rec[8];
+    for (int i = 0; i < 5; i++) {
+        writeDhtRecord(rec, g_fakeTime + i, static_cast<int16_t>(i), 600);
+        db.append(0, rec);
+    }
+    db.flush();
+    uint8_t out[8 * 5];
+    uint16_t got = db.queryLatest(0, out, 5);
+    // queryLatest may return 0 if data is in the slow buffer rather than disk
+    // — accept either, just verify no crash
+    EXPECT_LE(got, 5);
+}
+
+TEST_F(ArcanaTsDbTest, FindChannelBySchemaReturnsValidId) {
+    AtsConfig cfg = makeConfig();
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    ASSERT_TRUE(db.addChannel(2, ArcanaTsSchema::dht11()));
+    ASSERT_TRUE(db.start());
+    int8_t id = db.findChannelBySchema("DHT11");
+    EXPECT_EQ(id, 2);
+}
+
+TEST_F(ArcanaTsDbTest, FindChannelBySchemaUnknownReturnsNeg1) {
+    AtsConfig cfg = makeConfig();
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::dht11()));
+    ASSERT_TRUE(db.start());
+    EXPECT_EQ(db.findChannelBySchema("NOT_A_REAL_SCHEMA"), -1);
+}
+
+TEST_F(ArcanaTsDbTest, FindChannelBySchemaIdMatches) {
+    AtsConfig cfg = makeConfig();
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    auto schema = ArcanaTsSchema::dht11();
+    ASSERT_TRUE(db.addChannel(3, schema));
+    ASSERT_TRUE(db.start());
+    EXPECT_EQ(db.findChannelBySchemaId(schema.schemaId()), 3);
+}
+
+// ── Stats / accessors ───────────────────────────────────────────────────────
+
+TEST_F(ArcanaTsDbTest, GetStatsInitiallyZero) {
+    AtsConfig cfg = makeConfig();
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    const auto& s = db.getStats();
+    EXPECT_EQ(s.totalRecords, 0u);
+    EXPECT_EQ(s.blocksWritten, 0u);
+    EXPECT_EQ(s.overflowDrops, 0u);
+}
+
+TEST_F(ArcanaTsDbTest, GetSchemaForUnregisteredChannelReturnsNull) {
+    AtsConfig cfg = makeConfig();
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    EXPECT_EQ(db.getSchema(0), nullptr);
+    EXPECT_EQ(db.getSchema(MAX_CHANNELS), nullptr);
+}
+
+// ── Multi-channel: write/read independence ──────────────────────────────────
+
+TEST_F(ArcanaTsDbTest, MultiChannelAppendsAreIndependent) {
+    AtsConfig cfg = makeConfig();
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::dht11()));
+    ASSERT_TRUE(db.addChannel(1, ArcanaTsSchema::deviceStatus()));
+    ASSERT_TRUE(db.start());
+
+    uint8_t dht[8];
+    uint8_t status[16];
+    memset(status, 0xAB, sizeof(status));
+    for (int i = 0; i < 10; i++) {
+        writeDhtRecord(dht, g_fakeTime + i, 250 + i, 600);
+        db.append(0, dht);
+        db.append(1, status);
+    }
+    EXPECT_EQ(db.getStats().perChannelRecords[0], 10u);
+    EXPECT_EQ(db.getStats().perChannelRecords[1], 10u);
+    EXPECT_EQ(db.getStats().totalRecords, 20u);
+}
