@@ -190,6 +190,12 @@ TEST(SensorTypesTest, LifecycleEventVStateName) {
     EXPECT_STREQ(Variant::LifecycleEventV(Variant::LifecycleEventV::State::Deinitialized, 0).GetStateName(), "Deinitialized");
 }
 
+TEST(SensorTypesTest, LifecycleEventVStateNameFallthrough) {
+    // Out-of-range State value hits Variant::LifecycleEventV's "Unknown" fallthrough
+    Variant::LifecycleEventV v(static_cast<Variant::LifecycleEventV::State>(99), 0);
+    EXPECT_STREQ(v.GetStateName(), "Unknown");
+}
+
 // ── SensorEvent variant helpers ─────────────────────────────────────────────
 
 TEST(SensorTypesTest, GetSensorIdFromVariant) {

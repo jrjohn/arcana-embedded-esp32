@@ -28,6 +28,17 @@ TEST(ArcanaTsSchemaTest, AddFieldComputesSizeForAllTypes) {
     EXPECT_EQ(s.recordSize, 1 + 2 + 4 + 2 + 4 + 4 + 3 + 8 + 16);
 }
 
+TEST(ArcanaTsSchemaTest, AddFieldUnknownTypeReturnsZeroSize) {
+    // Cast an out-of-range value to FieldType to hit the switch's default
+    // case (returns 0) inside fieldSize(). The schema should still accept
+    // the field but contribute 0 bytes to recordSize.
+    ArcanaTsSchema s;
+    s.addField("known", FieldType::U16);
+    auto bogus = static_cast<FieldType>(0xFE);
+    s.addField("bogus", bogus);
+    EXPECT_EQ(s.recordSize, 2u);  // unchanged: bogus contributed 0
+}
+
 // ── Manual schema construction ──────────────────────────────────────────────
 
 TEST(ArcanaTsSchemaTest, EmptySchemaInitialState) {
