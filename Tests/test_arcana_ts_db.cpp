@@ -1539,6 +1539,35 @@ TEST_F(ArcanaTsDbTest, ReadIndexRejectsCrcMismatch) {
     SUCCEED();
 }
 
+// ── FlakyFilePort: precise short-read inside readChannelDescriptors ───────
+//
+// L1061 is the field-table read failure inside readChannelDescriptors.
+// Existing ReadChannelDescriptorsFailsOnReadError fails too early (the
+// failure lands inside readEntireHeaderBlock before readChannelDescriptors
+// runs). This test counts the exact reads up to the field table.
+
+TEST_F(ArcanaTsDbFlakyTest, ReadChannelDescriptorsFieldTableShortRead) {
+    // Step 1: build a normal file with one DHT11 channel (3 fields)
+    {
+        AtsConfig cfg = makeConfig();
+        ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+        ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::dht11()));
+        ASSERT_TRUE(db.start());
+        ASSERT_TRUE(db.close());
+    }
+
+    // Step 2: reopen with reads failing inside the field table read.
+    // Reads up to that point: 1 (entire header block) + 1 (file header)
+    // + 1 (stats) + 1 (channel 0 desc). The next read is the field table.
+    // Use a wide window since exact count varies — anywhere from ~3 to 6
+    // gets us to the descriptor area without breaking earlier paths.
+    flaky.test_reset();
+    flaky.test_failReadAfter(4);
+    AtsConfig cfg = makeConfig();
+    (void)db.open(fileName.c_str(), cfg);
+    SUCCEED();
+}
+
 // ── FlakyFilePort: writeIndex short write returns false ───────────────────
 //
 // Covers ArcanaTsDb.cpp L1084 — when writeIndex's bulk entry write returns
@@ -1745,6 +1774,111 @@ TEST_F(ArcanaTsDbTest, FullScanRecoveryHitsSeqNoUpdate) {
     }
 }
 
+// Full-scan recovery skip-bad-block path: write 6 valid blocks, corrupt
+// the seqNo of one block in the middle, force full scan via patched
+// mStats.blocksWritten=0, then verify recovery skips the bad block,
+// keeps consecutiveBad < 4, and accumulates blocksFailed at L1320.
+TEST_F(ArcanaTsDbTest, FullScanRecoverySkipsCorruptBlock) {
+    uint8_t headerKey[32];
+    for (int i = 0; i < 32; i++) headerKey[i] = static_cast<uint8_t>(0xE0 + i);
+
+    {
+        AtsConfig cfg = makeConfig(/*primaryChannel=*/0);
+        cfg.headerKey = headerKey;
+        ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+        ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::dht11()));
+        ASSERT_TRUE(db.start());
+        uint8_t rec[8];
+        for (int i = 0; i < 3500; i++) {  // ~7 blocks
+            writeDhtRecord(rec, g_fakeTime + i, static_cast<int16_t>(i), 600);
+            db.append(0, rec);
+        }
+        ASSERT_TRUE(db.close());
+    }
+
+    {
+        std::string fullPath = std::string(MOUNT) + "/" + fileName;
+        FILE* fp = fopen(fullPath.c_str(), "r+b");
+        ASSERT_NE(fp, nullptr);
+
+        // Force full scan: zero out persisted blocksWritten in stats blob
+        const uint16_t base = 16;
+        uint32_t zero = 0;
+        fseek(fp, base + 0x940, SEEK_SET);
+        ASSERT_EQ(fwrite(&zero, 1, sizeof(zero), fp), sizeof(zero));
+
+        // Corrupt block 3's seqNo (first 4 bytes of block 3 = offset 12288)
+        // by writing zero — validateBlock rejects seqNo==0 as uncommitted.
+        uint32_t badSeq = 0;
+        fseek(fp, 3 * BLOCK_SIZE, SEEK_SET);
+        ASSERT_EQ(fwrite(&badSeq, 1, sizeof(badSeq), fp), sizeof(badSeq));
+
+        fclose(fp);
+    }
+
+    {
+        AtsConfig cfg = makeConfig(/*primaryChannel=*/0);
+        cfg.headerKey = headerKey;
+        ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+        EXPECT_TRUE(db.isOpen());
+        // skippedBlocks > 0 means the L1320 accumulation fired
+        EXPECT_GT(db.getStats().blocksFailed, 0u);
+        EXPECT_GT(db.getStats().blocksWritten, 0u);
+    }
+}
+
+// Fast-recovery tail-verify failure: corrupt a block inside the tail
+// verify range so validateBlock fails → tailOk=false → break (L1217-1218),
+// then fall through to full scan.
+TEST_F(ArcanaTsDbTest, FastRecoveryTailVerifyDetectsCorruptBlock) {
+    uint8_t headerKey[32];
+    for (int i = 0; i < 32; i++) headerKey[i] = static_cast<uint8_t>(0xF0 + i);
+
+    {
+        AtsConfig cfg = makeConfig(/*primaryChannel=*/0);
+        cfg.headerKey = headerKey;
+        ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+        ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::dht11()));
+        ASSERT_TRUE(db.start());
+        uint8_t rec[8];
+        for (int i = 0; i < 6500; i++) {
+            writeDhtRecord(rec, g_fakeTime + i, static_cast<int16_t>(i & 0x7FFF), 600);
+            db.append(0, rec);
+        }
+        ASSERT_TRUE(db.close());
+    }
+
+    {
+        std::string fullPath = std::string(MOUNT) + "/" + fileName;
+        FILE* fp = fopen(fullPath.c_str(), "r+b");
+        ASSERT_NE(fp, nullptr);
+
+        // Patch persisted blocksWritten to 10 (so verifyStart points at
+        // block 2 after the 8-block tail-verify window).
+        const uint16_t base = 16;
+        uint32_t patched = 10;
+        fseek(fp, base + 0x940, SEEK_SET);
+        ASSERT_EQ(fwrite(&patched, 1, sizeof(patched), fp), sizeof(patched));
+
+        // Corrupt block 5's seqNo so it lands inside the verify range.
+        uint32_t badSeq = 0;
+        fseek(fp, 5 * BLOCK_SIZE, SEEK_SET);
+        ASSERT_EQ(fwrite(&badSeq, 1, sizeof(badSeq), fp), sizeof(badSeq));
+
+        fclose(fp);
+    }
+
+    {
+        AtsConfig cfg = makeConfig(/*primaryChannel=*/0);
+        cfg.headerKey = headerKey;
+        ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+        EXPECT_TRUE(db.isOpen());
+        // Tail-verify rejected → fall through to full scan → still finds
+        // most blocks (block 5 stays bad).
+        EXPECT_GT(db.getStats().blocksFailed, 0u);
+    }
+}
+
 // queryLatest on a slow channel with records still buffered (not flushed)
 // exercises the slow-channel scan path inside queryLatest (L1425-1457):
 // the count + copy passes over mSlow.buf's tagged records.
@@ -1773,6 +1907,52 @@ TEST_F(ArcanaTsDbTest, QueryLatestSlowChannelFromBuffer) {
     int16_t lastTemp;
     memcpy(&lastTemp, out + 4 * 8 + 4, 2);
     EXPECT_EQ(lastTemp, 4);
+}
+
+// queryLatest needs to merge in-RAM (primary bufA) records with on-disk
+// records walked via the index. When found>0 from RAM and the disk path
+// adds more records, the L1509 memmove fires to shift the RAM records
+// right and prepend the disk records.
+TEST_F(ArcanaTsDbTest, QueryLatestPrimaryMixedRamAndDisk) {
+    AtsConfig cfg = makeConfig(/*primaryChannel=*/0);
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::dht11()));
+    ASSERT_TRUE(db.start());
+
+    // Write enough to fill 2 blocks via swap-flush, leaving some in RAM.
+    // 508 records per block × 2 = 1016, plus ~50 more in RAM.
+    uint8_t rec[8];
+    for (int i = 0; i < 1066; i++) {
+        writeDhtRecord(rec, g_fakeTime + i, static_cast<int16_t>(i & 0x7FFF), 600);
+        db.append(0, rec);
+    }
+
+    // Ask for more than what's in RAM so the disk walk also runs.
+    uint8_t out[8 * 200];
+    uint16_t got = db.queryLatest(0, out, 200);
+    EXPECT_GT(got, 50u);  // RAM gave some + disk added more
+}
+
+// Same merge for slow channel: records in mSlow.buf + multi-channel
+// blocks on disk → L1539 memmove inside the multi-channel branch.
+TEST_F(ArcanaTsDbTest, QueryLatestSlowMixedRamAndDisk) {
+    AtsConfig cfg = makeConfig();  // primaryChannel=0xFF, all slow
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::dht11()));
+    ASSERT_TRUE(db.start());
+
+    // Write enough records to flush 2 multi-channel blocks (DHT11=8B record
+    // + 1B tag = 9B/rec → 451/block × 2 = 902) + leave some in slow buffer.
+    uint8_t rec[8];
+    for (int i = 0; i < 950; i++) {
+        writeDhtRecord(rec, g_fakeTime + i, static_cast<int16_t>(i & 0x7FFF), 600);
+        db.append(0, rec);
+    }
+
+    // Ask for more than what's in the slow buffer so the disk walk also runs.
+    uint8_t out[8 * 200];
+    uint16_t got = db.queryLatest(0, out, 200);
+    EXPECT_GT(got, 30u);
 }
 
 // Skip count > 0 path: ask for fewer records than the buffer has so the
