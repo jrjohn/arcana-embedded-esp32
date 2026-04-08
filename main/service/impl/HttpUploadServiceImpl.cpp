@@ -262,7 +262,7 @@ bool HttpUploadServiceImpl::uploadFile(const char* filename, const char* deviceI
     }
 
     if (ok) {
-        int clen = esp_http_client_fetch_headers(client);
+        esp_http_client_fetch_headers(client);
         int status = esp_http_client_get_status_code(client);
         ESP_LOGI(TAG, "%s: HTTP %d → %s (%luKB uploaded)", filename, status,
                  (status >= 200 && status < 300) ? "OK" : "FAIL",

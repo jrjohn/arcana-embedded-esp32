@@ -20,28 +20,6 @@
 
 static const char* TAG = "AppContainer";
 
-// Upload monitor task function (static, outside class)
-static void uploadMonTask(void* param) {
-    struct Ctx { Arcana::Io::IoService* io; Arcana::Upload::HttpUploadService* upload; Arcana::Mqtt::MqttTransportService* mqtt; };
-    auto* ctx = static_cast<Ctx*>(param);
-    ESP_LOGI("UploadMon", "Task started");
-    for (;;) {
-        vTaskDelay(pdMS_TO_TICKS(500));
-        if (ctx->io && ctx->io->isUploadRequested()) {
-            ctx->io->clearUploadRequest();
-            ESP_LOGI("UploadMon", "Upload — disconnecting MQTT...");
-            if (ctx->mqtt) ctx->mqtt->stop();
-            vTaskDelay(pdMS_TO_TICKS(500));
-            if (ctx->upload) {
-                uint8_t n = ctx->upload->uploadPendingFiles();
-                ESP_LOGI("UploadMon", "Upload complete: %u files", n);
-            }
-            ESP_LOGI("UploadMon", "Reconnecting MQTT...");
-            if (ctx->mqtt) ctx->mqtt->start();
-        }
-    }
-}
-
 namespace Arcana {
 
 // Static MVVM instances (same lifetime as AppContainer)
