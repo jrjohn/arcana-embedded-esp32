@@ -45,7 +45,7 @@ static void uploadMonTask(void* param) {
 namespace Arcana {
 
 // Static MVVM instances (same lifetime as AppContainer)
-static Lcd::LcdViewModel sViewModel;
+static Lcd::MainViewModel sViewModel;
 static Lcd::MainView sMainView;
 
 AppContainer& AppContainer::getInstance() {

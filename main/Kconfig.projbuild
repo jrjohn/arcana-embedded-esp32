@@ -450,3 +450,214 @@ menu "zlib Configuration"
             4 for Fixed (No Dynamic Huffman encoding, suited for simpler applications)
 
 endmenu
+
+# ── merged from components/ObservableSensor/Kconfig ─────────────────────────
+menu "Observable Sensor Configuration"
+
+    config OBSERVABLE_SENSOR_TASK_STACK_SIZE
+        int "Sensor task stack size"
+        default 4096
+        help
+            Stack size for the sensor reading task.
+
+    config OBSERVABLE_SENSOR_TASK_PRIORITY
+        int "Sensor task priority"
+        default 5
+        help
+            Priority for the sensor reading task.
+
+    config OBSERVABLE_SENSOR_DEFAULT_INTERVAL_MS
+        int "Default reading interval (ms)"
+        default 1000
+        help
+            Default interval between sensor readings in milliseconds.
+
+    menu "DHT Sensor"
+
+        choice DHT_SENSOR_TYPE
+            prompt "DHT sensor type"
+            default DHT_SENSOR_TYPE_DHT11
+            help
+                Select the DHT sensor model.
+
+            config DHT_SENSOR_TYPE_DHT11
+                bool "DHT11"
+            config DHT_SENSOR_TYPE_DHT22
+                bool "DHT22 / AM2302"
+        endchoice
+
+        config DHT_SENSOR_GPIO
+            int "DHT data GPIO pin"
+            default 15
+            range 0 39
+            help
+                GPIO pin connected to the DHT sensor data line.
+
+        config DHT_SENSOR_READ_INTERVAL_MS
+            int "DHT reading interval (ms)"
+            default 2000
+            range 1000 60000
+            help
+                Interval between DHT sensor readings.
+                DHT11 minimum is ~1s, DHT22 minimum is ~2s.
+
+    endmenu
+
+endmenu
+
+# ── merged from components/OledDisplay/Kconfig ──────────────────────────────
+menu "OLED Display Configuration"
+
+    config OLED_SCL_GPIO
+        int "I2C SCL GPIO pin"
+        default 22
+        range 0 33
+        help
+            GPIO pin for I2C SCL (clock) to SSD1306 OLED.
+
+    config OLED_SDA_GPIO
+        int "I2C SDA GPIO pin"
+        default 21
+        range 0 33
+        help
+            GPIO pin for I2C SDA (data) to SSD1306 OLED.
+
+    config OLED_I2C_ADDR
+        hex "SSD1306 I2C address"
+        default 0x3C
+        help
+            I2C address of the SSD1306 OLED display.
+            Common values: 0x3C or 0x3D.
+
+endmenu
+
+# ── merged from components/BleService/Kconfig ───────────────────────────────
+menu "BLE Service Configuration"
+
+    config BLE_DEVICE_NAME
+        string "BLE device name"
+        default "ARCANA-ESP32S3"
+        help
+            The BLE device name advertised during GAP advertising.
+
+    config BLE_SCAN_DURATION
+        int "BLE scan duration (seconds)"
+        default 30
+        range 0 300
+        help
+            Duration of BLE scanning in seconds. Set to 0 for continuous scan.
+
+    config BLE_TARGET_SERVICE_UUID
+        hex "Target BLE service UUID (16-bit)"
+        default 0x181A
+        help
+            16-bit UUID of the BLE service to scan for when acting as GATT Client.
+
+    config BLE_MAX_CONNECTIONS
+        int "Maximum BLE connections"
+        default 3
+        range 1 6
+        help
+            Maximum number of simultaneous BLE connections (server + client).
+
+    config BLE_NOTIFY_INTERVAL_MS
+        int "BLE notify interval (ms)"
+        default 1000
+        range 100 60000
+        help
+            Interval between BLE notifications to connected clients.
+
+endmenu
+
+# ── merged from components/MqttService/Kconfig ──────────────────────────────
+menu "MQTT Service Configuration"
+
+    config MQTT_SVC_CMD_TOPIC
+        string "MQTT command topic"
+        default "arcana/cmd"
+        help
+            MQTT topic for receiving commands.
+
+    config MQTT_SVC_RSP_TOPIC
+        string "MQTT response topic"
+        default "arcana/rsp"
+        help
+            MQTT topic for publishing responses.
+
+    config MQTT_SVC_USERNAME
+        string "MQTT username"
+        default ""
+        help
+            MQTT broker username. Leave empty for anonymous.
+
+    config MQTT_SVC_PASSWORD
+        string "MQTT password"
+        default ""
+        help
+            MQTT broker password.
+
+endmenu
+
+# ── merged from components/RgbLed/Kconfig ───────────────────────────────────
+menu "RGB LED Configuration"
+
+    config RGB_LED_GPIO
+        int "WS2812B data GPIO pin"
+        default 26
+        range 0 33
+        help
+            GPIO pin connected to the WS2812B data line.
+
+    config RGB_LED_NUM_LEDS
+        int "Number of LEDs"
+        default 3
+        range 1 256
+        help
+            Number of WS2812B LEDs in the strip.
+
+    config RGB_LED_CYCLE_INTERVAL_MS
+        int "Color cycle interval (ms)"
+        default 1000
+        range 100 10000
+        help
+            Interval between color changes during cycling.
+
+endmenu
+
+# ── merged from components/CommandService/Kconfig ───────────────────────────
+menu "Command Service Configuration"
+
+    config CMD_QUEUE_STACK_SIZE
+        int "Command queue task stack size"
+        default 4096
+        range 2048 8192
+        help
+            Stack size for the async command processing task.
+
+    config CMD_MQTT_CMD_TOPIC
+        string "MQTT command topic"
+        default "arcana/cmd"
+        help
+            MQTT topic to subscribe for incoming commands.
+
+    config CMD_MQTT_RSP_TOPIC
+        string "MQTT response topic"
+        default "arcana/rsp"
+        help
+            MQTT topic for publishing command responses.
+
+    config CMD_ENCRYPTION_ENABLED
+        bool "Enable command encryption (AES-256-CCM)"
+        default n
+        help
+            Enable AES-256-CCM encryption for command protocol.
+            Both BLE and MQTT channels use the same encryption.
+
+    config CMD_ENCRYPTION_PSK
+        string "Pre-shared key (64 hex chars = 256-bit)"
+        default "00112233445566778899AABBCCDDEEFF00112233445566778899AABBCCDDEEFF"
+        depends on CMD_ENCRYPTION_ENABLED
+        help
+            256-bit AES key as hex string (64 characters).
+
+endmenu

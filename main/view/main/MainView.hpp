@@ -1,6 +1,6 @@
 #pragma once
 
-#include "LcdView.hpp"
+#include "BaseLcdView.hpp"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <cstdio>
@@ -14,10 +14,10 @@ namespace Arcana::Lcd {
  *
  * Owns a FreeRTOS render task that blocks on xTaskNotifyWait.
  */
-class MainView : public LcdView {
+class MainView : public BaseLcdView {
 public:
     struct Input {
-        LcdViewModel* viewModel = nullptr;
+        MainViewModel* viewModel = nullptr;
         Ssd1306* display = nullptr;
     };
 

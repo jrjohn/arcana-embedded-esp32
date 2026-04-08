@@ -39,7 +39,7 @@ struct LcdOutput {
  * ViewModel: subscribes to Service Observables, transforms data into LcdOutput.
  * Pure state transformation — no rendering code.
  */
-class LcdViewModel {
+class MainViewModel {
 public:
     struct Input {
         Observable<Sensor::SensorData>* SensorData = nullptr;

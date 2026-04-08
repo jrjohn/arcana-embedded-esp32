@@ -8,7 +8,7 @@
 #include "CommandService.hpp"
 #include "TimerService.hpp"
 #include "LcdService.hpp"
-#include "LcdViewModel.hpp"
+#include "MainViewModel.hpp"
 #include "MainView.hpp"
 #include "DiagnosticService.hpp"
 #include "AtsStorageService.hpp"

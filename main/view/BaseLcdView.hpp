@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Ssd1306.hpp"
-#include "LcdViewModel.hpp"
+#include "MainViewModel.hpp"
 
 namespace Arcana::Lcd {
 
@@ -10,9 +10,9 @@ namespace Arcana::Lcd {
  * View only knows about LcdOutput (ViewModel output) and Ssd1306 (display driver).
  * View does NOT know about any Service or Observable.
  */
-class LcdView {
+class BaseLcdView {
 public:
-    virtual ~LcdView() = default;
+    virtual ~BaseLcdView() = default;
 
     /// Draw static layout (title, labels, grid lines)
     virtual void onEnter(Ssd1306& display) = 0;
