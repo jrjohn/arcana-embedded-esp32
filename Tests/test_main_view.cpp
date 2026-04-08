@@ -4,7 +4,7 @@
 #include <utility>
 #include <setjmp.h>
 #include "MainView.hpp"
-#include "LcdViewModel.hpp"
+#include "MainViewModel.hpp"
 #include "Ssd1306.hpp"
 
 // Test instrumentation: real Ssd1306 ctor takes (gpio_num_t, gpio_num_t, uint8_t).
@@ -160,7 +160,7 @@ TEST(MainViewTest, ToastExpiryRedrawsNormalView) {
 
 TEST(MainViewTest, StartCreatesRenderTask) {
     MainView view;
-    LcdViewModel vm;
+    MainViewModel vm;
     auto display = makeDisplay();
     view.input.viewModel = &vm;
     view.input.display = &display;
@@ -177,7 +177,7 @@ TEST(MainViewTest, RenderTaskStepReturnsFalseWithoutWiring) {
 
 TEST(MainViewTest, RenderTaskStepRendersDirtyOutput) {
     MainView view;
-    LcdViewModel vm;
+    MainViewModel vm;
     auto display = makeDisplay();
     view.input.viewModel = &vm;
     view.input.display = &display;
@@ -198,7 +198,7 @@ TEST(MainViewTest, RenderTaskStepRendersDirtyOutput) {
 
 TEST(MainViewTest, RenderTaskStepNoOpWhenNotDirty) {
     MainView view;
-    LcdViewModel vm;
+    MainViewModel vm;
     auto display = makeDisplay();
     view.input.viewModel = &vm;
     view.input.display = &display;
@@ -214,7 +214,7 @@ extern int g_test_unotify_take_calls;
 
 TEST(MainViewTest, RenderTaskFuncRunsLoopBody) {
     MainView view;
-    LcdViewModel vm;
+    MainViewModel vm;
     auto display = makeDisplay();
     view.input.viewModel = &vm;
     view.input.display = &display;

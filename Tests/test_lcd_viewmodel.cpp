@@ -1,13 +1,13 @@
 #include <gtest/gtest.h>
-#include "LcdViewModel.hpp"
+#include "MainViewModel.hpp"
 
 using namespace Arcana::Lcd;
 using namespace Arcana;
 
 // ── Initial state ───────────────────────────────────────────────────────────
 
-TEST(LcdViewModelTest, InitialOutputIsZero) {
-    LcdViewModel vm;
+TEST(MainViewModelTest, InitialOutputIsZero) {
+    MainViewModel vm;
     auto& out = vm.output();
     EXPECT_FLOAT_EQ(out.temperature, 0.0f);
     EXPECT_FLOAT_EQ(out.humidity, 0.0f);
@@ -21,9 +21,9 @@ TEST(LcdViewModelTest, InitialOutputIsZero) {
 
 // ── Sensor data subscription ────────────────────────────────────────────────
 
-TEST(LcdViewModelTest, SensorDataUpdatesViewModel) {
+TEST(MainViewModelTest, SensorDataUpdatesViewModel) {
     Observable<Sensor::SensorData> sensorObs;
-    LcdViewModel vm;
+    MainViewModel vm;
     vm.input.SensorData = &sensorObs;
     vm.init();
 
@@ -39,9 +39,9 @@ TEST(LcdViewModelTest, SensorDataUpdatesViewModel) {
 
 // ── Storage stats subscription ──────────────────────────────────────────────
 
-TEST(LcdViewModelTest, StorageStatsUpdatesViewModel) {
+TEST(MainViewModelTest, StorageStatsUpdatesViewModel) {
     Observable<Storage::StorageStats> storObs;
-    LcdViewModel vm;
+    MainViewModel vm;
     vm.input.StorageStats = &storObs;
     vm.init();
 
@@ -57,9 +57,9 @@ TEST(LcdViewModelTest, StorageStatsUpdatesViewModel) {
 
 // ── Timer tick subscription ─────────────────────────────────────────────────
 
-TEST(LcdViewModelTest, TimerTickConvertsToSeconds) {
+TEST(MainViewModelTest, TimerTickConvertsToSeconds) {
     Observable<Timer::TimerTick> timerObs;
-    LcdViewModel vm;
+    MainViewModel vm;
     vm.input.BaseTimer = &timerObs;
     vm.init();
 
@@ -73,29 +73,29 @@ TEST(LcdViewModelTest, TimerTickConvertsToSeconds) {
 
 // ── Toast ───────────────────────────────────────────────────────────────────
 
-TEST(LcdViewModelTest, ShowToastSetsMessageAndDirtyFlag) {
-    LcdViewModel vm;
+TEST(MainViewModelTest, ShowToastSetsMessageAndDirtyFlag) {
+    MainViewModel vm;
     vm.showToast("Hello", 5000);
     EXPECT_STREQ(vm.output().toastMsg, "Hello");
     EXPECT_NE(vm.output().toastExpiry, 0u);
     EXPECT_NE(vm.output().dirty & DIRTY_TOAST, 0);
 }
 
-TEST(LcdViewModelTest, ShowToastIndefiniteUsesMaxExpiry) {
-    LcdViewModel vm;
+TEST(MainViewModelTest, ShowToastIndefiniteUsesMaxExpiry) {
+    MainViewModel vm;
     vm.showToast("Forever", 0);
     EXPECT_EQ(vm.output().toastExpiry, 0xFFFFFFFFu);
 }
 
-TEST(LcdViewModelTest, ShowToastTruncatesLongMessage) {
-    LcdViewModel vm;
+TEST(MainViewModelTest, ShowToastTruncatesLongMessage) {
+    MainViewModel vm;
     const char* longMsg = "This is a really long toast message that exceeds the buffer";
     vm.showToast(longMsg, 1000);
     EXPECT_LT(strlen(vm.output().toastMsg), 22u);  // null-terminated within buffer
 }
 
-TEST(LcdViewModelTest, DismissToastClearsMessage) {
-    LcdViewModel vm;
+TEST(MainViewModelTest, DismissToastClearsMessage) {
+    MainViewModel vm;
     vm.showToast("Bye", 5000);
     vm.dismissToast();
     EXPECT_EQ(vm.output().toastMsg[0], '\0');
@@ -105,11 +105,11 @@ TEST(LcdViewModelTest, DismissToastClearsMessage) {
 
 // ── Multiple subscriptions interaction ──────────────────────────────────────
 
-TEST(LcdViewModelTest, AllInputsCombineDirtyFlags) {
+TEST(MainViewModelTest, AllInputsCombineDirtyFlags) {
     Observable<Sensor::SensorData> sensorObs;
     Observable<Storage::StorageStats> storObs;
     Observable<Timer::TimerTick> timerObs;
-    LcdViewModel vm;
+    MainViewModel vm;
     vm.input.SensorData = &sensorObs;
     vm.input.StorageStats = &storObs;
     vm.input.BaseTimer = &timerObs;
@@ -125,8 +125,8 @@ TEST(LcdViewModelTest, AllInputsCombineDirtyFlags) {
     EXPECT_NE(out.dirty & DIRTY_TIME, 0);
 }
 
-TEST(LcdViewModelTest, NoInputWiringIsSafe) {
-    LcdViewModel vm;
+TEST(MainViewModelTest, NoInputWiringIsSafe) {
+    MainViewModel vm;
     // input.SensorData/StorageStats/BaseTimer all nullptr
     vm.init();  // should not crash
     SUCCEED();
@@ -134,9 +134,9 @@ TEST(LcdViewModelTest, NoInputWiringIsSafe) {
 
 // ── notifyRender path: init() with non-null render task ───────────────────
 
-TEST(LcdViewModelTest, NotifyRenderHitsXTaskNotifyGiveWhenTaskSet) {
+TEST(MainViewModelTest, NotifyRenderHitsXTaskNotifyGiveWhenTaskSet) {
     Observable<Sensor::SensorData> sensorObs;
-    LcdViewModel vm;
+    MainViewModel vm;
     vm.input.SensorData = &sensorObs;
     // Provide a non-null fake task handle so notifyRender() reaches
     // xTaskNotifyGive (covered by esp_stubs).
@@ -150,7 +150,7 @@ TEST(LcdViewModelTest, NotifyRenderHitsXTaskNotifyGiveWhenTaskSet) {
 
 // ── DirtyFlag enum ──────────────────────────────────────────────────────────
 
-TEST(LcdViewModelTest, DirtyFlagValuesAreUnique) {
+TEST(MainViewModelTest, DirtyFlagValuesAreUnique) {
     EXPECT_EQ(int(DIRTY_SENSOR),  0x01);
     EXPECT_EQ(int(DIRTY_STORAGE), 0x02);
     EXPECT_EQ(int(DIRTY_TIME),    0x04);

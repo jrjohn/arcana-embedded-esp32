@@ -1,7 +1,7 @@
 #pragma once
 // Stub of AtsStorageServiceImpl for unit tests.
 //
-// Shadows components/AtsStorageService/include/impl/AtsStorageServiceImpl.hpp
+// Shadows main/service/impl/AtsStorageServiceImpl.hpp
 // because Tests/mocks is FIRST in the include path.
 //
 // Provides only the API surface that RegistrationServiceImpl +

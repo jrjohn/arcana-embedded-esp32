@@ -21,27 +21,68 @@ FetchContent_MakeAvailable(googletest)
 set(PROJECT_ROOT  ${CMAKE_SOURCE_DIR}/..)
 set(MOCKS_DIR     ${CMAKE_SOURCE_DIR}/mocks)
 
-set(CMD_INC       ${PROJECT_ROOT}/components/CommandService/include)
-set(CMD_SRC       ${PROJECT_ROOT}/components/CommandService/src)
-set(OBS_INC       ${PROJECT_ROOT}/components/ObservableSensor/include)
-set(ATS_INC       ${PROJECT_ROOT}/components/ArcanaTs/include)
-set(ATS_SRC       ${PROJECT_ROOT}/components/ArcanaTs/src)
-set(LOG_INC       ${PROJECT_ROOT}/components/LogService/include)
-set(BLE_INC       ${PROJECT_ROOT}/components/BleService/include)
-set(REG_INC       ${PROJECT_ROOT}/components/RegistrationService/include)
-set(REG_SRC       ${PROJECT_ROOT}/components/RegistrationService)
-set(IO_INC        ${PROJECT_ROOT}/components/IoService/include)
-set(STORAGE_INC   ${PROJECT_ROOT}/components/AtsStorageService/include)
-set(UPLOAD_INC    ${PROJECT_ROOT}/components/HttpUploadService/include)
-set(UPLOAD_SRC    ${PROJECT_ROOT}/components/HttpUploadService)
+# Post-restructure: all production code lives in main/<layer>/.
+# Tests use bare leaf #include "Foo.hpp" so each layer needs its own include path.
+set(MAIN_DIR      ${PROJECT_ROOT}/main)
+
+# command/ — interfaces, factory, dispatcher
+set(CMD_INC       ${MAIN_DIR}/command)              # ICommand.hpp, CommandFactory.hpp, etc
+set(CMD_SRC       ${MAIN_DIR}/command)              # CommandFactory.cpp, CommandDispatcher.cpp
+set(CMD_CODEC     ${MAIN_DIR}/command/codec)        # CommandCodec.{hpp,cpp}, FrameCodec.hpp, arcana_cmd.pb.{h,c}
+set(CMD_SECURITY  ${MAIN_DIR}/command/security)     # CryptoEngine.{hpp,cpp}, KeyExchangeManager.{hpp,cpp}
+
+# core/ — Observable, Log, model types
+set(CORE_EVENT    ${MAIN_DIR}/core/event)
+set(CORE_LOG      ${MAIN_DIR}/core/log)
+set(CORE_MODEL    ${MAIN_DIR}/core/model)
+
+# db/ — ArcanaTs
+set(ATS_INC       ${MAIN_DIR}/db/arcanats)          # exposes ats/ subfolder for "ats/ICipher.hpp" includes
+set(ATS_ATS       ${MAIN_DIR}/db/arcanats/ats)     # for ArcanaTsDb.hpp leaf include from .cpp
+set(ATS_SECURITY  ${MAIN_DIR}/db/arcanats/security)
+set(ATS_PORT      ${MAIN_DIR}/db/arcanats/port)
+
+# transport/
+set(BLE_INC       ${MAIN_DIR}/transport/ble)
+
+# service/
+set(SVC_DIR       ${MAIN_DIR}/service)
+set(SVC_IMPL_DIR  ${MAIN_DIR}/service/impl)
+set(REG_INC       ${SVC_DIR})
+set(REG_SRC       ${SVC_IMPL_DIR})
+set(IO_INC        ${SVC_DIR})
+set(STORAGE_INC   ${SVC_DIR})
+set(UPLOAD_INC    ${SVC_DIR})
+set(UPLOAD_SRC    ${SVC_IMPL_DIR})
+
+# view/ — BaseLcdView, MainView, MainViewModel
+set(VIEW_DIR      ${MAIN_DIR}/view)
+set(VIEW_MAIN_DIR ${MAIN_DIR}/view/main)
+
+# driver/ — Ssd1306, RgbLed, DhtSensor (consumed by view tests)
+set(DRIVER_DIR    ${MAIN_DIR}/driver)
+
 set(NANOPB_DIR    ${PROJECT_ROOT}/managed_components/nikas-belogolov__nanopb)
 
-# Common includes — mocks FIRST so they override real ESP-IDF / FreeRTOS headers
+# Common includes — mocks FIRST so they override real ESP-IDF / FreeRTOS headers.
+# Includes core layers + command + db that virtually every test transitively needs.
 set(COMMON_INCS
     ${MOCKS_DIR}
     ${CMD_INC}
-    ${OBS_INC}
+    ${CMD_CODEC}
+    ${CMD_SECURITY}
+    ${CORE_EVENT}
+    ${CORE_LOG}
+    ${CORE_MODEL}
     ${ATS_INC}
+    ${ATS_ATS}
+    ${ATS_SECURITY}
+    ${ATS_PORT}
+    ${SVC_DIR}
+    ${SVC_IMPL_DIR}
+    ${VIEW_DIR}
+    ${VIEW_MAIN_DIR}
+    ${DRIVER_DIR}
 )
 
 # Stubs library (FreeRTOS + esp_log + esp_timer)
@@ -92,7 +133,7 @@ target_link_libraries(test_ats_schema PRIVATE GTest::gtest_main)
 # ── test_vfs_file_port (POSIX file wrapper, /tmp as mount point) ─────────────
 add_executable(test_vfs_file_port
     test_vfs_file_port.cpp
-    ${ATS_SRC}/VfsFilePort.cpp
+    ${ATS_PORT}/VfsFilePort.cpp
 )
 target_include_directories(test_vfs_file_port PRIVATE ${COMMON_INCS})
 target_link_libraries(test_vfs_file_port PRIVATE GTest::gtest_main)
@@ -101,20 +142,17 @@ target_link_libraries(test_vfs_file_port PRIVATE GTest::gtest_main)
 add_executable(test_log test_log.cpp)
 target_include_directories(test_log PRIVATE
     ${COMMON_INCS}
-    ${LOG_INC}
 )
 target_link_libraries(test_log PRIVATE GTest::gtest_main esp_stubs)
 
 # ── test_arcana_ts_db (full TSDB with NullCipher + VfsFilePort + nop mutex) ─
 add_executable(test_arcana_ts_db
     test_arcana_ts_db.cpp
-    ${ATS_SRC}/ArcanaTsDb.cpp
-    ${ATS_SRC}/VfsFilePort.cpp
+    ${ATS_ATS}/ArcanaTsDb.cpp
+    ${ATS_PORT}/VfsFilePort.cpp
 )
 target_include_directories(test_arcana_ts_db PRIVATE
     ${COMMON_INCS}
-    ${ATS_INC}/ats   # ArcanaTsDb.cpp uses #include "ArcanaTsDb.hpp" without ats/ prefix
-    ${LOG_INC}       # AtsAppender.hpp + EventCodes.hpp
 )
 target_link_libraries(test_arcana_ts_db PRIVATE GTest::gtest_main esp_stubs)
 
@@ -122,7 +160,6 @@ target_link_libraries(test_arcana_ts_db PRIVATE GTest::gtest_main esp_stubs)
 add_executable(test_lcd_viewmodel test_lcd_viewmodel.cpp)
 target_include_directories(test_lcd_viewmodel PRIVATE
     ${COMMON_INCS}
-    ${PROJECT_ROOT}/components/OledDisplay/include
 )
 target_link_libraries(test_lcd_viewmodel PRIVATE GTest::gtest_main esp_stubs)
 
@@ -133,7 +170,6 @@ add_executable(test_main_view
 )
 target_include_directories(test_main_view PRIVATE
     ${COMMON_INCS}
-    ${PROJECT_ROOT}/components/OledDisplay/include
 )
 target_link_libraries(test_main_view PRIVATE GTest::gtest_main esp_stubs)
 
@@ -145,7 +181,7 @@ if(MBEDTLS_INCLUDE_DIR AND MBEDCRYPTO_LIB)
     add_executable(test_command_factory
         test_command_factory.cpp
         ${CMD_SRC}/CommandFactory.cpp
-        ${CMD_SRC}/CryptoEngine.cpp
+        ${CMD_SECURITY}/CryptoEngine.cpp
         mocks/sensor_kex_stubs.cpp
     )
     target_include_directories(test_command_factory PRIVATE
@@ -166,7 +202,7 @@ if(MBEDTLS_INCLUDE_DIR AND MBEDCRYPTO_LIB)
         test_command_dispatcher.cpp
         ${CMD_SRC}/CommandDispatcher.cpp
         ${CMD_SRC}/CommandFactory.cpp
-        ${CMD_SRC}/CryptoEngine.cpp
+        ${CMD_SECURITY}/CryptoEngine.cpp
         mocks/sensor_kex_stubs.cpp
     )
     target_include_directories(test_command_dispatcher PRIVATE
@@ -185,10 +221,10 @@ if(MBEDTLS_INCLUDE_DIR AND MBEDCRYPTO_LIB)
     if(EXISTS ${NANOPB_DIR}/pb_encode.c)
         add_executable(test_command_codec
             test_command_codec.cpp
-            ${CMD_SRC}/CommandCodec.cpp
-            ${CMD_SRC}/CryptoEngine.cpp
-            ${CMD_SRC}/KeyExchangeManager.cpp   # CommandCodec references kex symbols even in plaintext mode
-            ${CMD_SRC}/arcana_cmd.pb.c
+            ${CMD_CODEC}/CommandCodec.cpp
+            ${CMD_SECURITY}/CryptoEngine.cpp
+            ${CMD_SECURITY}/KeyExchangeManager.cpp   # CommandCodec references kex symbols even in plaintext mode
+            ${CMD_CODEC}/arcana_cmd.pb.c
             ${NANOPB_DIR}/pb_common.c
             ${NANOPB_DIR}/pb_encode.c
             ${NANOPB_DIR}/pb_decode.c
@@ -212,10 +248,10 @@ if(MBEDTLS_INCLUDE_DIR AND MBEDCRYPTO_LIB)
         # paths in CommandCodec.cpp.
         add_executable(test_command_codec_encrypted
             test_command_codec_encrypted.cpp
-            ${CMD_SRC}/CommandCodec.cpp
-            ${CMD_SRC}/CryptoEngine.cpp
-            ${CMD_SRC}/KeyExchangeManager.cpp
-            ${CMD_SRC}/arcana_cmd.pb.c
+            ${CMD_CODEC}/CommandCodec.cpp
+            ${CMD_SECURITY}/CryptoEngine.cpp
+            ${CMD_SECURITY}/KeyExchangeManager.cpp
+            ${CMD_CODEC}/arcana_cmd.pb.c
             ${NANOPB_DIR}/pb_common.c
             ${NANOPB_DIR}/pb_encode.c
             ${NANOPB_DIR}/pb_decode.c
@@ -245,8 +281,8 @@ if(MBEDTLS_INCLUDE_DIR AND MBEDCRYPTO_LIB)
     # ── test_key_exchange_manager (ECDH P-256 + HKDF + HMAC, real mbedtls) ──
     add_executable(test_key_exchange_manager
         test_key_exchange_manager.cpp
-        ${CMD_SRC}/KeyExchangeManager.cpp
-        ${CMD_SRC}/CryptoEngine.cpp
+        ${CMD_SECURITY}/KeyExchangeManager.cpp
+        ${CMD_SECURITY}/CryptoEngine.cpp
     )
     target_include_directories(test_key_exchange_manager PRIVATE
         ${COMMON_INCS}
@@ -270,10 +306,10 @@ if(MBEDTLS_INCLUDE_DIR AND MBEDCRYPTO_LIB)
         add_executable(test_kex_failure_injection
             test_kex_failure_injection.cpp
             mocks/mbedtls_wrap.cpp
-            ${CMD_SRC}/KeyExchangeManager.cpp
-            ${CMD_SRC}/CryptoEngine.cpp
-            ${CMD_SRC}/CommandCodec.cpp
-            ${CMD_SRC}/arcana_cmd.pb.c
+            ${CMD_SECURITY}/KeyExchangeManager.cpp
+            ${CMD_SECURITY}/CryptoEngine.cpp
+            ${CMD_CODEC}/CommandCodec.cpp
+            ${CMD_CODEC}/arcana_cmd.pb.c
             ${NANOPB_DIR}/pb_common.c
             ${NANOPB_DIR}/pb_encode.c
             ${NANOPB_DIR}/pb_decode.c
@@ -358,10 +394,10 @@ if(MBEDTLS_INCLUDE_DIR AND MBEDCRYPTO_LIB)
     # ── test_command_service (Meyer singleton lifecycle + request routing) ──
     add_executable(test_command_service
         test_command_service.cpp
-        ${CMD_SRC}/CommandService.cpp
+        ${SVC_IMPL_DIR}/CommandServiceImpl.cpp
         ${CMD_SRC}/CommandDispatcher.cpp
         ${CMD_SRC}/CommandFactory.cpp
-        ${CMD_SRC}/CryptoEngine.cpp
+        ${CMD_SECURITY}/CryptoEngine.cpp
         mocks/sensor_kex_stubs.cpp
     )
     target_include_directories(test_command_service PRIVATE
@@ -384,15 +420,18 @@ if(MBEDCRYPTO_LIB AND MBEDTLS_INCLUDE_DIR)
     message(STATUS "Building test_crypto_engine with mbedtls: ${MBEDCRYPTO_LIB}")
     add_executable(test_crypto_engine
         test_crypto_engine.cpp
-        ${CMD_SRC}/CryptoEngine.cpp
+        ${CMD_SECURITY}/CryptoEngine.cpp
     )
     # Use system include paths for real mbedtls (no mock override needed since
     # we removed Tests/mocks/mbedtls/)
     target_include_directories(test_crypto_engine PRIVATE
         ${MOCKS_DIR}
         ${CMD_INC}
-        ${OBS_INC}
-        ${ATS_INC}   # for Esp32AesCtrCipher.hpp
+        ${CMD_SECURITY}
+        ${CORE_EVENT}
+        ${ATS_INC}        # exposes ats/ subfolder for "ats/ICipher.hpp"
+        ${ATS_ATS}
+        ${ATS_SECURITY}   # for Esp32AesCtrCipher.hpp
     )
     if(MBEDTLS_INCLUDE_DIR)
         target_include_directories(test_crypto_engine PRIVATE ${MBEDTLS_INCLUDE_DIR})
