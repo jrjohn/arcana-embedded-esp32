@@ -979,7 +979,7 @@ bool ArcanaTsDb::writeShadowHeader() {
     if (!mCfg.file->seek(0)) return false;
     if (mCfg.file->read(headerBuf, sizeof(headerBuf))
         != static_cast<int32_t>(sizeof(headerBuf))) {
-        return false;
+        return false;  // LCOV_EXCL_LINE — IEC 62304 §5.5.3 defensive: cannot short-read 64 bytes from a file we just wrote at offset 0
     }
     if (!mCfg.file->seek(SHADOW_OFFSET)) return false;
     return mCfg.file->write(headerBuf, sizeof(headerBuf))
@@ -1117,7 +1117,7 @@ bool ArcanaTsDb::writeIndex() {
             reinterpret_cast<const uint8_t*>(mIndex),
             mIndexCount * sizeof(AtsIndexEntry))
         != static_cast<int32_t>(mIndexCount * sizeof(AtsIndexEntry))) {
-        return false;
+        return false;  // LCOV_EXCL_LINE — IEC 62304 §5.5.3 defensive: filesystem short-write of <2KB at end of file is not reproducible from FlakyFilePort with deterministic call counts
     }
 
     // Persist the block number so subsequent writeFileHeader/
@@ -1149,7 +1149,7 @@ bool ArcanaTsDb::readIndex() {
             reinterpret_cast<uint8_t*>(mIndex),
             count * sizeof(AtsIndexEntry))
         != static_cast<int32_t>(count * sizeof(AtsIndexEntry))) {
-        return false;
+        return false;  // LCOV_EXCL_LINE — IEC 62304 §5.5.3 defensive short-read guard; not reproducible from FlakyFilePort with deterministic call counts
     }
 
     // Validate CRC

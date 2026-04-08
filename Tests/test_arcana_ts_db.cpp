@@ -1747,15 +1747,29 @@ TEST_F(ArcanaTsDbTest, FullScanRecoveryHitsSeqNoUpdate) {
         ASSERT_TRUE(db.close());
     }
 
-    // Step 2: patch the persisted mStats.blocksWritten to 0. With 0, fast
-    // recovery's `if (blocksWritten > 0 && ...)` is false, and the code
-    // falls through to full scan.
+    // Step 2: patch the persisted mStats.blocksWritten to 0 AND patch
+    // hdr.lastSeqNo to 0 in the header. The blocksWritten=0 forces fast
+    // recovery off; the lastSeqNo=0 makes mNextSeqNo start at 1, so each
+    // valid block's seqNo (1, 2, 3, ...) >= mNextSeqNo, exercising the
+    // L1304 mNextSeqNo update inside the full scan loop.
     {
         std::string fullPath = std::string(MOUNT) + "/" + fileName;
         FILE* fp = fopen(fullPath.c_str(), "r+b");
         ASSERT_NE(fp, nullptr);
 
         const uint16_t base = 16;
+
+        // Patch in-header AtsFileHeader fields and recompute CRC
+        AtsFileHeader hdr;
+        fseek(fp, base, SEEK_SET);
+        ASSERT_EQ(fread(&hdr, 1, sizeof(hdr), fp), sizeof(hdr));
+        hdr.lastSeqNo = 0;
+        hdr.headerCrc32 = ~arcana::ats::crc32(
+            0xFFFFFFFF, reinterpret_cast<const uint8_t*>(&hdr), 44);
+        fseek(fp, base, SEEK_SET);
+        ASSERT_EQ(fwrite(&hdr, 1, sizeof(hdr), fp), sizeof(hdr));
+
+        // Patch the persisted stats blob
         uint32_t patchedBlocks = 0;
         fseek(fp, base + 0x940, SEEK_SET);
         ASSERT_EQ(fwrite(&patchedBlocks, 1, sizeof(patchedBlocks), fp),

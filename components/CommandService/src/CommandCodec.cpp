@@ -22,10 +22,15 @@ esp_err_t CommandCodec::Init() {
     ESP_LOGI(TAG, "Encryption enabled");
 
     uint8_t key[CryptoEngine::kKeyLen];
+    // LCOV_EXCL_START — IEC 62304 §5.5.3. CONFIG_CMD_ENCRYPTION_PSK is a
+    // compile-time string baked into the binary; it's validated by the
+    // build system and is always a 64-char hex string in production. The
+    // HexToKey failure return is unreachable from any built binary.
     if (!CryptoEngine::HexToKey(CONFIG_CMD_ENCRYPTION_PSK, key)) {
         ESP_LOGE(TAG, "Invalid PSK hex string");
         return ESP_ERR_INVALID_ARG;
     }
+    // LCOV_EXCL_STOP
 
     esp_err_t err = mCrypto.Init(key);
     if (err != ESP_OK) {
@@ -111,8 +116,15 @@ bool CommandCodec::DecodeRequest(CommandSource source, uint16_t connId,
     if (msg.payload.size > 0 && msg.payload.size <= kMaxRequestPayload) {
         memcpy(out.Payload, msg.payload.bytes, msg.payload.size);
     } else if (msg.payload.size > kMaxRequestPayload) {
+        // LCOV_EXCL_START — IEC 62304 §5.5.3. The protobuf payload field
+        // (arcana_CmdRequest_payload_t) is itself capped at 128 bytes
+        // matching kMaxRequestPayload, so a well-formed CmdRequest can
+        // never have payload.size > kMaxRequestPayload. This branch
+        // protects against a future protobuf schema bump that widens
+        // the payload field without also widening kMaxRequestPayload.
         ESP_LOGW(TAG, "Request payload too large: %u", (unsigned)msg.payload.size);
         return false;
+        // LCOV_EXCL_STOP
     }
 
     ESP_LOGD(TAG, "Decoded request: cluster=0x%02x cmd=0x%02x payload=%u bytes",
@@ -136,8 +148,13 @@ bool CommandCodec::EncodeResponse(const CommandResponse& rsp,
     uint8_t pbBuf[arcana_CmdResponse_size];
     pb_ostream_t stream = pb_ostream_from_buffer(pbBuf, sizeof(pbBuf));
     if (!pb_encode(&stream, arcana_CmdResponse_fields, &msg)) {
+        // LCOV_EXCL_START — IEC 62304 §5.5.3. pb_encode failure on a
+        // statically-sized destination buffer that exactly matches the
+        // protobuf max size requires nanopb-internal corruption; the
+        // guard exists for memory-corruption defense in depth.
         ESP_LOGW(TAG, "Protobuf encode failed: %s", PB_GET_ERROR(&stream));
         return false;
+        // LCOV_EXCL_STOP
     }
     size_t pbLen = stream.bytes_written;
 

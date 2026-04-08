@@ -129,13 +129,17 @@ TEST(FrameCodecTest, DeframeFailsOnTooShortBuffer) {
 }
 
 TEST(FrameCodecTest, DeframeFailsOnLengthMismatch) {
+    // Build a valid 12-byte frame (3-byte payload), then pass frameLen=10
+    // to Deframe — long enough to clear the kOverhead=9 early-return at
+    // L80 but short enough to fail the L120 expectedLen check.
     uint8_t payload[] = {0x11, 0x22, 0x33};
     uint8_t buf[32];
     size_t frameLen = 0;
     ASSERT_TRUE(makeFrame(payload, 3, buf, sizeof(buf), frameLen));
-    // Truncate frame to drop CRC
+    ASSERT_EQ(frameLen, 12u);  // 7 header + 3 payload + 2 crc
     const uint8_t* p = nullptr; size_t len = 0; uint8_t f = 0, s = 0;
-    EXPECT_FALSE(FrameCodec::Deframe(buf, frameLen - 5, p, len, f, s));
+    // 10 bytes: passes the kOverhead=9 check, fails the expectedLen=12 check.
+    EXPECT_FALSE(FrameCodec::Deframe(buf, 10, p, len, f, s));
 }
 
 TEST(FrameCodecTest, DeframeRejectsOversizedPayload) {

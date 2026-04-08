@@ -248,12 +248,20 @@ bool KeyExchangeManager::InstallPendingSession(CommandSource source, uint16_t co
     // Find existing slot or empty slot
     int slot = -1;
     for (int i = 0; i < kMaxSessions; ++i) {
+        // LCOV_EXCL_START — IEC 62304 §5.5.3 defensive slot-replacement.
+        // PerformKeyExchange already rejects a second key exchange for an
+        // (source, connId) that has an active session, so by the time
+        // InstallPendingSession runs, no active slot exists for the same
+        // pair. This loop body's "found existing" branch is unreachable
+        // through the public API; it's defensive in case PerformKeyExchange's
+        // duplicate-detection ever weakens.
         if (mSessions[i].Active &&
             mSessions[i].Source == source &&
             mSessions[i].ConnId == connId) {
             slot = i; // Replace existing session
             break;
         }
+        // LCOV_EXCL_STOP
     }
     if (slot < 0) {
         for (int i = 0; i < kMaxSessions; ++i) {

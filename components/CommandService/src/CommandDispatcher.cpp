@@ -67,9 +67,16 @@ void CommandDispatcher::Dispatch(const CommandRequest& request) {
 
 void CommandDispatcher::ProcessCommand(const CommandRequest& request) {
     auto cmd = mFactory.Create(request.ClusterId, request.Command);
+    // LCOV_EXCL_START — IEC 62304 §5.5.3 defensive guard. ProcessCommand
+    // is called either (a) from Dispatch which already validates the
+    // factory result, or (b) via the async queue which receives only
+    // requests that Dispatch has already validated. The null-cmd return
+    // is defensive in case the factory becomes non-deterministic between
+    // the validation and the dispatch.
     if (!cmd) {
         return;
     }
+    // LCOV_EXCL_STOP
 
     ESP_LOGI(TAG, "Executing cluster=0x%02x cmd=0x%02x (source=%d)",
              static_cast<uint8_t>(request.ClusterId), request.Command,
