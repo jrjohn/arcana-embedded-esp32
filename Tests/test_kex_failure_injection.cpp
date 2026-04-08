@@ -25,7 +25,6 @@ extern int g_fail_ecp_check_pubkey;
 extern int g_fail_ecdh_compute_shared;
 extern int g_fail_mpi_read_binary;
 extern int g_fail_mpi_write_binary;
-extern int g_fail_ctr_drbg_seed;
 extern int g_fail_ccm_setkey;
 extern int g_fail_ccm_encrypt_and_tag;
 extern int g_fail_ccm_auth_decrypt;
@@ -209,23 +208,6 @@ TEST_F(KexFailInject, MpiWriteBinaryFailureAborts) {
     g_fail_mpi_write_binary = 1;
     uint8_t serverPub[64], authTag[32];
     EXPECT_FALSE(kex.PerformKeyExchange(CommandSource::BLE, 18,
-                                          clientPub, serverPub, authTag));
-}
-
-// ── ctr_drbg_seed failure ──────────────────────────────────────────────────
-
-TEST_F(KexFailInject, CtrDrbgSeedFailureAborts) {
-    KeyExchangeManager kex;
-    uint8_t psk[CryptoEngine::kKeyLen];
-    makePsk(psk);
-    ASSERT_EQ(kex.Init(psk), ESP_OK);
-
-    uint8_t clientPub[64];
-    ASSERT_TRUE(generateClientKeypair(clientPub));
-
-    g_fail_ctr_drbg_seed = 1;
-    uint8_t serverPub[64], authTag[32];
-    EXPECT_FALSE(kex.PerformKeyExchange(CommandSource::BLE, 19,
                                           clientPub, serverPub, authTag));
 }
 

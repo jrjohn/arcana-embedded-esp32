@@ -27,7 +27,6 @@ int g_fail_ecp_check_pubkey   = 0;
 int g_fail_ecdh_compute_shared = 0;
 int g_fail_mpi_read_binary    = 0;
 int g_fail_mpi_write_binary   = 0;
-int g_fail_ctr_drbg_seed      = 0;
 int g_fail_ccm_setkey         = 0;
 int g_fail_ccm_encrypt_and_tag = 0;
 int g_fail_ccm_auth_decrypt   = 0;
@@ -49,7 +48,6 @@ void mbedtls_test_reset_failures() {
     g_fail_ecdh_compute_shared = 0;
     g_fail_mpi_read_binary    = 0;
     g_fail_mpi_write_binary   = 0;
-    g_fail_ctr_drbg_seed      = 0;
     g_fail_ccm_setkey         = 0;
     g_fail_ccm_encrypt_and_tag = 0;
     g_fail_ccm_auth_decrypt   = 0;
@@ -72,9 +70,6 @@ int __real_mbedtls_ecdh_compute_shared(mbedtls_ecp_group*, mbedtls_mpi*,
                                         int (*)(void*, unsigned char*, size_t), void*);
 int __real_mbedtls_mpi_read_binary(mbedtls_mpi*, const unsigned char*, size_t);
 int __real_mbedtls_mpi_write_binary(const mbedtls_mpi*, unsigned char*, size_t);
-int __real_mbedtls_ctr_drbg_seed(mbedtls_ctr_drbg_context*,
-                                  int (*)(void*, unsigned char*, size_t), void*,
-                                  const unsigned char*, size_t);
 int __real_mbedtls_ccm_setkey(mbedtls_ccm_context*, mbedtls_cipher_id_t,
                                const unsigned char*, unsigned int);
 int __real_mbedtls_ccm_encrypt_and_tag(mbedtls_ccm_context*, size_t,
@@ -145,14 +140,6 @@ int __wrap_mbedtls_mpi_read_binary(mbedtls_mpi* X, const unsigned char* buf, siz
 int __wrap_mbedtls_mpi_write_binary(const mbedtls_mpi* X, unsigned char* buf, size_t buflen) {
     if (g_fail_mpi_write_binary) return -0x0010;
     return __real_mbedtls_mpi_write_binary(X, buf, buflen);
-}
-
-int __wrap_mbedtls_ctr_drbg_seed(mbedtls_ctr_drbg_context* ctx,
-                                  int (*f_entropy)(void*, unsigned char*, size_t),
-                                  void* p_entropy,
-                                  const unsigned char* custom, size_t len) {
-    if (g_fail_ctr_drbg_seed) return -0x0034;
-    return __real_mbedtls_ctr_drbg_seed(ctx, f_entropy, p_entropy, custom, len);
 }
 
 int __wrap_mbedtls_ccm_setkey(mbedtls_ccm_context* ctx, mbedtls_cipher_id_t cipher,

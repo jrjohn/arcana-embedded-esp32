@@ -15,6 +15,7 @@
 #include "esp_timer.h"
 #include "esp_system.h"
 #include "esp_mac.h"
+#include "esp_random.h"
 
 // ────────────────────────────────────────────────────────────────────────────
 // Mutex stubs (use placeholder pointer; reentrant fine for single-thread tests)
@@ -171,4 +172,20 @@ extern "C" esp_err_t esp_read_mac(uint8_t* mac, esp_mac_type_t) {
 }
 extern "C" esp_err_t esp_efuse_mac_get_default(uint8_t* mac) {
     return esp_read_mac(mac, ESP_MAC_BT);
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// esp_random stubs — backed by libc rand() for reproducibility in tests.
+// Production firmware uses the ESP32 hardware TRNG; here we just need
+// non-zero bytes that won't trip mbedtls's "trivial RNG" rejection logic.
+// ────────────────────────────────────────────────────────────────────────────
+extern "C" uint32_t esp_random(void) {
+    return static_cast<uint32_t>(rand());
+}
+
+extern "C" void esp_fill_random(void* buf, size_t len) {
+    auto* p = static_cast<uint8_t*>(buf);
+    for (size_t i = 0; i < len; ++i) {
+        p[i] = static_cast<uint8_t>(rand() & 0xFF);
+    }
 }

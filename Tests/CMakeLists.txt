@@ -335,7 +335,6 @@ if(MBEDTLS_INCLUDE_DIR AND MBEDCRYPTO_LIB)
             -Wl,--wrap=mbedtls_ecdh_compute_shared
             -Wl,--wrap=mbedtls_mpi_read_binary
             -Wl,--wrap=mbedtls_mpi_write_binary
-            -Wl,--wrap=mbedtls_ctr_drbg_seed
             -Wl,--wrap=mbedtls_ccm_setkey
             -Wl,--wrap=mbedtls_ccm_encrypt_and_tag
             -Wl,--wrap=mbedtls_ccm_auth_decrypt
