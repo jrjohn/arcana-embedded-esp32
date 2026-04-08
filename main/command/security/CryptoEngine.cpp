@@ -1,6 +1,6 @@
-#include "CryptoEngine.hpp"
+#include "CryptoEngine.hpp"  // pulls in mbedtls/private/ccm.h with the right define
 #include "esp_log.h"
-#include "mbedtls/sha256.h"
+#include "mbedtls/private/sha256.h"
 #include <cstring>
 
 static const char* TAG = "CryptoEngine";

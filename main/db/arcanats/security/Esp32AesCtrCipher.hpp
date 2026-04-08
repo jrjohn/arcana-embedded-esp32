@@ -12,7 +12,12 @@
 #define ARCANA_ESP32_AES_CTR_CIPHER_HPP
 
 #include "ats/ICipher.hpp"
-#include "mbedtls/aes.h"
+
+// mbedtls 4.0 (IDF 6.0+) gates legacy mbedtls_aes_* identifiers behind this macro.
+#ifndef MBEDTLS_DECLARE_PRIVATE_IDENTIFIERS
+#define MBEDTLS_DECLARE_PRIVATE_IDENTIFIERS
+#endif
+#include "mbedtls/private/aes.h"
 #include <cstring>
 
 namespace arcana {

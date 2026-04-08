@@ -6,11 +6,18 @@
 #include "esp_mac.h"
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
+#include "EspRng.hpp"
+
+// mbedtls 4.0 (IDF 6.0+) gates legacy mbedtls_* low-level identifiers behind
+// this macro. Define BEFORE pulling in the private headers.
+// Note: mbedtls_entropy_* / mbedtls_ctr_drbg_* are GONE in 4.0; we wrap
+// esp_fill_random() via EspRng.hpp instead.
+#ifndef MBEDTLS_DECLARE_PRIVATE_IDENTIFIERS
+#define MBEDTLS_DECLARE_PRIVATE_IDENTIFIERS
+#endif
 #include "mbedtls/ecp.h"
-#include "mbedtls/ecdh.h"
+#include "mbedtls/private/ecdh.h"
 #include "mbedtls/md.h"
-#include "mbedtls/entropy.h"
-#include "mbedtls/ctr_drbg.h"
 #include <cstring>
 #include <cstdio>
 
@@ -273,18 +280,12 @@ bool RegistrationServiceImpl::httpRegister() {
              mDeviceId, CONFIG_REG_SERVER_HOST, CONFIG_REG_SERVER_PORT);
 
     // --- Generate ephemeral ECDH keypair (mbedtls ecp_keypair) ---
+    // mbedtls 4.0 removed ctr_drbg/entropy modules; use HW TRNG via EspRng.
     mbedtls_ecp_keypair kp;
-    mbedtls_entropy_context entropy;
-    mbedtls_ctr_drbg_context ctr_drbg;
-
     mbedtls_ecp_keypair_init(&kp);
-    mbedtls_entropy_init(&entropy);
-    mbedtls_ctr_drbg_init(&ctr_drbg);
-    mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy,
-                           (const uint8_t*)mDeviceId, strlen(mDeviceId));
 
     mbedtls_ecp_gen_key(MBEDTLS_ECP_DP_SECP256R1, &kp,
-                         mbedtls_ctr_drbg_random, &ctr_drbg);
+                         Crypto::EspRngCallback, nullptr);
 
     // Export public key (64 bytes: x || y)
     uint8_t devPub[64];
@@ -324,8 +325,6 @@ bool RegistrationServiceImpl::httpRegister() {
                                              Arcana::Command::FrameCodec::kFlagFin, 0x10)) {
         ESP_LOGE(TAG, "FrameCodec encode failed");
         mbedtls_ecp_keypair_free(&kp);
-        mbedtls_ctr_drbg_free(&ctr_drbg);
-        mbedtls_entropy_free(&entropy);
         return false;
     }
     // LCOV_EXCL_STOP
@@ -353,8 +352,6 @@ bool RegistrationServiceImpl::httpRegister() {
     if (err != ESP_OK || status < 200 || status >= 300) {
         ESP_LOGE(TAG, "HTTP POST failed: err=%s status=%d", esp_err_to_name(err), status);
         mbedtls_ecp_keypair_free(&kp);
-        mbedtls_ctr_drbg_free(&ctr_drbg);
-        mbedtls_entropy_free(&entropy);
         return false;
     }
 
@@ -394,8 +391,6 @@ bool RegistrationServiceImpl::httpRegister() {
     if (!found || !mCreds.valid) {
         ESP_LOGE(TAG, "Failed to parse registration response");
         mbedtls_ecp_keypair_free(&kp);
-        mbedtls_ctr_drbg_free(&ctr_drbg);
-        mbedtls_entropy_free(&entropy);
         return false;
     }
 
@@ -417,7 +412,7 @@ bool RegistrationServiceImpl::httpRegister() {
         int ret = mbedtls_ecdh_compute_shared(&kp.MBEDTLS_PRIVATE(grp),
                                                &shared, &serverQ,
                                                &kp.MBEDTLS_PRIVATE(d),
-                                               mbedtls_ctr_drbg_random, &ctr_drbg);
+                                               Crypto::EspRngCallback, nullptr);
         uint8_t sharedBuf[32];
         size_t sharedLen = mbedtls_mpi_size(&shared);
         if (ret == 0 && sharedLen <= 32) {
@@ -454,8 +449,6 @@ bool RegistrationServiceImpl::httpRegister() {
     }
 
     mbedtls_ecp_keypair_free(&kp);
-    mbedtls_ctr_drbg_free(&ctr_drbg);
-    mbedtls_entropy_free(&entropy);
 
     ESP_LOGI(TAG, "Registration successful: user=%s broker=%s:%u",
              mCreds.mqttUser, mCreds.mqttBroker, mCreds.mqttPort);

@@ -3,7 +3,13 @@
 #include <cstdint>
 #include <cstddef>
 #include "esp_err.h"
-#include "mbedtls/ccm.h"
+
+// mbedtls 4.0 (IDF 6.0+) gates the legacy mbedtls_ccm_* API behind this macro.
+// Define BEFORE the private header is pulled in.
+#ifndef MBEDTLS_DECLARE_PRIVATE_IDENTIFIERS
+#define MBEDTLS_DECLARE_PRIVATE_IDENTIFIERS
+#endif
+#include "mbedtls/private/ccm.h"
 
 namespace Arcana {
 namespace Command {

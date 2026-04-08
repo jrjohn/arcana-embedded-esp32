@@ -1,9 +1,16 @@
 #include "KeyExchangeManager.hpp"
+#include "EspRng.hpp"
 #include "esp_log.h"
+
+// mbedtls 4.0 (IDF 6.0+) gates the legacy mbedtls_* low-level crypto APIs
+// behind this macro. Define BEFORE pulling in the private headers.
+// Note: mbedtls_entropy_* / mbedtls_ctr_drbg_* are GONE in 4.0 (PSA Crypto
+// owns randomness now); we wrap esp_fill_random() via EspRng.hpp instead.
+#ifndef MBEDTLS_DECLARE_PRIVATE_IDENTIFIERS
+#define MBEDTLS_DECLARE_PRIVATE_IDENTIFIERS
+#endif
 #include "mbedtls/ecp.h"
-#include "mbedtls/ecdh.h"
-#include "mbedtls/entropy.h"
-#include "mbedtls/ctr_drbg.h"
+#include "mbedtls/private/ecdh.h"
 #include "mbedtls/md.h"
 #include <cstring>
 
@@ -110,22 +117,9 @@ bool KeyExchangeManager::PerformKeyExchange(CommandSource source, uint16_t connI
     }
     xSemaphoreGive(mMutex);
 
-    // Initialize RNG
-    mbedtls_entropy_context entropy;
-    mbedtls_ctr_drbg_context ctrDrbg;
-    mbedtls_entropy_init(&entropy);
-    mbedtls_ctr_drbg_init(&ctrDrbg);
-
-    const char* pers = "arcana_ecdh";
-    int ret = mbedtls_ctr_drbg_seed(&ctrDrbg, mbedtls_entropy_func, &entropy,
-                                     reinterpret_cast<const unsigned char*>(pers),
-                                     strlen(pers));
-    if (ret != 0) {
-        ESP_LOGE(TAG, "ctr_drbg_seed failed: -0x%04x", (unsigned)-ret);
-        mbedtls_ctr_drbg_free(&ctrDrbg);
-        mbedtls_entropy_free(&entropy);
-        return false;
-    }
+    // RNG: hardware TRNG via esp_fill_random (no need to seed CTR_DRBG —
+    // mbedtls 4.0 removed the CTR_DRBG / entropy modules in favour of PSA).
+    int ret = 0;
 
     // Setup ECP group
     mbedtls_ecp_group grp;
@@ -151,7 +145,7 @@ bool KeyExchangeManager::PerformKeyExchange(CommandSource source, uint16_t connI
 
         // Generate server keypair
         ret = mbedtls_ecp_gen_keypair(&grp, &d, &Q,
-                                       mbedtls_ctr_drbg_random, &ctrDrbg);
+                                       Crypto::EspRngCallback, nullptr);
         if (ret != 0) {
             ESP_LOGE(TAG, "ecp_gen_keypair failed: -0x%04x", (unsigned)-ret);
             break;
@@ -174,7 +168,7 @@ bool KeyExchangeManager::PerformKeyExchange(CommandSource source, uint16_t connI
 
         // Compute shared secret
         ret = mbedtls_ecdh_compute_shared(&grp, &z, &Qp, &d,
-                                           mbedtls_ctr_drbg_random, &ctrDrbg);
+                                           Crypto::EspRngCallback, nullptr);
         if (ret != 0) {
             ESP_LOGE(TAG, "ecdh_compute_shared failed: -0x%04x", (unsigned)-ret);
             break;
@@ -229,8 +223,6 @@ bool KeyExchangeManager::PerformKeyExchange(CommandSource source, uint16_t connI
     mbedtls_ecp_point_free(&Q);
     mbedtls_mpi_free(&d);
     mbedtls_ecp_group_free(&grp);
-    mbedtls_ctr_drbg_free(&ctrDrbg);
-    mbedtls_entropy_free(&entropy);
 
     return ok;
 }

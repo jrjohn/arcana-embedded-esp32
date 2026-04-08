@@ -88,12 +88,14 @@ idf_component_register(
         spi_flash
         freertos
         driver
+        esp_driver_i2c
+        esp_driver_rmt
+        esp_driver_gpio
         log
         # storage / FS
         fatfs
         sdmmc
         # network / IPC
-        mqtt
         bt
         esp_wifi
         esp_http_client
