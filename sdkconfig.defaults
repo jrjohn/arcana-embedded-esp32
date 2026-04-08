@@ -23,9 +23,11 @@ CONFIG_ESP_COEX_SW_COEXIST_ENABLE=y
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 
-# CI: Flash size override
+# CI: Flash size override. ESPTOOLPY_FLASHSIZE (the string) is auto-derived
+# from whichever ESPTOOLPY_FLASHSIZE_*MB choice is selected — don't set it
+# directly; in IDF 6.0 kconfig will warn that the user-set string is being
+# dropped.
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
-CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
 
 # FreeRTOS 1KHz tick (needed for 1ms ECG pacing)
 CONFIG_FREERTOS_HZ=1000
@@ -41,8 +43,10 @@ CONFIG_ESP_TLS_SKIP_SERVER_CERT_VERIFY=y
 CONFIG_FATFS_LFN_HEAP=y
 CONFIG_FATFS_MAX_LFN=64
 
-# TLS: reduce memory for HTTPS upload on heap-constrained ESP32
-CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
+# TLS: reduce memory for HTTPS upload on heap-constrained ESP32.
+# MBEDTLS_DYNAMIC_BUFFER was removed in IDF 6.0; MBEDTLS_SSL_VARIABLE_BUFFER_LENGTH
+# (which used to be mutually-exclusive) now serves the same purpose and is the
+# only supported way.
 CONFIG_MBEDTLS_SSL_VARIABLE_BUFFER_LENGTH=y
 CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN=4096
 CONFIG_MBEDTLS_SSL_OUT_CONTENT_LEN=4096
@@ -59,4 +63,6 @@ CONFIG_RINGBUF_PLACE_ISR_FUNCTIONS_INTO_FLASH=y
 CONFIG_ESP_WIFI_IRAM_OPT=n
 CONFIG_ESP_WIFI_RX_IRAM_OPT=n
 CONFIG_MQTT_CUSTOM_OUTBOX=n
-CONFIG_HAL_DEFAULT_ASSERTION_LEVEL=0
+# HAL_DEFAULT_ASSERTION_LEVEL is auto-derived; pick the right HAL_ASSERTION_*
+# bool to drive it. _DISABLE → level 0.
+CONFIG_HAL_ASSERTION_DISABLE=y
