@@ -32,6 +32,12 @@ int g_fail_ccm_setkey         = 0;
 int g_fail_ccm_encrypt_and_tag = 0;
 int g_fail_ccm_auth_decrypt   = 0;
 
+// Counter-based fail-after-N injection. -1 disables; otherwise the next N
+// calls succeed and call N+1 fails. Decremented on each successful call.
+int g_fail_md_hmac_finish_after_n     = -1;
+int g_fail_ccm_setkey_after_n         = -1;
+int g_fail_ccm_encrypt_and_tag_after_n = -1;
+
 void mbedtls_test_reset_failures() {
     g_fail_md_setup           = 0;
     g_fail_md_hmac_starts     = 0;
@@ -47,6 +53,9 @@ void mbedtls_test_reset_failures() {
     g_fail_ccm_setkey         = 0;
     g_fail_ccm_encrypt_and_tag = 0;
     g_fail_ccm_auth_decrypt   = 0;
+    g_fail_md_hmac_finish_after_n     = -1;
+    g_fail_ccm_setkey_after_n         = -1;
+    g_fail_ccm_encrypt_and_tag_after_n = -1;
 }
 
 // ── Real symbols (resolved by --wrap) ──────────────────────────────────────
@@ -98,6 +107,10 @@ int __wrap_mbedtls_md_hmac_update(mbedtls_md_context_t* ctx, const unsigned char
 
 int __wrap_mbedtls_md_hmac_finish(mbedtls_md_context_t* ctx, unsigned char* output) {
     if (g_fail_md_hmac_finish) return -0x5100;
+    if (g_fail_md_hmac_finish_after_n >= 0) {
+        if (g_fail_md_hmac_finish_after_n == 0) return -0x5100;
+        g_fail_md_hmac_finish_after_n--;
+    }
     return __real_mbedtls_md_hmac_finish(ctx, output);
 }
 
@@ -145,6 +158,10 @@ int __wrap_mbedtls_ctr_drbg_seed(mbedtls_ctr_drbg_context* ctx,
 int __wrap_mbedtls_ccm_setkey(mbedtls_ccm_context* ctx, mbedtls_cipher_id_t cipher,
                                const unsigned char* key, unsigned int keybits) {
     if (g_fail_ccm_setkey) return -0x000D;
+    if (g_fail_ccm_setkey_after_n >= 0) {
+        if (g_fail_ccm_setkey_after_n == 0) return -0x000D;
+        g_fail_ccm_setkey_after_n--;
+    }
     return __real_mbedtls_ccm_setkey(ctx, cipher, key, keybits);
 }
 
@@ -154,6 +171,10 @@ int __wrap_mbedtls_ccm_encrypt_and_tag(mbedtls_ccm_context* ctx, size_t length,
                                         const unsigned char* input, unsigned char* output,
                                         unsigned char* tag, size_t tag_len) {
     if (g_fail_ccm_encrypt_and_tag) return -0x000F;
+    if (g_fail_ccm_encrypt_and_tag_after_n >= 0) {
+        if (g_fail_ccm_encrypt_and_tag_after_n == 0) return -0x000F;
+        g_fail_ccm_encrypt_and_tag_after_n--;
+    }
     return __real_mbedtls_ccm_encrypt_and_tag(ctx, length, iv, iv_len, add, add_len,
                                                 input, output, tag, tag_len);
 }

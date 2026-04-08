@@ -24,6 +24,13 @@ public:
 
     Observable<CommandResponse>& ResponseEvents() { return mResponseEvents; }
 
+    // Test-only accessors. The async queue and ProcessCommand are normally
+    // private because callers use Dispatch() (which routes sync vs async),
+    // but tests need to drive the async path manually since the host
+    // FreeRTOS stub doesn't actually spawn a task.
+    EventQueue<CommandRequest, 10>& test_AsyncQueue() { return mAsyncQueue; }
+    void test_ProcessCommand(const CommandRequest& req) { ProcessCommand(req); }
+
 private:
     void ProcessCommand(const CommandRequest& request);
 

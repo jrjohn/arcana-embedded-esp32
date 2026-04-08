@@ -121,6 +121,58 @@ TEST(CommandDispatcherTest, StopWithoutStartIsSafe) {
     SUCCEED();
 }
 
+// CommandDispatcher's async path uses an EventQueue that wraps xTaskCreate.
+// On the host stub, the queue task never actually runs, so the lambda body
+// at L25-26 (which dispatches into ProcessCommand) is structurally
+// unreachable through normal Dispatch+wait. Drive ProcessCommand directly
+// via the test_ProcessCommand accessor + verify the response gets notified
+// — equivalent execution path to the async lambda body.
+TEST(CommandDispatcherTest, ProcessCommandAsyncPathDispatches) {
+    CommandFactory::Dependencies deps;
+    CommandFactory factory(deps);
+    CommandDispatcher dispatcher(factory);
+    ASSERT_EQ(dispatcher.Init(), ESP_OK);
+
+    bool received = false;
+    dispatcher.ResponseEvents().Subscribe([&](const CommandResponse&) {
+        received = true;
+    });
+
+    CommandRequest req;
+    req.ClusterId = Cluster::System;
+    req.Command = SystemCmd::Ping;
+    dispatcher.test_ProcessCommand(req);
+
+    EXPECT_TRUE(received);
+}
+
+// Drive the EventQueue lambda body (CommandDispatcher.cpp L24-26) by
+// posting via the test_AsyncQueue() accessor and pumping ProcessOneEvent.
+TEST(CommandDispatcherTest, AsyncQueueLambdaInvokesProcessCommand) {
+    CommandFactory::Dependencies deps;
+    CommandFactory factory(deps);
+    CommandDispatcher dispatcher(factory);
+    ASSERT_EQ(dispatcher.Init(), ESP_OK);
+    ASSERT_EQ(dispatcher.Start(), ESP_OK);
+
+    bool received = false;
+    dispatcher.ResponseEvents().Subscribe([&](const CommandResponse&) {
+        received = true;
+    });
+
+    CommandRequest req;
+    req.ClusterId = Cluster::System;
+    req.Command = SystemCmd::Ping;
+    ASSERT_TRUE(dispatcher.test_AsyncQueue().Post(req));
+
+    // ProcessOneEvent invokes the registered handler (the lambda from
+    // CommandDispatcher::Start), which calls ProcessCommand.
+    EXPECT_TRUE(dispatcher.test_AsyncQueue().ProcessOneEvent());
+    EXPECT_TRUE(received);
+
+    dispatcher.Stop();
+}
+
 // ── Multiple subscribers ────────────────────────────────────────────────────
 
 // ── Async queue overflow (covers L58 Post failure) ────────────────────────

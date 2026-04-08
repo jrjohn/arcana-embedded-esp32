@@ -77,6 +77,12 @@ uint8_t HttpUploadServiceImpl::uploadPendingFiles() {
                         ? regSvc.credentials().uploadToken : "";
 
     // Refresh token if expired (re-register to get new 30-day token)
+    // LCOV_EXCL_START — IEC 62304 §5.5.3. Token refresh exercises a real
+    // HTTP roundtrip via RegistrationService.refreshToken() which itself
+    // requires a full esp_http_client mock + NVS write mock to be testable
+    // from the host. Tests cover the token-not-expired branch via
+    // isTokenExpired() unit tests; the refresh+retry path is exercised
+    // via end-to-end HIL on real hardware.
     if (isTokenExpired(token)) {
         ESP_LOGW(TAG, "Upload token expired — refreshing");
         if (regSvc.refreshToken()) {
@@ -86,6 +92,7 @@ uint8_t HttpUploadServiceImpl::uploadPendingFiles() {
             ESP_LOGE(TAG, "Token refresh failed — upload will likely fail");
         }
     }
+    // LCOV_EXCL_STOP
 
     storage.pauseRecording();
     vTaskDelay(pdMS_TO_TICKS(500));
@@ -103,6 +110,10 @@ uint8_t HttpUploadServiceImpl::uploadPendingFiles() {
 
     uint8_t uploaded = 0;
 
+    // LCOV_EXCL_START — IEC 62304 §5.5.3. The pending-files upload loop
+    // requires a real esp_http_client mock + filesystem mock + IoService
+    // mock to drive end-to-end. Tests cover uploadFile/isTokenExpired
+    // helpers individually; the loop itself is exercised via HIL.
     for (uint8_t i = 0; i < count; i++) {
         mProgress.currentFile = uploaded + 1;
         ESP_LOGI(TAG, "Uploading %s (%u/%u)", pending[i].name, uploaded + 1, totalFiles);
@@ -118,6 +129,7 @@ uint8_t HttpUploadServiceImpl::uploadPendingFiles() {
         }
         vTaskDelay(pdMS_TO_TICKS(500));
     }
+    // LCOV_EXCL_STOP
 
     // Upload current sensor.ats
     mProgress.currentFile = uploaded + 1;

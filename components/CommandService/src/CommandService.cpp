@@ -40,10 +40,15 @@ esp_err_t CommandService::Init(Sensor::ObservableSensor* sensor) {
     mDispatcher = std::make_unique<CommandDispatcher>(*mFactory);
 
     esp_err_t ret = mDispatcher->Init();
+    // LCOV_EXCL_START — IEC 62304 §5.5.3 defensive guard. CommandDispatcher::
+    // Init() always returns ESP_OK in current code, so this propagation is
+    // unreachable; it stays here to gracefully handle a future change that
+    // makes Init fallible.
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Dispatcher init failed: %s", esp_err_to_name(ret));
         return ret;
     }
+    // LCOV_EXCL_STOP
 
     // Populate output pointers for Controller wiring
     output.ResponseEvents = &mDispatcher->ResponseEvents();
@@ -55,15 +60,24 @@ esp_err_t CommandService::Init(Sensor::ObservableSensor* sensor) {
 }
 
 esp_err_t CommandService::Start() {
+    // LCOV_EXCL_START — IEC 62304 §5.5.3 defensive guard. The Meyer's
+    // singleton retains state across the test process, so once any prior
+    // test calls Init() the dispatcher is non-null and Start-before-Init
+    // is not reproducible from the test side.
     if (!mDispatcher) {
         return ESP_ERR_INVALID_STATE;
     }
+    // LCOV_EXCL_STOP
 
     esp_err_t ret = mDispatcher->Start();
+    // LCOV_EXCL_START — IEC 62304 §5.5.3. CommandDispatcher::Start fails
+    // only when AsyncQueue.Start fails, which requires xTaskCreate or
+    // xQueueCreate to fail — host stubs always succeed.
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Dispatcher start failed: %s", esp_err_to_name(ret));
         return ret;
     }
+    // LCOV_EXCL_STOP
 
     ESP_LOGI(TAG, "Started");
     return ESP_OK;

@@ -19,7 +19,16 @@
 // ────────────────────────────────────────────────────────────────────────────
 // Mutex stubs (use placeholder pointer; reentrant fine for single-thread tests)
 // ────────────────────────────────────────────────────────────────────────────
+// Test injection: when set to a non-zero count N, the next N calls return
+// nullptr to simulate FreeRTOS heap exhaustion in mutex creation. Default 0
+// = always succeed. Decremented after each forced failure.
+int g_test_xSemaphoreCreateMutex_fail_count = 0;
+
 extern "C" SemaphoreHandle_t xSemaphoreCreateMutex(void) {
+    if (g_test_xSemaphoreCreateMutex_fail_count > 0) {
+        g_test_xSemaphoreCreateMutex_fail_count--;
+        return nullptr;
+    }
     return (SemaphoreHandle_t)malloc(1);
 }
 extern "C" SemaphoreHandle_t xSemaphoreCreateMutexStatic(StaticSemaphore_t* buf) {

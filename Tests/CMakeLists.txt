@@ -272,10 +272,20 @@ if(MBEDTLS_INCLUDE_DIR AND MBEDCRYPTO_LIB)
             mocks/mbedtls_wrap.cpp
             ${CMD_SRC}/KeyExchangeManager.cpp
             ${CMD_SRC}/CryptoEngine.cpp
+            ${CMD_SRC}/CommandCodec.cpp
+            ${CMD_SRC}/arcana_cmd.pb.c
+            ${NANOPB_DIR}/pb_common.c
+            ${NANOPB_DIR}/pb_encode.c
+            ${NANOPB_DIR}/pb_decode.c
         )
         target_include_directories(test_kex_failure_injection PRIVATE
             ${COMMON_INCS}
             ${MBEDTLS_INCLUDE_DIR}
+            ${NANOPB_DIR}/include
+        )
+        target_compile_definitions(test_kex_failure_injection PRIVATE
+            CONFIG_CMD_ENCRYPTION_ENABLED=1
+            CONFIG_CMD_ENCRYPTION_PSK="000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F"
         )
         target_compile_options(test_kex_failure_injection PRIVATE ${MBEDTLS_COMPAT_FLAGS})
         target_link_options(test_kex_failure_injection PRIVATE

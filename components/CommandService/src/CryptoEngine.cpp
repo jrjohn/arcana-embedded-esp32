@@ -71,10 +71,15 @@ bool CryptoEngine::Encrypt(const uint8_t* plain, size_t plainLen,
         return false;
     }
 
+    // LCOV_EXCL_START — IEC 62304 §5.5.3 defensive guard. Triggering this
+    // branch in tests would require ~4 billion successful Encrypt() calls
+    // to exhaust the 32-bit counter, which is impractical. The guard
+    // prevents CCM nonce reuse on production hardware that runs for years.
     if (mTxCounter == UINT32_MAX) {
         ESP_LOGE(TAG, "TX counter exhausted, refusing encryption (nonce reuse risk)");
         return false;
     }
+    // LCOV_EXCL_STOP
 
     uint32_t counter = mTxCounter++;
 

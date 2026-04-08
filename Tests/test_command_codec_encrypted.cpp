@@ -303,3 +303,4 @@ TEST(CommandCodecEncryptedTest, DecodeRejectsRandomGarbage) {
     CommandRequest req;
     EXPECT_FALSE(codec.DecodeRequest(CommandSource::BLE, 0, frame, outLen, req));
 }
+
