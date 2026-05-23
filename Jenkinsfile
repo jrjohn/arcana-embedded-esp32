@@ -74,11 +74,7 @@ pipeline {
                 catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
                     withSonarQubeEnv('SonarQube') {
                         script {
-                            def prArgs = env.CHANGE_ID ? """ \
-                                -Dsonar.pullrequest.key=${env.CHANGE_ID} \
-                                -Dsonar.pullrequest.branch=${env.BRANCH_NAME} \
-                                -Dsonar.pullrequest.base=${env.CHANGE_TARGET}""" : ''
-                            sh "sonar-scanner -Dsonar.projectKey=esp32-app -Dsonar.scm.disabled=true${prArgs}"
+                            sh "sonar-scanner -Dsonar.projectKey=esp32-app -Dsonar.scm.disabled=true"
                         }
                     }
                 }
