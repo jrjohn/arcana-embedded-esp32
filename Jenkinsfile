@@ -42,7 +42,15 @@ pipeline {
 
         stage("Build Firmware") {
             steps {
-                sh "docker compose -f docker-compose.ci.yml run --rm esp32-build"
+                // Jenkins is running inside a container; the host docker daemon
+                // sees a different path for our workspace. Translate container path
+                // to host path so the compose `volumes: .:/project` resolves correctly.
+                sh '''
+                    HOST_WS=$(echo "$WORKSPACE" | sed 's|^/var/jenkins_home/workspace|/data/docker/volumes/devops_jenkins_home/_data/workspace|')
+                    echo "Container WORKSPACE=$WORKSPACE"
+                    echo "Host PROJECT_PATH=$HOST_WS"
+                    PROJECT_PATH="$HOST_WS" docker compose -f docker-compose.ci.yml run --rm esp32-build
+                '''
             }
         }
 
