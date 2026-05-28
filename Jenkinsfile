@@ -47,7 +47,11 @@ pipeline {
         }
 
         stage("Pull Build Image") {
-            steps { sh "docker pull espressif/idf:v6.0" }
+            // Pre-warm the EXACT image docker-compose.ci.yml builds from (v6.0.1).
+            // Pulling the older v6.0 tag here was both wrong (compose uses v6.0.1) and a
+            // hang risk: v6.0 is uncached, so build #12 stalled ~45 min on a fresh multi-GB
+            // pull and timed out. v6.0.1 is already cached by prior builds -> fast cache hit.
+            steps { sh "docker pull espressif/idf:v6.0.1" }
         }
 
         stage("Build Firmware") {
