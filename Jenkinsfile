@@ -20,7 +20,10 @@ pipeline {
     agent any
 
     options {
-        timeout(time: 30, unit: 'MINUTES')
+        // Full clean idf.py firmware rebuild alone is ~25-29 min; the now-blocking
+        // arch-qube source scan + SonarQube quality-gate poll add a few more, so 30 min
+        // was too tight (last build was 28.6 min). Raise headroom to avoid timeout aborts.
+        timeout(time: 45, unit: 'MINUTES')
         buildDiscarder(logRotator(numToKeepStr: '10', artifactNumToKeepStr: '1'))
         disableConcurrentBuilds()
         timestamps()
