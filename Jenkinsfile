@@ -6,8 +6,15 @@
 //   * `pollSCM` trigger removed                         — multibranch + GitHub webhook drive triggers
 //   * `dir("${env.PROJECTS_DIR}/arcana-embedded-esp32")` removed — multibranch uses workspace root
 //   * `Arch Qube Metrics` gated `when { branch 'main' }` — main-only metrics push
-//   * SonarQube gets pullrequest.* params on PRs         — PR-decoration in Sonar UI
 //   * Post-build messages include branch/PR context
+//
+// Blocking CI gates (hardened 2026-05-28, mirrors arcana-android PR #11 / arcana-cloud-go):
+//   * Unit tests are blocking — Dockerfile.test runs ctest WITHOUT `|| true`, so a test
+//     failure aborts `docker compose build` and fails the Test Coverage stage.
+//   * SonarQube quality gate is POLLED via API (ce/task -> qualitygates/project_status);
+//     build fails if gate != OK. No sonar.pullrequest.* params (Community Build rejects them).
+//   * Architecture Qube uses docker create + tar | docker cp (NOT `-v $(pwd):/project`, which
+//     is empty under DinD because the Jenkins workspace is a named volume) at --threshold 90.
 
 pipeline {
     agent any
@@ -56,27 +63,53 @@ pipeline {
 
         stage("Test Coverage") {
             steps {
-                catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                    sh '''
-                        docker compose -f docker-compose.test.yml build
-                        docker compose -f docker-compose.test.yml run --name esp32-test-runner test || true
-                        rm -rf ./coverage.xml ./coverage.info
-                        docker cp esp32-test-runner:/workspace/coverage.xml ./coverage.xml 2>/dev/null || true
-                        docker cp esp32-test-runner:/workspace/coverage.info ./coverage.info 2>/dev/null || true
-                        docker rm esp32-test-runner 2>/dev/null || true
-                    '''
-                }
+                sh '''
+                    set -e
+                    # Unit tests run inside `docker compose build` (Dockerfile.test runs ctest
+                    # WITHOUT `|| true`), so a failing test aborts the image build and fails
+                    # this stage — the unit-test gate is now real (it was swallowed before).
+                    docker rm -f esp32-test-runner 2>/dev/null || true
+                    docker compose -f docker-compose.test.yml build
+                    # `run test` is a no-op echo; its only purpose is to spawn a container we
+                    # can docker cp coverage out of (DinD-safe — no host bind mount).
+                    docker compose -f docker-compose.test.yml run --name esp32-test-runner test
+                    rm -rf ./coverage.xml ./coverage.info
+                    docker cp esp32-test-runner:/workspace/coverage.xml ./coverage.xml
+                    docker cp esp32-test-runner:/workspace/coverage.info ./coverage.info
+                    docker rm -f esp32-test-runner 2>/dev/null || true
+                    ls -lh coverage.xml coverage.info
+                '''
             }
         }
 
         stage("SonarQube Analysis") {
             steps {
-                catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                    withSonarQubeEnv('SonarQube') {
-                        script {
-                            sh "sonar-scanner -Dsonar.projectKey=esp32-app -Dsonar.scm.disabled=true"
-                        }
-                    }
+                withSonarQubeEnv('SonarQube') {
+                    sh "sonar-scanner -Dsonar.projectKey=esp32-app -Dsonar.scm.disabled=true"
+                    // Poll the SonarQube quality gate via API and fail the build if it is
+                    // not OK. Community Build has no webhook waitForQualityGate(), so we read
+                    // the ceTaskId from report-task.txt, wait for analysis, then check status.
+                    sh '''
+                        set -e
+                        TOKEN="${SONAR_AUTH_TOKEN:-$SONAR_TOKEN}"
+                        RT=.scannerwork/report-task.txt
+                        [ -f "$RT" ] || { echo "report-task.txt missing"; exit 1; }
+                        CE_TASK_ID=$(grep '^ceTaskId=' "$RT" | cut -d= -f2-)
+                        ANALYSIS_ID=""
+                        for i in $(seq 1 60); do
+                            RESP=$(curl -s -u "$TOKEN:" "$SONAR_HOST_URL/api/ce/task?id=$CE_TASK_ID")
+                            ST=$(echo "$RESP" | grep -o '"status":"[A-Z_]*"' | head -1 | cut -d'"' -f4)
+                            echo "  CE status: ${ST:-?} (try $i)"
+                            if [ "$ST" = "SUCCESS" ]; then ANALYSIS_ID=$(echo "$RESP" | grep -o '"analysisId":"[^"]*"' | head -1 | cut -d'"' -f4); break;
+                            elif [ "$ST" = "FAILED" ] || [ "$ST" = "CANCELED" ]; then echo "CE $ST"; exit 1; fi
+                            sleep 5
+                        done
+                        [ -n "$ANALYSIS_ID" ] || { echo "CE timeout"; exit 1; }
+                        GATE=$(curl -s -u "$TOKEN:" "$SONAR_HOST_URL/api/qualitygates/project_status?analysisId=$ANALYSIS_ID")
+                        GST=$(echo "$GATE" | grep -o '"status":"[A-Z]*"' | head -1 | cut -d'"' -f4)
+                        echo "Quality gate: ${GST:-UNKNOWN}"
+                        if [ "$GST" != "OK" ]; then echo "$GATE"; exit 1; fi
+                    '''
                 }
             }
         }
@@ -93,19 +126,27 @@ pipeline {
 
         stage("Architecture Qube") {
             steps {
-                catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                    sh """
-                        mkdir -p arch-qube-reports
-                        docker run --rm \\
-                            --network devops_default \\
-                            -v \$(pwd):/project \\
-                            -v \$(pwd)/arch-qube-reports:/output \\
-                            arcana.boo/arcana/arch-qube:latest scan /project \\
-                            --framework esp32 --no-ai \\
-                            --ci --format json,markdown \\
-                            -o /output --threshold 90 || true
-                    """
-                }
+                // Blocking architecture gate at --threshold 90. The old `-v $(pwd):/project`
+                // bind mount is empty under DinD (the Jenkins workspace is a named volume the
+                // host daemon sees at a different path), so arch-qube scanned nothing. Instead
+                // create the container with anonymous volumes and stream the source in via
+                // `tar | docker cp`, then copy the report out. `--ci` exits non-zero if < 90.
+                sh '''
+                    docker rm -f arcana-arch-qube-esp32 2>/dev/null || true
+                    docker create --name arcana-arch-qube-esp32 --network devops_default \
+                        -v /src -v /output \
+                        arcana.boo/arcana/arch-qube:latest \
+                        scan /src --framework esp32 --no-ai --ci \
+                        --format json,markdown -o /output --threshold 90 || exit 1
+                    tar --exclude=./.git --exclude=./arch-qube-reports -C . -cf - . \
+                        | docker cp - arcana-arch-qube-esp32:/src || exit 1
+                    docker start -a arcana-arch-qube-esp32
+                    AQ_RC=$?
+                    mkdir -p arch-qube-reports
+                    docker cp arcana-arch-qube-esp32:/output/. arch-qube-reports/ 2>/dev/null || true
+                    docker rm -f arcana-arch-qube-esp32 2>/dev/null || true
+                    exit $AQ_RC
+                '''
             }
         }
 

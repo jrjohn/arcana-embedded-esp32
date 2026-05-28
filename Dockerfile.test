@@ -14,8 +14,10 @@ RUN cmake -S Tests -B Tests/build -G Ninja -DCMAKE_BUILD_TYPE=Debug
 
 RUN cmake --build Tests/build -- -j$(nproc)
 
-# Run tests (|| true: coverage still generated even if some tests fail)
-RUN cd Tests/build && ctest --output-on-failure --timeout 30 || true
+# Run tests — a failure aborts the image build, which fails the CI "Test Coverage"
+# stage. No `|| true` swallow: the unit-test gate is now real (matches arcana-android
+# PR #11 / arcana-cloud-go hardening). Coverage below is only generated when tests pass.
+RUN cd Tests/build && ctest --output-on-failure --timeout 30
 
 # Generate lcov → filter → convert to Cobertura XML
 RUN lcov --capture \
