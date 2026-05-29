@@ -46,6 +46,29 @@ pipeline {
             }
         }
 
+        stage("Cleanup Old Images") {
+            // Disk-hygiene sweep (mirrors arcana-cloud-go). esp32 firmware + test images
+            // are heavy multi-stage builds that leave dangling layers; without per-pipeline
+            // pruning these pile up on /data and have tripped the Built-In Node disk cutoff
+            // + SonarQube ES flood-stage watermark. `|| true` on purpose — cleanup must never
+            // fail the build. (esp32 has no registry build- tags, so that branch is a no-op.)
+            steps {
+                sh '''
+                    # Remove dangling/unused images to free disk space
+                    docker image prune -f || true
+                    # Keep only last 3 build-tagged images for this app (no-op unless tagged)
+                    docker images --format '{{.Repository}}:{{.Tag}}' \
+                        | grep "${APP_NAME}.*build-" \
+                        | sort -t- -k2 -rn \
+                        | tail -n +4 \
+                        | xargs -r docker rmi 2>/dev/null || true
+                    # Stop leftover test containers from prior/aborted builds
+                    docker compose -f docker-compose.test.yml down \
+                        --remove-orphans 2>/dev/null || true
+                '''
+            }
+        }
+
         stage("Pull Build Image") {
             // Pre-warm the EXACT image docker-compose.ci.yml builds from (v6.0.1).
             // Pulling the older v6.0 tag here was both wrong (compose uses v6.0.1) and a
