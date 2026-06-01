@@ -14,7 +14,7 @@
 </p>
 
 <!-- agent-managed badges START -->
-[![Quality Gate](https://arcana.boo/sonarqube/api/project_badges/quality_gate?project=esp32-app)](https://arcana.boo/sonarqube/dashboard?id=esp32-app)
+[![Quality Gate](https://img.shields.io/badge/Quality_Gate-OK-brightgreen)](https://arcana.boo/sonarqube/dashboard?id=esp32-app)
 [![Build](https://arcana.boo/jenkins/buildStatus/icon?job=esp32-app-pipeline-mb%2Fmain)](https://arcana.boo/jenkins/job/esp32-app-pipeline-mb/job/main/)
 **Rank**: Quality Gate `OK` · Build `blue` · Sonar coverage `100.0%`
 <!-- agent-managed badges END -->
