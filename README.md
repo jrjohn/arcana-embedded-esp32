@@ -3,7 +3,7 @@
   <img src="https://img.shields.io/badge/MCU-ESP32-E7352C?style=for-the-badge&logo=espressif" alt="ESP32">
   <img src="https://img.shields.io/badge/RTOS-FreeRTOS-00A86B?style=for-the-badge" alt="FreeRTOS">
   <img src="https://img.shields.io/badge/Language-C++23-00599C?style=for-the-badge&logo=cplusplus" alt="C++">
-  <img src="https://img.shields.io/badge/IDF-v6.0-blue?style=for-the-badge" alt="ESP-IDF">
+  <img src="https://img.shields.io/badge/IDF-v6.0.1-blue?style=for-the-badge" alt="ESP-IDF">
   <img src="https://img.shields.io/badge/BLE-Bluedroid_Dual--Role-0082FC?style=for-the-badge&logo=bluetooth" alt="BLE">
   <img src="https://img.shields.io/badge/Crypto-AES--256--CCM_+_ECDH-8B5CF6?style=for-the-badge" alt="Crypto">
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
