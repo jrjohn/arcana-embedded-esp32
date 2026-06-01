@@ -14,12 +14,17 @@
 </p>
 
 <!-- agent-managed badges START -->
-[![Quality Gate](https://img.shields.io/badge/Quality_Gate-OK-brightgreen)](https://arcana.boo/sonarqube/dashboard?id=esp32-app)
-[![Build](https://img.shields.io/badge/Build-building-blue)](https://arcana.boo/jenkins/job/esp32-app-pipeline-mb/job/main/)
-**Rank**: Quality Gate `OK` · Build `blue` · Sonar coverage `100.0%`
+<p align="center">
+  <a href="https://arcana.boo/sonarqube/dashboard?id=esp32-app"><img src="https://img.shields.io/badge/Quality_Gate-OK-brightgreen?style=for-the-badge" alt="Quality Gate"></a>
+  <a href="https://arcana.boo/jenkins/job/esp32-app-pipeline-mb/job/main/"><img src="https://img.shields.io/badge/Build-passing-brightgreen?style=for-the-badge" alt="Build"></a>
+</p>
 <!-- agent-managed badges END -->
 <!-- arch-rank START -->
-**Architecture**: arch-qube `100.0/100` · grade `A+` · `PASS`
+<p align="center">
+  <img src="https://img.shields.io/badge/arch--qube-100.0%2F100-blue?style=for-the-badge" alt="arch-qube">
+  <img src="https://img.shields.io/badge/Grade-A%2B-brightgreen?style=for-the-badge" alt="Grade">
+  <img src="https://img.shields.io/badge/Arch_Gate-PASS-brightgreen?style=for-the-badge" alt="Architecture Gate">
+</p>
 <!-- arch-rank END -->
 
 <h1 align="center">Arcana Embedded ESP32</h1>
