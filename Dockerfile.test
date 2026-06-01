@@ -24,7 +24,7 @@ RUN lcov --capture \
       --directory Tests/build \
       --output-file /workspace/coverage.info \
       --rc lcov_branch_coverage=0 \
-      --ignore-errors source,gcov && \
+      --ignore-errors source,gcov,inconsistent && \
     lcov --remove /workspace/coverage.info \
       '*googletest*' '/usr/*' '*/Tests/mocks/*' '*/Tests/test_*' \
       '*/managed_components/*' \
