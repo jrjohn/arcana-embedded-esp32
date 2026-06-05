@@ -3,8 +3,11 @@
 # IDF_TARGET=esp32s3. Pin assignments come from per-target Kconfig defaults
 # in main/Kconfig.projbuild (see docs/DNESP32S3-pinmap.md on the repo).
 
-# 16MB flash (N16R8). Partition table stays the shared 4MB layout.
+# 16MB flash (N16R8) with a real A/B OTA partition table (the shared 4MB
+# partitions.csv is factory-only — OtaService can't update without ota
+# slots). See partitions_esp32s3.csv.
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_esp32s3.csv"
 
 # 240MHz (S3 kconfig default is 160).
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
