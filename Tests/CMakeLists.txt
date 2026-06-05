@@ -117,6 +117,23 @@ add_executable(test_sensor_types test_sensor_types.cpp)
 target_include_directories(test_sensor_types PRIVATE ${COMMON_INCS})
 target_link_libraries(test_sensor_types PRIVATE GTest::gtest_main esp_stubs)
 
+# ── test_xl9555 (expander register-shadow logic, fake I2C) ───────────────────
+add_executable(test_xl9555
+    test_xl9555.cpp
+    ${MAIN_DIR}/esp32s3/Xl9555.cpp
+)
+target_include_directories(test_xl9555 PRIVATE ${COMMON_INCS} ${MAIN_DIR}/esp32s3)
+target_link_libraries(test_xl9555 PRIVATE GTest::gtest_main esp_stubs)
+
+# ── test_tsens_sensor (S3 internal temperature sensor backend) ───────────────
+add_executable(test_tsens_sensor
+    test_tsens_sensor.cpp
+    ${MAIN_DIR}/esp32s3/TsensSensor.cpp
+    ${CORE_EVENT}/ObservableSensor.cpp
+)
+target_include_directories(test_tsens_sensor PRIVATE ${COMMON_INCS} ${MAIN_DIR}/esp32s3)
+target_link_libraries(test_tsens_sensor PRIVATE GTest::gtest_main esp_stubs)
+
 # ── test_commands (Ping + GetDeviceInfo + GetMqttStatus) ─────────────────────
 add_executable(test_commands test_commands.cpp)
 target_include_directories(test_commands PRIVATE ${COMMON_INCS})
@@ -453,6 +470,8 @@ enable_testing()
 add_test(NAME test_frame_codec  COMMAND test_frame_codec)
 add_test(NAME test_observable   COMMAND test_observable)
 add_test(NAME test_sensor_types COMMAND test_sensor_types)
+add_test(NAME test_xl9555       COMMAND test_xl9555)
+add_test(NAME test_tsens_sensor COMMAND test_tsens_sensor)
 add_test(NAME test_commands     COMMAND test_commands)
 add_test(NAME test_chacha20     COMMAND test_chacha20)
 add_test(NAME test_ats_schema     COMMAND test_ats_schema)
