@@ -26,29 +26,29 @@ set(MOCKS_DIR     ${CMAKE_SOURCE_DIR}/mocks)
 set(MAIN_DIR      ${PROJECT_ROOT}/main)
 
 # command/ — interfaces, factory, dispatcher
-set(CMD_INC       ${MAIN_DIR}/command)              # ICommand.hpp, CommandFactory.hpp, etc
-set(CMD_SRC       ${MAIN_DIR}/command)              # CommandFactory.cpp, CommandDispatcher.cpp
-set(CMD_CODEC     ${MAIN_DIR}/command/codec)        # CommandCodec.{hpp,cpp}, FrameCodec.hpp, arcana_cmd.pb.{h,c}
-set(CMD_SECURITY  ${MAIN_DIR}/command/security)     # CryptoEngine.{hpp,cpp}, KeyExchangeManager.{hpp,cpp}
+set(CMD_INC       ${MAIN_DIR}/share/command)              # ICommand.hpp, CommandFactory.hpp, etc
+set(CMD_SRC       ${MAIN_DIR}/share/command)              # CommandFactory.cpp, CommandDispatcher.cpp
+set(CMD_CODEC     ${MAIN_DIR}/share/command/codec)        # CommandCodec.{hpp,cpp}, FrameCodec.hpp, arcana_cmd.pb.{h,c}
+set(CMD_SECURITY  ${MAIN_DIR}/share/command/security)     # CryptoEngine.{hpp,cpp}, KeyExchangeManager.{hpp,cpp}
 
 # core/ — Observable, Log, model types
-set(CORE_DIR      ${MAIN_DIR}/core)
-set(CORE_EVENT    ${MAIN_DIR}/core/event)
-set(CORE_LOG      ${MAIN_DIR}/core/log)
-set(CORE_MODEL    ${MAIN_DIR}/core/model)
+set(CORE_DIR      ${MAIN_DIR}/share/core)
+set(CORE_EVENT    ${MAIN_DIR}/share/core/event)
+set(CORE_LOG      ${MAIN_DIR}/share/core/log)
+set(CORE_MODEL    ${MAIN_DIR}/share/core/model)
 
 # db/ — ArcanaTs
-set(ATS_INC       ${MAIN_DIR}/db/arcanats)          # exposes ats/ subfolder for "ats/ICipher.hpp" includes
-set(ATS_ATS       ${MAIN_DIR}/db/arcanats/ats)     # for ArcanaTsDb.hpp leaf include from .cpp
-set(ATS_SECURITY  ${MAIN_DIR}/db/arcanats/security)
-set(ATS_PORT      ${MAIN_DIR}/db/arcanats/port)
+set(ATS_INC       ${MAIN_DIR}/share/db/arcanats)          # exposes ats/ subfolder for "ats/ICipher.hpp" includes
+set(ATS_ATS       ${MAIN_DIR}/share/db/arcanats/ats)     # for ArcanaTsDb.hpp leaf include from .cpp
+set(ATS_SECURITY  ${MAIN_DIR}/share/db/arcanats/security)
+set(ATS_PORT      ${MAIN_DIR}/share/db/arcanats/port)
 
 # transport/
-set(BLE_INC       ${MAIN_DIR}/transport/ble)
+set(BLE_INC       ${MAIN_DIR}/share/transport/ble)
 
 # service/
-set(SVC_DIR       ${MAIN_DIR}/service)
-set(SVC_IMPL_DIR  ${MAIN_DIR}/service/impl)
+set(SVC_DIR       ${MAIN_DIR}/share/service)
+set(SVC_IMPL_DIR  ${MAIN_DIR}/share/service/impl)
 set(REG_INC       ${SVC_DIR})
 set(REG_SRC       ${SVC_IMPL_DIR})
 set(IO_INC        ${SVC_DIR})
@@ -57,11 +57,11 @@ set(UPLOAD_INC    ${SVC_DIR})
 set(UPLOAD_SRC    ${SVC_IMPL_DIR})
 
 # view/ — BaseLcdView, MainView, MainViewModel
-set(VIEW_DIR      ${MAIN_DIR}/view)
-set(VIEW_MAIN_DIR ${MAIN_DIR}/view/main)
+set(VIEW_DIR      ${MAIN_DIR}/share/view)
+set(VIEW_MAIN_DIR ${MAIN_DIR}/share/view/main)
 
 # driver/ — Ssd1306, RgbLed, DhtSensor (consumed by view tests)
-set(DRIVER_DIR    ${MAIN_DIR}/driver)
+set(DRIVER_DIR    ${MAIN_DIR}/share/driver)
 
 set(NANOPB_DIR    ${PROJECT_ROOT}/managed_components/nikas-belogolov__nanopb)
 

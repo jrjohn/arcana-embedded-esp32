@@ -1,6 +1,4 @@
 #include "St7789Lcd.hpp"
-#if CONFIG_IDF_TARGET_ESP32S3
-
 #include "Xl9555.hpp"
 #include "driver/spi_common.h"
 #include "driver/gpio.h"
@@ -178,4 +176,3 @@ void St7789Lcd::Display() {
 } // namespace Lcd
 } // namespace Arcana
 
-#endif // CONFIG_IDF_TARGET_ESP32S3

@@ -1,6 +1,4 @@
 #include "Xl9555.hpp"
-#if CONFIG_IDF_TARGET_ESP32S3
-
 #include "esp_log.h"
 
 static const char* TAG = "Xl9555";
@@ -126,4 +124,3 @@ esp_err_t Xl9555::readInputs(uint16_t& value) {
 } // namespace Io
 } // namespace Arcana
 
-#endif // CONFIG_IDF_TARGET_ESP32S3

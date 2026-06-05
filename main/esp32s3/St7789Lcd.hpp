@@ -1,8 +1,6 @@
 #pragma once
 
 #include "sdkconfig.h"
-#if CONFIG_IDF_TARGET_ESP32S3
-
 #include "Ssd1306.hpp"
 #include "driver/spi_master.h"
 
@@ -52,4 +50,3 @@ private:
 } // namespace Lcd
 } // namespace Arcana
 
-#endif // CONFIG_IDF_TARGET_ESP32S3

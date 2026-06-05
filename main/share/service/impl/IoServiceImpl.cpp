@@ -1,29 +1,12 @@
 #include "impl/IoServiceImpl.hpp"
+#include "BoardConfig.hpp"
 #include "TaskPriorities.hpp"
 #include "driver/gpio.h"
 #include "esp_log.h"
 
 static const char* TAG = "IoService";
 
-#ifndef CONFIG_IO_BUTTON_A_GPIO
-#if CONFIG_IDF_TARGET_ESP32S3
-// DNESP32S3 has no spare directly-wired key (KEY0-3 sit behind the XL9555
-// I2C expander, GPIO5 is the camera's D1 line — pull-up noise there fired
-// phantom upload/cancel events). Disable button A; BOOT (IO0) is button B.
-#define CONFIG_IO_BUTTON_A_GPIO  -1
-#else
-#define CONFIG_IO_BUTTON_A_GPIO  5
-#endif
-#endif
-#ifndef CONFIG_IO_BUTTON_B_GPIO
-#if CONFIG_IDF_TARGET_ESP32S3
-// GPIO36 belongs to the octal PSRAM bus on S3 N16R8 modules — never touch.
-// The DNESP32S3 BOOT key (IO0) doubles as button B.
-#define CONFIG_IO_BUTTON_B_GPIO  0
-#else
-#define CONFIG_IO_BUTTON_B_GPIO  36
-#endif
-#endif
+// Button wiring comes from the per-target BoardConfig.hpp (esp32/, esp32s3/)
 
 // Debounce: require N consecutive same-state samples (N × 10ms = debounce time)
 static const uint8_t DEBOUNCE_COUNT = 3;   // 30ms debounce
@@ -44,18 +27,16 @@ esp_err_t IoServiceImpl::init_HAL() {
     io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
     io_conf.intr_type = GPIO_INTR_DISABLE;
 
-#if CONFIG_IO_BUTTON_A_GPIO >= 0
+#if BOARD_BUTTON_A_GPIO >= 0
     // Button A — active-LOW with internal pull-up
-    io_conf.pin_bit_mask = (1ULL << CONFIG_IO_BUTTON_A_GPIO);
+    io_conf.pin_bit_mask = (1ULL << BOARD_BUTTON_A_GPIO);
     io_conf.pull_up_en = GPIO_PULLUP_ENABLE;
     gpio_config(&io_conf);
 #endif
 
-    // Button B — active-LOW. Classic ESP32 uses GPIO36 (input-only, no
-    // internal pull-up hardware); S3 uses the BOOT key on IO0, which needs
-    // the internal pull-up to idle high.
-    io_conf.pin_bit_mask = (1ULL << CONFIG_IO_BUTTON_B_GPIO);
-#if CONFIG_IDF_TARGET_ESP32S3
+    // Button B — active-LOW; pull-up capability is a board property
+    io_conf.pin_bit_mask = (1ULL << BOARD_BUTTON_B_GPIO);
+#if BOARD_BUTTON_B_PULLUP
     io_conf.pull_up_en = GPIO_PULLUP_ENABLE;
 #else
     io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
@@ -121,7 +102,7 @@ struct ButtonState {
 };
 
 void IoServiceImpl::taskLoop() {
-#if CONFIG_IO_BUTTON_A_GPIO >= 0
+#if BOARD_BUTTON_A_GPIO >= 0
     ButtonState btnA;
 #endif
     ButtonState btnB;
@@ -129,9 +110,9 @@ void IoServiceImpl::taskLoop() {
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(POLL_MS));
 
-#if CONFIG_IO_BUTTON_A_GPIO >= 0
+#if BOARD_BUTTON_A_GPIO >= 0
         // --- Button A (active-LOW): debounced rising edge = release after press ---
-        bool aReading = (gpio_get_level((gpio_num_t)CONFIG_IO_BUTTON_A_GPIO) != 0);
+        bool aReading = (gpio_get_level((gpio_num_t)BOARD_BUTTON_A_GPIO) != 0);
         bool aChanged = btnA.update(aReading);
 
         if (aChanged && !btnA.isPressed()) {
@@ -149,7 +130,7 @@ void IoServiceImpl::taskLoop() {
 #endif
 
         // --- Button B (active-LOW): debounced hold 2s = format ---
-        bool bReading = (gpio_get_level((gpio_num_t)CONFIG_IO_BUTTON_B_GPIO) != 0);
+        bool bReading = (gpio_get_level((gpio_num_t)BOARD_BUTTON_B_GPIO) != 0);
         btnB.update(bReading);
 
         if (btnB.isPressed()) {

@@ -1,8 +1,6 @@
 #pragma once
 
 #include "sdkconfig.h"
-#if CONFIG_IDF_TARGET_ESP32S3
-
 #include "driver/i2c_master.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -74,4 +72,3 @@ private:
 } // namespace Io
 } // namespace Arcana
 
-#endif // CONFIG_IDF_TARGET_ESP32S3

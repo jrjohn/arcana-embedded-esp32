@@ -1,5 +1,5 @@
 #include "impl/LcdServiceImpl.hpp"
-#include "St7789Lcd.hpp"
+#include "BoardConfig.hpp"
 #include "esp_log.h"
 
 static const char* TAG = "LcdService";
@@ -17,17 +17,9 @@ LcdService& LcdServiceImpl::getInstance() {
 }
 
 esp_err_t LcdServiceImpl::init_HAL() {
-#if CONFIG_IDF_TARGET_ESP32S3
-    // DNESP32S3: ST7789 SPI LCD module (2.4"/1.3") instead of an SSD1306
-    static St7789Lcd display;
-#else
-    static Ssd1306 display(
-        static_cast<gpio_num_t>(CONFIG_OLED_SCL_GPIO),
-        static_cast<gpio_num_t>(CONFIG_OLED_SDA_GPIO),
-        CONFIG_OLED_I2C_ADDR
-    );
-#endif
-    mOled = &display;
+    // Board-specific panel: SSD1306 OLED (esp32 DevKit) or ST7789 SPI LCD
+    // (DNESP32S3) — resolved by the per-target Board.cpp.
+    mOled = &Board::createDisplay();
 
     esp_err_t err = mOled->Init();
     if (err != ESP_OK) {
