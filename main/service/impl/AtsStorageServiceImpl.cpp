@@ -29,6 +29,9 @@ static const char* TAG = "AtsStorage";
 #ifndef CONFIG_ATS_SD_CS_GPIO
 #define CONFIG_ATS_SD_CS_GPIO    27
 #endif
+#ifndef CONFIG_ATS_SD_MAX_FREQ_KHZ
+#define CONFIG_ATS_SD_MAX_FREQ_KHZ 4000
+#endif
 
 static const char* MOUNT_POINT = "/sdcard";
 
@@ -106,16 +109,28 @@ esp_err_t AtsStorageServiceImpl::init_HAL() {
     mount_cfg.allocation_unit_size = 16 * 1024;
 
     sdmmc_host_t host = SDSPI_HOST_DEFAULT();
-    host.max_freq_khz = 4000;  // 4 MHz — safe for long wires + level shifter
+    // Per-board ceiling: 4 MHz for long wires + level shifter (ESP32 DevKit),
+    // 20 MHz for short direct traces (DNESP32S3 TF slot). See Kconfig.
+    host.max_freq_khz = CONFIG_ATS_SD_MAX_FREQ_KHZ;
     sdspi_device_config_t slot_cfg = SDSPI_DEVICE_CONFIG_DEFAULT();
     slot_cfg.gpio_cs = (gpio_num_t)CONFIG_ATS_SD_CS_GPIO;
     slot_cfg.host_id = SPI2_HOST;
 
+    // Mount with retries: a card whose multi-block write was cut off by a
+    // reset (the ESP resets, the card keeps power) can still be busy
+    // finishing internally and answers init with garbage (CRC/timeout) for
+    // a while. Give it a few seconds before giving up.
     sdmmc_card_t* card = nullptr;
-    ret = esp_vfs_fat_sdspi_mount(MOUNT_POINT, &host, &slot_cfg, &mount_cfg, &card);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "SD card mount failed: %s", esp_err_to_name(ret));
-        return ret;
+    for (int attempt = 1; ; attempt++) {
+        ret = esp_vfs_fat_sdspi_mount(MOUNT_POINT, &host, &slot_cfg, &mount_cfg, &card);
+        if (ret == ESP_OK) break;
+        if (attempt >= 3) {
+            ESP_LOGE(TAG, "SD card mount failed: %s", esp_err_to_name(ret));
+            return ret;
+        }
+        ESP_LOGW(TAG, "SD mount attempt %d failed (%s) — retrying...",
+                 attempt, esp_err_to_name(ret));
+        vTaskDelay(pdMS_TO_TICKS(2000));
     }
 
     ESP_LOGI(TAG, "SD card mounted at %s (%s, %lluMB)",

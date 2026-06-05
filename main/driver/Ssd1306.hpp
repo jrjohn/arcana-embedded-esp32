@@ -38,6 +38,7 @@ private:
     uint8_t mBuffer[kBufSize] = {};
     uint8_t mCursorCol  = 0;
     uint8_t mCursorPage = 0;
+    bool mReady = false;  // set after a successful Init(); gates I2C traffic
 };
 
 } // namespace Lcd

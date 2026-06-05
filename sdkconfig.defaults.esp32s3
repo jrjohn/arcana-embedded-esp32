@@ -1,0 +1,35 @@
+# ESP32-S3 target overlay — ALIENTEK DNESP32S3 (ESP32-S3-WROOM-1 N16R8).
+# Auto-appended by the IDF build system after sdkconfig.defaults when
+# IDF_TARGET=esp32s3. Pin assignments come from per-target Kconfig defaults
+# in main/Kconfig.projbuild (see docs/DNESP32S3-pinmap.md on the repo).
+
+# 16MB flash (N16R8). Partition table stays the shared 4MB layout.
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+
+# 240MHz (S3 kconfig default is 160).
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+
+# Keep BT allocations in internal RAM. The base defaults push BT heap into
+# PSRAM (fine on heap-starved classic ESP32); on S3 a BT ISR touching PSRAM
+# while an NVS/flash write has the cache disabled panics, and the panic
+# handler itself hangs in panic_enable_cache -> TG1WDT reset boot loop
+# (observed on DNESP32S3 bring-up, 2026-06-05). S3 has RAM to spare.
+CONFIG_BT_ALLOCATION_FROM_SPIRAM_FIRST=n
+CONFIG_BT_BLE_DYNAMIC_ENV_MEMORY=n
+
+# Undo the classic-ESP32 IRAM-overflow workarounds from sdkconfig.defaults.
+# Putting ringbuf/WiFi ISR code in flash means any ISR that fires while a
+# flash write has the cache disabled hits "cache disabled but cached memory
+# region accessed" — and on S3 the panic handler then hangs in
+# panic_enable_cache (TG1WDT boot loop, no panic output). S3 has IRAM to
+# spare; keep ISR paths in IRAM.
+CONFIG_RINGBUF_PLACE_ISR_FUNCTIONS_INTO_FLASH=n
+CONFIG_ESP_WIFI_IRAM_OPT=y
+CONFIG_ESP_WIFI_RX_IRAM_OPT=y
+
+# 8MB Octal PSRAM @ 80MHz (AP gen3) — malloc can spill into PSRAM.
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384
+CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=49152

@@ -176,6 +176,7 @@ esp_err_t Ssd1306::Init() {
         return err;
     }
 
+    mReady = true;
     Clear();
     Display();
 
@@ -218,6 +219,10 @@ void Ssd1306::DrawStringAt(uint8_t col, uint8_t page, const char* str) {
 }
 
 void Ssd1306::Display() {
+    // No panel detected (boards without an SSD1306) — keep the framebuffer
+    // usable but skip all I2C traffic so views degrade silently.
+    if (!mReady) return;
+
     // Set column address range 0-127
     uint8_t colCmd[] = {0x00, 0x21, 0x00, 0x7F};
     i2c_master_transmit(mDevHandle, colCmd, sizeof(colCmd), 100);

@@ -104,15 +104,23 @@ struct SensorData : public IModel {
  */
 struct SensorError : public IModel {
     int32_t ErrorCode;          ///< Error code
-    std::string Message;        ///< Error description
+    /// Error description. Fixed buffer on purpose: Observable::Notify()
+    /// enqueues events with xQueueSend (bitwise copy), so event models must
+    /// not own heap memory — a std::string here gets shallow-copied into the
+    /// queue and its buffer double-freed (tlsf assert, found on DNESP32S3
+    /// bring-up where the missing DHT exercised this path every read).
+    char Message[32];
     uint32_t TimestampMs;       ///< Error timestamp
     uint8_t SensorId;           ///< Sensor that caused error
 
     SensorError()
-        : ErrorCode(0), TimestampMs(0), SensorId(0) {}
+        : ErrorCode(0), TimestampMs(0), SensorId(0) { Message[0] = '\0'; }
 
-    SensorError(int32_t Code, const std::string& Msg, uint8_t Id = 0)
-        : ErrorCode(Code), Message(Msg), TimestampMs(0), SensorId(Id) {}
+    SensorError(int32_t Code, const char* Msg, uint8_t Id = 0)
+        : ErrorCode(Code), TimestampMs(0), SensorId(Id) {
+        strncpy(Message, Msg ? Msg : "", sizeof(Message) - 1);
+        Message[sizeof(Message) - 1] = '\0';
+    }
 
     // IModel interface
     ModelType GetType() const override { return ModelType::SensorError; }
@@ -298,7 +306,7 @@ struct SensorErrorV {
     // Convert from IModel-based SensorError
     explicit SensorErrorV(const SensorError& E)
         : ErrorCode(E.ErrorCode), TimestampMs(E.TimestampMs), SensorId(E.SensorId) {
-        strncpy(Message, E.Message.c_str(), sizeof(Message) - 1);
+        strncpy(Message, E.Message, sizeof(Message) - 1);
         Message[sizeof(Message) - 1] = '\0';
     }
 };

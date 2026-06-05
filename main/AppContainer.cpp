@@ -11,14 +11,55 @@
 #include "impl/DiagnosticServiceImpl.hpp"
 #include "impl/CommandBridgeServiceImpl.hpp"
 #include "impl/AtsStorageServiceImpl.hpp"
+#include "impl/SdBenchmarkServiceImpl.hpp"
 #include "impl/IoServiceImpl.hpp"
 #include "impl/OtaServiceImpl.hpp"
 #include "impl/RegistrationServiceImpl.hpp"
 #include "impl/HttpUploadServiceImpl.hpp"
 #include "impl/WifiServiceImpl.hpp"
 #include "esp_log.h"
+#if CONFIG_IDF_TARGET_ESP32S3
+#include "driver/i2c_master.h"
+#endif
 
 static const char* TAG = "AppContainer";
+
+#if CONFIG_IDF_TARGET_ESP32S3
+// DNESP32S3: the XL9555 IO expander's open-drain INT line latches low after
+// power-up until its input registers are read. With a P5 jumper bridging
+// IIC_INT onto SPI_MISO (IO13), a latched INT holds MISO down and every SD
+// transaction fails CRC. Read (and discard) both input ports once at boot to
+// release INT. Uses a scoped I2C bus — created and deleted before any other
+// I2C0 user initializes.
+static void releaseXl9555Int() {
+    i2c_master_bus_config_t bus_cfg = {};
+    bus_cfg.clk_source = I2C_CLK_SRC_DEFAULT;
+    bus_cfg.i2c_port = I2C_NUM_0;
+    bus_cfg.scl_io_num = GPIO_NUM_42;
+    bus_cfg.sda_io_num = GPIO_NUM_41;
+    bus_cfg.glitch_ignore_cnt = 7;
+    bus_cfg.flags.enable_internal_pullup = true;
+
+    i2c_master_bus_handle_t bus = nullptr;
+    if (i2c_new_master_bus(&bus_cfg, &bus) != ESP_OK) return;
+
+    i2c_device_config_t dev_cfg = {};
+    dev_cfg.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+    dev_cfg.device_address = 0x20;  // XL9555, A0-A2 strapped to GND
+    dev_cfg.scl_speed_hz = 100000;
+
+    i2c_master_dev_handle_t dev = nullptr;
+    if (i2c_master_bus_add_device(bus, &dev_cfg, &dev) == ESP_OK) {
+        uint8_t reg = 0x00;          // input port 0 (auto-increments to port 1)
+        uint8_t in[2] = {};
+        esp_err_t err = i2c_master_transmit_receive(dev, &reg, 1, in, 2, 100);
+        ESP_LOGI(TAG, "XL9555 INT release: %s (in0=0x%02x in1=0x%02x)",
+                 esp_err_to_name(err), in[0], in[1]);
+        i2c_master_bus_rm_device(dev);
+    }
+    i2c_del_master_bus(bus);
+}
+#endif
 
 namespace Arcana {
 
@@ -48,6 +89,30 @@ void AppContainer::run() {
     initHAL();
     wireViews();   // after initHAL — display hardware must exist before wiring
     initServices();
+
+#if CONFIG_ATS_SD_BENCHMARK_ON_BOOT
+    // Diagnostics: one-shot sequential-write benchmark. Runs here — card
+    // mounted (initHAL) but the ATS writer task not yet started — so the
+    // benchmark has exclusive card access; concurrent ECG writes both skew
+    // the number and can fail the benchmark's fwrite mid-run.
+    if (mStorage) {
+        ESP_LOGI(TAG, "SD benchmark: %d ms sequential write...",
+                 CONFIG_ATS_SD_BENCHMARK_DURATION_MS);
+        auto bench = SdBench::SdBenchmarkServiceImpl::getInstance()
+                         .runBenchmark(CONFIG_ATS_SD_BENCHMARK_DURATION_MS);
+        if (!bench.error) {
+            ESP_LOGI(TAG, "SD benchmark: %lu.%lu KB/s, %lu KB total, %lu blocks/s",
+                     (unsigned long)(bench.speedKBps10 / 10),
+                     (unsigned long)(bench.speedKBps10 % 10),
+                     (unsigned long)bench.totalKB,
+                     (unsigned long)bench.recordsPerSec);
+        } else {
+            ESP_LOGE(TAG, "SD benchmark failed");
+        }
+    } else {
+        ESP_LOGW(TAG, "SD benchmark skipped — storage unavailable");
+    }
+#endif
 
     // Wi-Fi connect with retry (don't crash on temporary AP failure)
     for (int attempt = 1; attempt <= 5; attempt++) {
@@ -239,12 +304,20 @@ void AppContainer::wireViews() {
 }
 
 void AppContainer::initHAL() {
+#if CONFIG_IDF_TARGET_ESP32S3
+    releaseXl9555Int();  // must precede SD init — see comment at definition
+#endif
+
     // Phase 1: Hardware initialization (order matters)
     ESP_ERROR_CHECK(mTimer->init_HAL());
     ESP_ERROR_CHECK(mSensor->init_HAL());
     ESP_ERROR_CHECK(mBle->init_HAL());
     ESP_ERROR_CHECK(mLed->init_HAL());
-    ESP_ERROR_CHECK(mLcd->init_HAL());
+    if (mLcd->init_HAL() != ESP_OK) {
+        // Boards without an SSD1306 (e.g. DNESP32S3) — views keep rendering
+        // into the framebuffer; Ssd1306 skips I2C traffic when not ready.
+        ESP_LOGW(TAG, "OLED unavailable — display output disabled");
+    }
     ESP_ERROR_CHECK(mMqtt->init_HAL());
     if (mStorage->init_HAL() != ESP_OK) {
         ESP_LOGW(TAG, "SD card unavailable — storage disabled");
