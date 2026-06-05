@@ -2,6 +2,7 @@
 
 #include "ICommand.hpp"
 #include "ObservableSensor.hpp"
+#include "OtaService.hpp"
 #include <memory>
 
 namespace Arcana {
@@ -15,6 +16,7 @@ public:
     struct Dependencies {
         Sensor::ObservableSensor* Sensor = nullptr;
         KeyExchangeManager* KeyExchangeMgr = nullptr;
+        OtaService* Ota = nullptr;
     };
 
     explicit CommandFactory(const Dependencies& deps) : mDeps(deps) {}

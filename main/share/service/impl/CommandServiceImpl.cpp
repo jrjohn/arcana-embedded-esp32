@@ -13,10 +13,10 @@ CommandService& CommandService::Instance() {
 }
 
 esp_err_t CommandService::init() {
-    return Init(input.Sensor);
+    return Init(input.Sensor, input.Ota);
 }
 
-esp_err_t CommandService::Init(Sensor::ObservableSensor* sensor) {
+esp_err_t CommandService::Init(Sensor::ObservableSensor* sensor, OtaService* ota) {
 #ifdef CONFIG_CMD_ENCRYPTION_ENABLED
     // Init KeyExchangeManager with PSK
     uint8_t psk[CryptoEngine::kKeyLen];
@@ -35,6 +35,7 @@ esp_err_t CommandService::Init(Sensor::ObservableSensor* sensor) {
     CommandFactory::Dependencies deps;
     deps.Sensor = sensor;
     deps.KeyExchangeMgr = mKeyExchangeMgr.get();
+    deps.Ota = ota;
 
     mFactory = std::make_unique<CommandFactory>(deps);
     mDispatcher = std::make_unique<CommandDispatcher>(*mFactory);

@@ -9,6 +9,7 @@
 #include "commands/BleScanCommand.hpp"
 #include "commands/GetMqttStatusCommand.hpp"
 #include "commands/KeyExchangeCommand.hpp"
+#include "commands/OtaCommands.hpp"
 
 namespace Arcana {
 namespace Command {
@@ -51,6 +52,15 @@ std::unique_ptr<ICommand> CommandFactory::Create(Cluster cluster, uint8_t comman
             mMqttStatusCmd = cmd.get();
             return cmd;
         }
+        }
+        break;
+
+    case Cluster::Ota:
+        switch (command) {
+        case OtaCmd::StartUpdate:
+            return std::make_unique<OtaUpdateCommand>(mDeps.Ota);
+        case OtaCmd::GetProgress:
+            return std::make_unique<GetOtaProgressCommand>(mDeps.Ota);
         }
         break;
 

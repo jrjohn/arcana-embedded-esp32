@@ -19,6 +19,11 @@ CONFIG_BT_BLE_DYNAMIC_ENV_MEMORY=y
 # WiFi + BLE Coexistence
 CONFIG_ESP_COEX_SW_COEXIST_ENABLE=y
 
+# OTA: new images boot PENDING_VERIFY; AppContainer marks them valid after
+# all services come up — a crash before that point auto-rolls-back to the
+# previous slot. (No effect on the classic 4MB factory-only table.)
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
 # Custom Partition Table
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"

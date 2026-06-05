@@ -3,6 +3,7 @@
 #include "esp_ota_ops.h"
 #include "esp_http_client.h"
 #include "esp_system.h"
+#include "esp_rom_crc.h"
 #include <cstring>
 #include <cstdio>
 
@@ -57,6 +58,15 @@ bool OtaServiceImpl::startUpdate(const char* host, uint16_t port,
         return false;
     }
 
+    // Size contract check before burning any flash
+    if (expectedSize != 0 && (uint32_t)content_length != expectedSize) {
+        ESP_LOGE(TAG, "Size mismatch: server=%d expected=%lu",
+                 content_length, (unsigned long)expectedSize);
+        esp_http_client_cleanup(client);
+        mActive = false;
+        return false;
+    }
+
     // Begin OTA
     const esp_partition_t* update_partition = esp_ota_get_next_update_partition(nullptr);
     if (!update_partition) {
@@ -75,9 +85,10 @@ bool OtaServiceImpl::startUpdate(const char* host, uint16_t port,
         return false;
     }
 
-    // Download + write
+    // Download + write, accumulating CRC-32 (IEEE, zlib-compatible)
     uint8_t buf[1024];
     uint32_t bytesWritten = 0;
+    uint32_t crc = 0;
 
     while (bytesWritten < (uint32_t)content_length) {
         int readLen = esp_http_client_read(client, (char*)buf, sizeof(buf));
@@ -98,6 +109,7 @@ bool OtaServiceImpl::startUpdate(const char* host, uint16_t port,
             return false;
         }
 
+        crc = esp_rom_crc32_le(crc, buf, readLen);
         bytesWritten += readLen;
         if (content_length > 0) {
             mProgress = (uint8_t)((bytesWritten * 100UL) / content_length);
@@ -105,6 +117,15 @@ bool OtaServiceImpl::startUpdate(const char* host, uint16_t port,
     }
 
     esp_http_client_cleanup(client);
+
+    // CRC contract check — refuse to activate a corrupted/truncated image
+    if (expectedCrc32 != 0 && crc != expectedCrc32) {
+        ESP_LOGE(TAG, "CRC mismatch: got=0x%08lx expected=0x%08lx",
+                 (unsigned long)crc, (unsigned long)expectedCrc32);
+        esp_ota_abort(ota_handle);
+        mActive = false;
+        return false;
+    }
 
     // Finalize
     err = esp_ota_end(ota_handle);

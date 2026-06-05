@@ -19,6 +19,7 @@
 #include "impl/WifiServiceImpl.hpp"
 #include "impl/DriverServiceImpl.hpp"
 #include "esp_log.h"
+#include "esp_ota_ops.h"
 
 static const char* TAG = "AppContainer";
 
@@ -110,6 +111,22 @@ void AppContainer::run() {
     }
 
     ESP_LOGI(TAG, "All services running");
+
+    // OTA rollback gate: if this image is on probation (first boot after an
+    // update), everything above succeeding is the self-test — accept it.
+    // Crashing before this line leaves the image PENDING_VERIFY and the
+    // bootloader reverts to the previous slot on the next reset.
+    {
+        const esp_partition_t* running = esp_ota_get_running_partition();
+        esp_ota_img_states_t state;
+        if (running &&
+            esp_ota_get_state_partition(running, &state) == ESP_OK &&
+            state == ESP_OTA_IMG_PENDING_VERIFY) {
+            esp_ota_mark_app_valid_cancel_rollback();
+            ESP_LOGI(TAG, "OTA image verified — rollback cancelled");
+        }
+    }
+
 
     // Upload monitor + WiFi watchdog — reuse main task
     {
@@ -248,6 +265,9 @@ void AppContainer::wireServices() {
 
     // Wire Command <- Sensor
     mCommand->input.Sensor = mSensor->output.Sensor;
+
+    // Wire Command <- OTA (Ota::StartUpdate / GetProgress)
+    mCommand->input.Ota = mOta;
 
     ESP_LOGI(TAG, "Services wired");
 }

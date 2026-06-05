@@ -22,6 +22,7 @@ enum class Cluster : uint8_t {
     Ble      = 0x02,
     Mqtt     = 0x03,
     Security = 0x04,
+    Ota      = 0x05,
 };
 
 namespace SystemCmd {
@@ -46,6 +47,11 @@ namespace MqttCmd {
 
 namespace SecurityCmd {
     static constexpr uint8_t KeyExchange = 0x01;
+}
+
+namespace OtaCmd {
+    static constexpr uint8_t StartUpdate = 0x01;
+    static constexpr uint8_t GetProgress = 0x02;
 }
 
 static constexpr uint16_t kMaxRequestPayload  = 128;
