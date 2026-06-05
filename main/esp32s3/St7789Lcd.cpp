@@ -35,12 +35,17 @@ St7789Lcd::St7789Lcd()
 esp_err_t St7789Lcd::powerAndResetViaXl9555() {
     auto& xl = Io::Xl9555::getInstance();
 
+    // Vendor timing (spilcd_init): 100ms reset-low + 100ms settle. The
+    // original 20ms low pulse missed init on COLD power-up (panel rail
+    // still rising) while warm resets worked — keep the long pulse.
+    // Backlight (kSlcdPwr) stays OFF here; Init() turns it on after the
+    // panel is initialized and cleared, like the vendor BSP.
     esp_err_t err = xl.pinMode(Io::Xl9555::kSlcdPwr | Io::Xl9555::kSlcdRst, false);
-    if (err == ESP_OK) err = xl.pinWrite(Io::Xl9555::kSlcdPwr, true);   // power on
+    if (err == ESP_OK) err = xl.pinWrite(Io::Xl9555::kSlcdPwr, false);  // backlight off
     if (err == ESP_OK) err = xl.pinWrite(Io::Xl9555::kSlcdRst, false);  // reset low
-    vTaskDelay(pdMS_TO_TICKS(20));
+    vTaskDelay(pdMS_TO_TICKS(100));
     if (err == ESP_OK) err = xl.pinWrite(Io::Xl9555::kSlcdRst, true);   // release
-    vTaskDelay(pdMS_TO_TICKS(120));
+    vTaskDelay(pdMS_TO_TICKS(100));
     return err;
 }
 
@@ -135,6 +140,9 @@ esp_err_t St7789Lcd::Init() {
     mReady = true;
     Clear();
     Display();
+
+    // Backlight on only after the panel shows real content (vendor order)
+    Io::Xl9555::getInstance().pinWrite(Io::Xl9555::kSlcdPwr, true);
 
     ESP_LOGI(TAG, "Initialized (ST7789 320x240, SPI2 polling @%dMHz, CS=%d DC=%d)",
              kPclkHz / 1000000, kPinCs, kPinDc);

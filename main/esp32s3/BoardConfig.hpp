@@ -16,10 +16,14 @@
 
 namespace Arcana {
 namespace Lcd { class Ssd1306; }
+namespace Sensor { class ObservableSensor; }
 namespace Board {
 
 /// Returns the board's display (ST7789 SPI LCD, 320x240, SPILCD socket).
 Lcd::Ssd1306& createDisplay();
+
+/// Returns the board's environment sensor.
+Sensor::ObservableSensor& createSensor();
 
 } // namespace Board
 } // namespace Arcana

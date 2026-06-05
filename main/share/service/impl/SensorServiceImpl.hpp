@@ -1,7 +1,7 @@
 #pragma once
 
 #include "SensorService.hpp"
-#include "DhtSensor.hpp"
+#include "ObservableSensor.hpp"
 
 namespace Arcana {
 namespace Sensor {
@@ -21,7 +21,7 @@ private:
     SensorServiceImpl(const SensorServiceImpl&) = delete;
     SensorServiceImpl& operator=(const SensorServiceImpl&) = delete;
 
-    DhtSensor* mSensor = nullptr;
+    ObservableSensor* mSensor = nullptr;
 };
 
 } // namespace Sensor

@@ -1,4 +1,5 @@
 #include "impl/SensorServiceImpl.hpp"
+#include "BoardConfig.hpp"
 #include "esp_log.h"
 
 static const char* TAG = "SensorService";
@@ -30,38 +31,17 @@ SensorService& SensorServiceImpl::getInstance() {
 }
 
 esp_err_t SensorServiceImpl::init_HAL() {
-#if CONFIG_DHT_SENSOR_GPIO < 0
-    // Sensor disabled by config (e.g. DNESP32S3 — no GPIO can reach the
-    // U4 DHT socket without colliding with the SPI LCD or the BOOT key).
-    // Output observables exist but never fire; downstream null-checks hold.
-    ESP_LOGW(TAG, "DHT sensor disabled (DHT_SENSOR_GPIO=-1)");
-    return ESP_OK;
-#else
-    static DhtSensor sensor(
-        static_cast<gpio_num_t>(CONFIG_DHT_SENSOR_GPIO),
-#ifdef CONFIG_DHT_SENSOR_TYPE_DHT22
-        DhtType::DHT22,
-#else
-        DhtType::DHT11,
-#endif
-        SensorConfig().WithId(1).WithInterval(CONFIG_DHT_SENSOR_READ_INTERVAL_MS)
-    );
-    mSensor = &sensor;
+    // Board-specific sensor: DHT11/22 (esp32 DevKit) or the S3 internal
+    // temperature sensor (DNESP32S3) — resolved by the per-target Board.cpp.
+    mSensor = &Board::createSensor();
     output.Sensor = mSensor;
 
-    ESP_LOGI(TAG, "HAL initialized (GPIO%d)", CONFIG_DHT_SENSOR_GPIO);
+    ESP_LOGI(TAG, "HAL initialized");
     return ESP_OK;
-#endif
 }
 
 esp_err_t SensorServiceImpl::init() {
-    if (!mSensor) {
-#if CONFIG_DHT_SENSOR_GPIO < 0
-        return ESP_OK;  // sensor disabled — nothing to wire
-#else
-        return ESP_ERR_INVALID_STATE;
-#endif
-    }
+    if (!mSensor) return ESP_ERR_INVALID_STATE;
 
     // Forward sensor events to service-level observables
     mSensor->OnData([this](const SensorData& data) {
@@ -77,13 +57,7 @@ esp_err_t SensorServiceImpl::init() {
 }
 
 esp_err_t SensorServiceImpl::start() {
-    if (!mSensor) {
-#if CONFIG_DHT_SENSOR_GPIO < 0
-        return ESP_OK;  // sensor disabled — nothing to start
-#else
-        return ESP_ERR_INVALID_STATE;
-#endif
-    }
+    if (!mSensor) return ESP_ERR_INVALID_STATE;
 
     esp_err_t err = mSensor->Start();
     if (err != ESP_OK) {

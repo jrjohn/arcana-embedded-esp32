@@ -1,7 +1,7 @@
 # Per-target board directory: exactly one BoardConfig.hpp + Board.cpp
 if(CONFIG_IDF_TARGET_ESP32S3)
     set(BOARD_DIR "esp32s3")
-    set(BOARD_SRCS "esp32s3/Board.cpp" "esp32s3/St7789Lcd.cpp" "esp32s3/Xl9555.cpp")
+    set(BOARD_SRCS "esp32s3/Board.cpp" "esp32s3/St7789Lcd.cpp" "esp32s3/Xl9555.cpp" "esp32s3/TsensSensor.cpp")
 else()
     set(BOARD_DIR "esp32")
     set(BOARD_SRCS "esp32/Board.cpp")
@@ -104,6 +104,7 @@ idf_component_register(
         driver
         esp_driver_i2c
         esp_driver_spi
+        esp_driver_tsens
         esp_driver_rmt
         esp_driver_gpio
         log
