@@ -97,7 +97,11 @@ esp_err_t AtsStorageServiceImpl::init_HAL() {
     bus_cfg.max_transfer_sz = 4096;
 
     esp_err_t ret = spi_bus_initialize(SPI2_HOST, &bus_cfg, SDSPI_DEFAULT_DMA);
-    if (ret != ESP_OK) {
+    if (ret == ESP_ERR_INVALID_STATE) {
+        // Bus already initialized — the ST7789 SPI LCD shares SPI2 and its
+        // init runs first (LcdService precedes storage in initHAL).
+        ESP_LOGI(TAG, "SPI bus already initialized (shared with LCD)");
+    } else if (ret != ESP_OK) {
         ESP_LOGE(TAG, "SPI bus init failed: %s", esp_err_to_name(ret));
         return ret;
     }

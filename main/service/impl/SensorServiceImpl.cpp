@@ -30,6 +30,13 @@ SensorService& SensorServiceImpl::getInstance() {
 }
 
 esp_err_t SensorServiceImpl::init_HAL() {
+#if CONFIG_DHT_SENSOR_GPIO < 0
+    // Sensor disabled by config (e.g. DNESP32S3 — no GPIO can reach the
+    // U4 DHT socket without colliding with the SPI LCD or the BOOT key).
+    // Output observables exist but never fire; downstream null-checks hold.
+    ESP_LOGW(TAG, "DHT sensor disabled (DHT_SENSOR_GPIO=-1)");
+    return ESP_OK;
+#else
     static DhtSensor sensor(
         static_cast<gpio_num_t>(CONFIG_DHT_SENSOR_GPIO),
 #ifdef CONFIG_DHT_SENSOR_TYPE_DHT22
@@ -44,10 +51,17 @@ esp_err_t SensorServiceImpl::init_HAL() {
 
     ESP_LOGI(TAG, "HAL initialized (GPIO%d)", CONFIG_DHT_SENSOR_GPIO);
     return ESP_OK;
+#endif
 }
 
 esp_err_t SensorServiceImpl::init() {
-    if (!mSensor) return ESP_ERR_INVALID_STATE;
+    if (!mSensor) {
+#if CONFIG_DHT_SENSOR_GPIO < 0
+        return ESP_OK;  // sensor disabled — nothing to wire
+#else
+        return ESP_ERR_INVALID_STATE;
+#endif
+    }
 
     // Forward sensor events to service-level observables
     mSensor->OnData([this](const SensorData& data) {
@@ -63,7 +77,13 @@ esp_err_t SensorServiceImpl::init() {
 }
 
 esp_err_t SensorServiceImpl::start() {
-    if (!mSensor) return ESP_ERR_INVALID_STATE;
+    if (!mSensor) {
+#if CONFIG_DHT_SENSOR_GPIO < 0
+        return ESP_OK;  // sensor disabled — nothing to start
+#else
+        return ESP_ERR_INVALID_STATE;
+#endif
+    }
 
     esp_err_t err = mSensor->Start();
     if (err != ESP_OK) {

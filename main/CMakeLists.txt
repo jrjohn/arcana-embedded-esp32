@@ -46,6 +46,7 @@ idf_component_register(
 
         # driver/
         "driver/Ssd1306.cpp"
+        "driver/St7789Lcd.cpp"
         "driver/RgbLed.cpp"
         "driver/DhtSensor.cpp"
 
@@ -89,6 +90,7 @@ idf_component_register(
         freertos
         driver
         esp_driver_i2c
+        esp_driver_spi
         esp_driver_rmt
         esp_driver_gpio
         log

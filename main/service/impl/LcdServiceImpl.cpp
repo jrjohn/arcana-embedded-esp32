@@ -1,4 +1,5 @@
 #include "impl/LcdServiceImpl.hpp"
+#include "St7789Lcd.hpp"
 #include "esp_log.h"
 
 static const char* TAG = "LcdService";
@@ -16,16 +17,21 @@ LcdService& LcdServiceImpl::getInstance() {
 }
 
 esp_err_t LcdServiceImpl::init_HAL() {
-    static Ssd1306 oled(
+#if CONFIG_IDF_TARGET_ESP32S3
+    // DNESP32S3: ST7789 SPI LCD module (2.4"/1.3") instead of an SSD1306
+    static St7789Lcd display;
+#else
+    static Ssd1306 display(
         static_cast<gpio_num_t>(CONFIG_OLED_SCL_GPIO),
         static_cast<gpio_num_t>(CONFIG_OLED_SDA_GPIO),
         CONFIG_OLED_I2C_ADDR
     );
-    mOled = &oled;
+#endif
+    mOled = &display;
 
     esp_err_t err = mOled->Init();
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "OLED init failed: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "Display init failed: %s", esp_err_to_name(err));
         return err;
     }
 

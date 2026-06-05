@@ -15,15 +15,24 @@ public:
     static constexpr size_t   kBufSize = kWidth * kPages;  // 1024 bytes
 
     Ssd1306(gpio_num_t sclPin, gpio_num_t sdaPin, uint8_t addr = 0x3C);
-    ~Ssd1306();
+    virtual ~Ssd1306();
 
-    esp_err_t Init();
+    // Init/Display are virtual so alternative panels (e.g. St7789Lcd on the
+    // DNESP32S3) can reuse the framebuffer + text drawing and only swap the
+    // hardware path.
+    virtual esp_err_t Init();
     void Clear();
     void SetCursor(uint8_t col, uint8_t page);
     void DrawChar(char c);
     void DrawString(const char* str);
     void DrawStringAt(uint8_t col, uint8_t page, const char* str);
-    void Display();
+    virtual void Display();
+
+protected:
+    uint8_t mBuffer[kBufSize] = {};
+    uint8_t mCursorCol  = 0;
+    uint8_t mCursorPage = 0;
+    bool mReady = false;  // set after a successful Init(); gates panel traffic
 
 private:
     esp_err_t SendCommand(uint8_t cmd);
@@ -34,11 +43,6 @@ private:
     uint8_t mAddr;
     i2c_master_bus_handle_t mBusHandle = nullptr;
     i2c_master_dev_handle_t mDevHandle = nullptr;
-
-    uint8_t mBuffer[kBufSize] = {};
-    uint8_t mCursorCol  = 0;
-    uint8_t mCursorPage = 0;
-    bool mReady = false;  // set after a successful Init(); gates I2C traffic
 };
 
 } // namespace Lcd

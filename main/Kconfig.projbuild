@@ -228,15 +228,17 @@ menu "Observable Sensor Configuration"
         endchoice
 
         config DHT_SENSOR_GPIO
-            int "DHT data GPIO pin"
-            default 40 if IDF_TARGET_ESP32S3
+            int "DHT data GPIO pin (-1 disables the sensor)"
+            default -1 if IDF_TARGET_ESP32S3
             default 15
-            range 0 48 if IDF_TARGET_ESP32S3
+            range -1 48 if IDF_TARGET_ESP32S3
             range 0 39
             help
                 GPIO pin connected to the DHT sensor data line.
-                DNESP32S3: the onboard DHT11 socket (U4) routes to IO40 via
-                the P5 jumper (1WIRE_DQ <-> LCD_DC pair).
+                DNESP32S3: disabled by default — the U4 DHT socket can only
+                reach IO40 (P5 jumper, taken by the SPI LCD's DC line) or
+                IO0 (BOOT key / button B). Set a P1 EX-IO pin if you wire
+                a DHT externally.
 
         config DHT_SENSOR_READ_INTERVAL_MS
             int "DHT reading interval (ms)"
