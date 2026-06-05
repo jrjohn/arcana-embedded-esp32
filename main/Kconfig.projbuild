@@ -427,15 +427,17 @@ menu "ATS Storage Configuration"
 
     config ATS_SD_MAX_FREQ_KHZ
         int "SD card SPI max frequency (kHz)"
+        default 20000 if IDF_TARGET_ESP32S3
         default 4000
         range 400 40000
         help
             4 MHz suits breadboard wiring + level shifters (classic ESP32
-            DevKit setup) and is also the proven-stable speed for the
-            DNESP32S3 onboard TF slot: 20 MHz there passed one boot, then
-            produced FR_DISK_ERR on every write on later boots (47K-only
-            pullups, SPI2 shared with the wireless/SPI-LCD socket via P5
-            jumpers). Raise with caution and soak-test.
+            DevKit setup). The DNESP32S3 onboard TF slot is stable at
+            20 MHz (~1.1 MB/s file writes) — the early 20 MHz failures
+            were the XL9555 latched-INT-on-MISO issue, fixed by
+            DriverService releasing INT at boot. 26/40 MHz fail card init
+            (SD SPI-mode spec tops out at 25 MHz + GPIO-matrix sampling
+            delay); don't bother.
 
     config ATS_SD_BENCHMARK_ON_BOOT
         bool "Run SD write benchmark once at boot"

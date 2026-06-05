@@ -6,7 +6,9 @@
 
 static const char* TAG = "SdBench";
 static const char* BENCH_FILE = "/sdcard/bench.tmp";
-static const size_t BLOCK_SIZE = 4096;
+// 32KB blocks measure the bus ceiling rather than per-call FATFS overhead
+// (4KB blocks cost one cluster-chain walk per ~1ms of bus time).
+static const size_t BLOCK_SIZE = 32 * 1024;
 
 namespace Arcana::SdBench {
 
@@ -25,7 +27,7 @@ SdBenchmarkResult SdBenchmarkServiceImpl::runBenchmark(uint32_t durationMs) {
         return result;
     }
 
-    uint8_t buf[BLOCK_SIZE];
+    static uint8_t buf[BLOCK_SIZE];  // static — 32KB would overflow the task stack
     memset(buf, 0xAA, sizeof(buf));
 
     int64_t startUs = esp_timer_get_time();
@@ -41,8 +43,8 @@ SdBenchmarkResult SdBenchmarkServiceImpl::runBenchmark(uint32_t durationMs) {
         }
         blocksWritten++;
 
-        // Sync every 64 blocks to measure real disk speed (not OS cache)
-        if ((blocksWritten & 63) == 0) {
+        // Sync every 8 blocks (256KB) to measure real disk speed (not cache)
+        if ((blocksWritten & 7) == 0) {
             fflush(fp);
         }
     }
