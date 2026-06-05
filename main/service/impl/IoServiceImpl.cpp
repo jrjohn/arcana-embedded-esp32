@@ -1,4 +1,5 @@
 #include "impl/IoServiceImpl.hpp"
+#include "TaskPriorities.hpp"
 #include "driver/gpio.h"
 #include "esp_log.h"
 
@@ -71,7 +72,7 @@ esp_err_t IoServiceImpl::init() {
 esp_err_t IoServiceImpl::start() {
     BaseType_t ret = xTaskCreate(
         taskFunc, "io-key", 2048,
-        this, tskIDLE_PRIORITY + 1, &mTaskHandle);
+        this, TaskCfg::kPrioIoPoll, &mTaskHandle);
     return (ret == pdPASS) ? ESP_OK : ESP_ERR_NO_MEM;
 }
 

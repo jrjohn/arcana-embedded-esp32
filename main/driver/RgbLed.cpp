@@ -12,6 +12,7 @@
  */
 
 #include "RgbLed.hpp"
+#include "TaskPriorities.hpp"
 #include "esp_log.h"
 #include "esp_check.h"
 #include <cstring>
@@ -285,7 +286,7 @@ esp_err_t RgbLed::StartColorCycle(uint32_t IntervalMs) {
     mShouldStop.store(false);
     mCycling.store(true);
 
-    BaseType_t ret = xTaskCreate(CycleTask, "rgb_cycle", 2048, this, 3, &mTaskHandle);
+    BaseType_t ret = xTaskCreate(CycleTask, "rgb_cycle", 2048, this, TaskCfg::kPrioLedCycle, &mTaskHandle);
     if (ret != pdPASS) {
         mCycling.store(false);
         return ESP_ERR_NO_MEM;

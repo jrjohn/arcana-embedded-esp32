@@ -32,6 +32,7 @@ set(CMD_CODEC     ${MAIN_DIR}/command/codec)        # CommandCodec.{hpp,cpp}, Fr
 set(CMD_SECURITY  ${MAIN_DIR}/command/security)     # CryptoEngine.{hpp,cpp}, KeyExchangeManager.{hpp,cpp}
 
 # core/ — Observable, Log, model types
+set(CORE_DIR      ${MAIN_DIR}/core)
 set(CORE_EVENT    ${MAIN_DIR}/core/event)
 set(CORE_LOG      ${MAIN_DIR}/core/log)
 set(CORE_MODEL    ${MAIN_DIR}/core/model)
@@ -71,6 +72,7 @@ set(COMMON_INCS
     ${CMD_INC}
     ${CMD_CODEC}
     ${CMD_SECURITY}
+    ${CORE_DIR}
     ${CORE_EVENT}
     ${CORE_LOG}
     ${CORE_MODEL}

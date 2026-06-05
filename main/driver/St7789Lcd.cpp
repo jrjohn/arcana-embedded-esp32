@@ -1,9 +1,9 @@
 #include "St7789Lcd.hpp"
 #if CONFIG_IDF_TARGET_ESP32S3
 
+#include "Xl9555.hpp"
 #include "driver/spi_common.h"
 #include "driver/gpio.h"
-#include "driver/i2c_master.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -15,10 +15,6 @@ static const char* TAG = "St7789";
 static constexpr gpio_num_t kPinCs = GPIO_NUM_21;  // SLCD_CS
 static constexpr gpio_num_t kPinDc = GPIO_NUM_40;  // LCD_DC via P5 (IO_SEL<->LCD_DC)
 static constexpr int kPclkHz = 26 * 1000 * 1000;   // conservative — bus shared with SD
-
-// XL9555 expander (I2C0 addr 0x20): output port 1 bits
-static constexpr uint8_t kXlSlcdRstBit = 2;  // IO1_2 = SLCD_RST
-static constexpr uint8_t kXlSlcdPwrBit = 3;  // IO1_3 = SLCD_PWR
 
 // ST7789 commands
 static constexpr uint8_t kCmdSlpOut  = 0x11;
@@ -36,57 +32,17 @@ namespace Lcd {
 St7789Lcd::St7789Lcd()
     : Ssd1306(GPIO_NUM_NC, GPIO_NUM_NC, 0) {}  // base I2C path unused
 
-// Drive SLCD_PWR high and pulse SLCD_RST via the XL9555. Uses a scoped I2C
-// bus so I2C0 is left free afterwards.
+// Drive SLCD_PWR high and pulse SLCD_RST via the board's XL9555 driver
+// (DriverService brings it up before LcdService in initHAL).
 esp_err_t St7789Lcd::powerAndResetViaXl9555() {
-    i2c_master_bus_config_t bus_cfg = {};
-    bus_cfg.clk_source = I2C_CLK_SRC_DEFAULT;
-    bus_cfg.i2c_port = I2C_NUM_0;
-    bus_cfg.scl_io_num = GPIO_NUM_42;
-    bus_cfg.sda_io_num = GPIO_NUM_41;
-    bus_cfg.glitch_ignore_cnt = 7;
-    bus_cfg.flags.enable_internal_pullup = true;
+    auto& xl = Io::Xl9555::getInstance();
 
-    i2c_master_bus_handle_t bus = nullptr;
-    esp_err_t err = i2c_new_master_bus(&bus_cfg, &bus);
-    if (err != ESP_OK) return err;
-
-    i2c_device_config_t dev_cfg = {};
-    dev_cfg.dev_addr_length = I2C_ADDR_BIT_LEN_7;
-    dev_cfg.device_address = 0x20;
-    dev_cfg.scl_speed_hz = 100000;
-
-    i2c_master_dev_handle_t dev = nullptr;
-    err = i2c_master_bus_add_device(bus, &dev_cfg, &dev);
-    if (err == ESP_OK) {
-        auto write_reg = [&](uint8_t reg, uint8_t val) {
-            uint8_t tx[2] = {reg, val};
-            return i2c_master_transmit(dev, tx, 2, 100);
-        };
-        auto read_reg = [&](uint8_t reg, uint8_t& val) {
-            return i2c_master_transmit_receive(dev, &reg, 1, &val, 1, 100);
-        };
-
-        uint8_t cfg1 = 0xFF, out1 = 0xFF;
-        // Port-1 config: clear SLCD_RST/SLCD_PWR bits -> outputs (1 = input)
-        if ((err = read_reg(0x07, cfg1)) == ESP_OK) {
-            cfg1 &= ~((1 << kXlSlcdRstBit) | (1 << kXlSlcdPwrBit));
-            err = write_reg(0x07, cfg1);
-        }
-        if (err == ESP_OK && (err = read_reg(0x03, out1)) == ESP_OK) {
-            // Power on, reset low
-            out1 |= (1 << kXlSlcdPwrBit);
-            out1 &= ~(1 << kXlSlcdRstBit);
-            err = write_reg(0x03, out1);
-            vTaskDelay(pdMS_TO_TICKS(20));
-            // Release reset
-            out1 |= (1 << kXlSlcdRstBit);
-            if (err == ESP_OK) err = write_reg(0x03, out1);
-            vTaskDelay(pdMS_TO_TICKS(120));
-        }
-        i2c_master_bus_rm_device(dev);
-    }
-    i2c_del_master_bus(bus);
+    esp_err_t err = xl.pinMode(Io::Xl9555::kSlcdPwr | Io::Xl9555::kSlcdRst, false);
+    if (err == ESP_OK) err = xl.pinWrite(Io::Xl9555::kSlcdPwr, true);   // power on
+    if (err == ESP_OK) err = xl.pinWrite(Io::Xl9555::kSlcdRst, false);  // reset low
+    vTaskDelay(pdMS_TO_TICKS(20));
+    if (err == ESP_OK) err = xl.pinWrite(Io::Xl9555::kSlcdRst, true);   // release
+    vTaskDelay(pdMS_TO_TICKS(120));
     return err;
 }
 

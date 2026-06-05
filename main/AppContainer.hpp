@@ -1,5 +1,6 @@
 #pragma once
 
+#include "DriverService.hpp"
 #include "SensorService.hpp"
 #include "BleTransportService.hpp"
 #include "MqttTransportService.hpp"
@@ -38,6 +39,7 @@ private:
     void initServices();
     void startServices();
 
+    Driver::DriverService* mDriver = nullptr;
     Timer::TimerService* mTimer = nullptr;
     Sensor::SensorService* mSensor = nullptr;
     Ble::BleTransportService* mBle = nullptr;

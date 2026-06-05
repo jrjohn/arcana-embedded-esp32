@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <memory>
 #include <cstdint>
+#include "TaskPriorities.hpp"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/queue.h"
@@ -73,7 +74,7 @@ public:
      * @param Priority Task priority
      */
     explicit Observable(const char* Name, size_t QueueDepth = 20,
-                        uint32_t StackSize = 2048, uint8_t Priority = 5)
+                        uint32_t StackSize = 2048, uint8_t Priority = TaskCfg::kPrioEventQueue)
         : mNextId(1), mName(Name), mQueue(nullptr), mTaskHandle(nullptr)
     {
         mMutex = xSemaphoreCreateMutex();
@@ -461,7 +462,7 @@ public:
      * @param Priority Task priority (default 5)
      * @return true if started successfully
      */
-    bool Start(Observer<T> Handler, uint32_t StackSize = 4096, uint8_t Priority = 5) {
+    bool Start(Observer<T> Handler, uint32_t StackSize = 4096, uint8_t Priority = TaskCfg::kPrioEventQueue) {
         if (mRunning) {
             return false;
         }

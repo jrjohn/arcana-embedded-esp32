@@ -9,6 +9,7 @@ idf_component_register(
         "service/impl/CommandBridgeServiceImpl.cpp"
         "service/impl/CommandServiceImpl.cpp"
         "service/impl/DiagnosticServiceImpl.cpp"
+        "service/impl/DriverServiceImpl.cpp"
         "service/impl/HttpUploadServiceImpl.cpp"
         "service/impl/IoServiceImpl.cpp"
         "service/impl/LcdServiceImpl.cpp"
@@ -47,6 +48,7 @@ idf_component_register(
         # driver/
         "driver/Ssd1306.cpp"
         "driver/St7789Lcd.cpp"
+        "driver/Xl9555.cpp"
         "driver/RgbLed.cpp"
         "driver/DhtSensor.cpp"
 
@@ -75,6 +77,7 @@ idf_component_register(
         "view"
         "view/main"
         "driver"
+        "core"
         "core/event"
         "core/log"
         "core/model"

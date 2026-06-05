@@ -1,6 +1,7 @@
 #pragma once
 
 #include "BaseLcdView.hpp"
+#include "TaskPriorities.hpp"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <cstdio>
@@ -88,9 +89,11 @@ public:
         display.Display();
     }
 
-    /// Start the render task
+    /// Start the render task (APP core — keeps LCD SPI flushes off the
+    /// radio core, see core/TaskPriorities.hpp)
     void start() {
-        xTaskCreate(renderTaskFunc, "LcdView", 2048, this, tskIDLE_PRIORITY + 2, &mTaskHandle);
+        xTaskCreatePinnedToCore(renderTaskFunc, "LcdView", 2048, this,
+                                TaskCfg::kPrioRender, &mTaskHandle, TaskCfg::kCoreApp);
     }
 
     TaskHandle_t taskHandle() const { return mTaskHandle; }

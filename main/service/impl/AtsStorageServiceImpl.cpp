@@ -1,5 +1,6 @@
 #include "impl/AtsStorageServiceImpl.hpp"
 #include "impl/IoServiceImpl.hpp"
+#include "TaskPriorities.hpp"
 #include "ats/ArcanaTsSchema.hpp"
 #include "ats/ArcanaTsTypes.hpp"
 #include "esp_log.h"
@@ -156,9 +157,11 @@ esp_err_t AtsStorageServiceImpl::init() {
 esp_err_t AtsStorageServiceImpl::start() {
     mRunning = true;
 
-    BaseType_t ret = xTaskCreate(
+    // Pinned to the APP core so SD write bursts never jitter the WiFi/BT
+    // stacks on the PRO core (see core/TaskPriorities.hpp).
+    BaseType_t ret = xTaskCreatePinnedToCore(
         storageTask, "AtsStore", 4096,
-        this, tskIDLE_PRIORITY + 1, &mTaskHandle);
+        this, TaskCfg::kPrioStorage, &mTaskHandle, TaskCfg::kCoreApp);
     if (ret != pdPASS) return ESP_ERR_NO_MEM;
 
     // Sensor subscription not needed for ECG benchmark mode —
