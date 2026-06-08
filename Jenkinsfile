@@ -80,10 +80,20 @@ pipeline {
         stage("Build Firmware") {
             steps {
                 // Jenkins is running inside a container; the host docker daemon
-                // sees a different path for our workspace. Translate container path
-                // to host path so the compose `volumes: .:/project` resolves correctly.
+                // sees a different path for our workspace. Translate the container
+                // $WORKSPACE to its host path so compose `${PROJECT_PATH}:/project`
+                // mounts the real files instead of a docker-auto-created empty dir.
+                //
+                // Derive the host-side jenkins_home from THIS container's own mount
+                // table rather than hardcoding it. A previous hardcoded mapping
+                // (/data/docker/volumes/devops_jenkins_home/_data) silently broke
+                // when jenkins_home was migrated to a host bind mount, leaving
+                // /project empty -> "CMakeLists.txt not found in project directory".
+                // Reading .Source keeps this correct across future home migrations.
                 sh '''
-                    HOST_WS=$(echo "$WORKSPACE" | sed 's|^/var/jenkins_home/workspace|/data/docker/volumes/devops_jenkins_home/_data/workspace|')
+                    JHOME_HOST=$(docker inspect "$(hostname)" --format '{{ range .Mounts }}{{ if eq .Destination "/var/jenkins_home" }}{{ .Source }}{{ end }}{{ end }}')
+                    [ -n "$JHOME_HOST" ] || { echo "Could not resolve host path for /var/jenkins_home"; exit 1; }
+                    HOST_WS="$JHOME_HOST/${WORKSPACE#/var/jenkins_home/}"
                     echo "Container WORKSPACE=$WORKSPACE"
                     echo "Host PROJECT_PATH=$HOST_WS"
                     PROJECT_PATH="$HOST_WS" docker compose -f docker-compose.ci.yml run --rm esp32-build
