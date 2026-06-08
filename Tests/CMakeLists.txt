@@ -26,28 +26,30 @@ set(MOCKS_DIR     ${CMAKE_SOURCE_DIR}/mocks)
 set(MAIN_DIR      ${PROJECT_ROOT}/main)
 
 # command/ — interfaces, factory, dispatcher
-set(CMD_INC       ${MAIN_DIR}/command)              # ICommand.hpp, CommandFactory.hpp, etc
-set(CMD_SRC       ${MAIN_DIR}/command)              # CommandFactory.cpp, CommandDispatcher.cpp
-set(CMD_CODEC     ${MAIN_DIR}/command/codec)        # CommandCodec.{hpp,cpp}, FrameCodec.hpp, arcana_cmd.pb.{h,c}
-set(CMD_SECURITY  ${MAIN_DIR}/command/security)     # CryptoEngine.{hpp,cpp}, KeyExchangeManager.{hpp,cpp}
+set(CMD_INC       ${MAIN_DIR}/share/command)              # ICommand.hpp, CommandFactory.hpp, etc
+set(CMD_SRC       ${MAIN_DIR}/share/command)              # CommandFactory.cpp, CommandDispatcher.cpp
+set(CMD_CODEC     ${MAIN_DIR}/share/command/codec)        # CommandCodec.{hpp,cpp}, FrameCodec.hpp, arcana_cmd.pb.{h,c}
+set(CMD_SECURITY  ${MAIN_DIR}/share/command/security)     # CryptoEngine.{hpp,cpp}, KeyExchangeManager.{hpp,cpp}
 
 # core/ — Observable, Log, model types
-set(CORE_EVENT    ${MAIN_DIR}/core/event)
-set(CORE_LOG      ${MAIN_DIR}/core/log)
-set(CORE_MODEL    ${MAIN_DIR}/core/model)
+set(SVC_INC       ${MAIN_DIR}/share/service)
+set(CORE_DIR      ${MAIN_DIR}/share/core)
+set(CORE_EVENT    ${MAIN_DIR}/share/core/event)
+set(CORE_LOG      ${MAIN_DIR}/share/core/log)
+set(CORE_MODEL    ${MAIN_DIR}/share/core/model)
 
 # db/ — ArcanaTs
-set(ATS_INC       ${MAIN_DIR}/db/arcanats)          # exposes ats/ subfolder for "ats/ICipher.hpp" includes
-set(ATS_ATS       ${MAIN_DIR}/db/arcanats/ats)     # for ArcanaTsDb.hpp leaf include from .cpp
-set(ATS_SECURITY  ${MAIN_DIR}/db/arcanats/security)
-set(ATS_PORT      ${MAIN_DIR}/db/arcanats/port)
+set(ATS_INC       ${MAIN_DIR}/share/db/arcanats)          # exposes ats/ subfolder for "ats/ICipher.hpp" includes
+set(ATS_ATS       ${MAIN_DIR}/share/db/arcanats/ats)     # for ArcanaTsDb.hpp leaf include from .cpp
+set(ATS_SECURITY  ${MAIN_DIR}/share/db/arcanats/security)
+set(ATS_PORT      ${MAIN_DIR}/share/db/arcanats/port)
 
 # transport/
-set(BLE_INC       ${MAIN_DIR}/transport/ble)
+set(BLE_INC       ${MAIN_DIR}/share/transport/ble)
 
 # service/
-set(SVC_DIR       ${MAIN_DIR}/service)
-set(SVC_IMPL_DIR  ${MAIN_DIR}/service/impl)
+set(SVC_DIR       ${MAIN_DIR}/share/service)
+set(SVC_IMPL_DIR  ${MAIN_DIR}/share/service/impl)
 set(REG_INC       ${SVC_DIR})
 set(REG_SRC       ${SVC_IMPL_DIR})
 set(IO_INC        ${SVC_DIR})
@@ -56,11 +58,11 @@ set(UPLOAD_INC    ${SVC_DIR})
 set(UPLOAD_SRC    ${SVC_IMPL_DIR})
 
 # view/ — BaseLcdView, MainView, MainViewModel
-set(VIEW_DIR      ${MAIN_DIR}/view)
-set(VIEW_MAIN_DIR ${MAIN_DIR}/view/main)
+set(VIEW_DIR      ${MAIN_DIR}/share/view)
+set(VIEW_MAIN_DIR ${MAIN_DIR}/share/view/main)
 
 # driver/ — Ssd1306, RgbLed, DhtSensor (consumed by view tests)
-set(DRIVER_DIR    ${MAIN_DIR}/driver)
+set(DRIVER_DIR    ${MAIN_DIR}/share/driver)
 
 set(NANOPB_DIR    ${PROJECT_ROOT}/managed_components/nikas-belogolov__nanopb)
 
@@ -71,6 +73,8 @@ set(COMMON_INCS
     ${CMD_INC}
     ${CMD_CODEC}
     ${CMD_SECURITY}
+    ${SVC_INC}
+    ${CORE_DIR}
     ${CORE_EVENT}
     ${CORE_LOG}
     ${CORE_MODEL}
@@ -114,6 +118,23 @@ target_link_libraries(test_observable PRIVATE GTest::gtest_main esp_stubs)
 add_executable(test_sensor_types test_sensor_types.cpp)
 target_include_directories(test_sensor_types PRIVATE ${COMMON_INCS})
 target_link_libraries(test_sensor_types PRIVATE GTest::gtest_main esp_stubs)
+
+# ── test_xl9555 (expander register-shadow logic, fake I2C) ───────────────────
+add_executable(test_xl9555
+    test_xl9555.cpp
+    ${MAIN_DIR}/esp32s3/Xl9555.cpp
+)
+target_include_directories(test_xl9555 PRIVATE ${COMMON_INCS} ${MAIN_DIR}/esp32s3)
+target_link_libraries(test_xl9555 PRIVATE GTest::gtest_main esp_stubs)
+
+# ── test_tsens_sensor (S3 internal temperature sensor backend) ───────────────
+add_executable(test_tsens_sensor
+    test_tsens_sensor.cpp
+    ${MAIN_DIR}/esp32s3/TsensSensor.cpp
+    ${CORE_EVENT}/ObservableSensor.cpp
+)
+target_include_directories(test_tsens_sensor PRIVATE ${COMMON_INCS} ${MAIN_DIR}/esp32s3)
+target_link_libraries(test_tsens_sensor PRIVATE GTest::gtest_main esp_stubs)
 
 # ── test_commands (Ping + GetDeviceInfo + GetMqttStatus) ─────────────────────
 add_executable(test_commands test_commands.cpp)
@@ -451,6 +472,8 @@ enable_testing()
 add_test(NAME test_frame_codec  COMMAND test_frame_codec)
 add_test(NAME test_observable   COMMAND test_observable)
 add_test(NAME test_sensor_types COMMAND test_sensor_types)
+add_test(NAME test_xl9555       COMMAND test_xl9555)
+add_test(NAME test_tsens_sensor COMMAND test_tsens_sensor)
 add_test(NAME test_commands     COMMAND test_commands)
 add_test(NAME test_chacha20     COMMAND test_chacha20)
 add_test(NAME test_ats_schema     COMMAND test_ats_schema)

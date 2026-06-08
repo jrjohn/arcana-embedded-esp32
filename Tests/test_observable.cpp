@@ -44,6 +44,30 @@ TEST(ObservableTest, NotifyDispatchesToSubscriber) {
     EXPECT_EQ(received, 42);
 }
 
+TEST(ObservableTest, MoveConstructTransfersState) {
+    Observable<TestEvent> src;
+    Observable<TestEvent> dst(std::move(src));   // move-construct (sync)
+
+    int received = 0;
+    dst.Subscribe([&received](const TestEvent& e) { received = e.value; });
+    dst.Notify(TestEvent{55});
+    EXPECT_EQ(received, 55);
+}
+
+TEST(ObservableTest, MoveAssignReleasesOwnResourcesThenTakesOther) {
+    Observable<TestEvent> src;
+    int received = 0;
+    src.Subscribe([&received](const TestEvent& e) { received = e.value; });
+
+    // LHS is async (named) — move-assign must tear down its own queue+task
+    // before adopting src's state (exercises the cleanup branches).
+    Observable<TestEvent> dst("named-dst", 4, 2048, 5);
+    dst = std::move(src);
+
+    dst.Notify(TestEvent{77});
+    EXPECT_EQ(received, 77);
+}
+
 TEST(ObservableTest, NotifyDispatchesToMultipleSubscribers) {
     Observable<TestEvent> obs;
     int a = 0, b = 0, c = 0;

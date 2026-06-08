@@ -117,6 +117,12 @@ extern "C" BaseType_t xTaskCreate(TaskFunction_t, const char*, uint32_t, void*,
     if (out) *out = (TaskHandle_t)0x1;  // non-null so Observable thinks task exists
     return pdPASS;
 }
+extern "C" BaseType_t xTaskCreatePinnedToCore(TaskFunction_t, const char*, uint32_t,
+                                              void*, UBaseType_t, TaskHandle_t* out,
+                                              BaseType_t /*coreId*/) {
+    if (out) *out = (TaskHandle_t)0x1;
+    return pdPASS;
+}
 extern "C" void       vTaskDelete(TaskHandle_t)        {}
 extern "C" void       vTaskDelay(TickType_t)           {}
 

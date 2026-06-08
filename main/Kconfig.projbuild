@@ -228,11 +228,17 @@ menu "Observable Sensor Configuration"
         endchoice
 
         config DHT_SENSOR_GPIO
-            int "DHT data GPIO pin"
+            int "DHT data GPIO pin (-1 disables the sensor)"
+            default -1 if IDF_TARGET_ESP32S3
             default 15
+            range -1 48 if IDF_TARGET_ESP32S3
             range 0 39
             help
                 GPIO pin connected to the DHT sensor data line.
+                DNESP32S3: disabled by default — the U4 DHT socket can only
+                reach IO40 (P5 jumper, taken by the SPI LCD's DC line) or
+                IO0 (BOOT key / button B). Set a P1 EX-IO pin if you wire
+                a DHT externally.
 
         config DHT_SENSOR_READ_INTERVAL_MS
             int "DHT reading interval (ms)"
@@ -251,17 +257,24 @@ menu "OLED Display Configuration"
 
     config OLED_SCL_GPIO
         int "I2C SCL GPIO pin"
+        default 42 if IDF_TARGET_ESP32S3
         default 22
+        range 0 48 if IDF_TARGET_ESP32S3
         range 0 33
         help
             GPIO pin for I2C SCL (clock) to SSD1306 OLED.
+            DNESP32S3: IO42 is the board's shared I2C0 bus (2.2K pullups);
+            no SSD1306 is fitted — the app degrades gracefully if absent.
 
     config OLED_SDA_GPIO
         int "I2C SDA GPIO pin"
+        default 41 if IDF_TARGET_ESP32S3
         default 21
+        range 0 48 if IDF_TARGET_ESP32S3
         range 0 33
         help
             GPIO pin for I2C SDA (data) to SSD1306 OLED.
+            DNESP32S3: IO41 is the board's shared I2C0 bus.
 
     config OLED_I2C_ADDR
         hex "SSD1306 I2C address"
@@ -344,10 +357,14 @@ menu "RGB LED Configuration"
 
     config RGB_LED_GPIO
         int "WS2812B data GPIO pin"
+        default 1 if IDF_TARGET_ESP32S3
         default 26
+        range 0 48 if IDF_TARGET_ESP32S3
         range 0 33
         help
             GPIO pin connected to the WS2812B data line.
+            DNESP32S3 has no WS2812B; IO1 drives the onboard red LED
+            (510R) so the RMT waveform shows as a faint activity glow.
 
     config RGB_LED_NUM_LEDS
         int "Number of LEDs"
@@ -362,6 +379,81 @@ menu "RGB LED Configuration"
         range 100 10000
         help
             Interval between color changes during cycling.
+
+endmenu
+
+# ── ATS storage (SD card over SDSPI) ────────────────────────────────────────
+menu "ATS Storage Configuration"
+
+    config ATS_SD_CLK_GPIO
+        int "SD card SPI CLK GPIO"
+        default 12 if IDF_TARGET_ESP32S3
+        default 4
+        range 0 48 if IDF_TARGET_ESP32S3
+        range 0 33
+        help
+            SPI clock pin for the SD card (SDSPI mode).
+            DNESP32S3 onboard TF slot: CLK=12.
+
+    config ATS_SD_MOSI_GPIO
+        int "SD card SPI MOSI GPIO"
+        default 11 if IDF_TARGET_ESP32S3
+        default 32
+        range 0 48 if IDF_TARGET_ESP32S3
+        range 0 33
+        help
+            SPI MOSI pin for the SD card.
+            DNESP32S3 onboard TF slot: MOSI=11.
+
+    config ATS_SD_MISO_GPIO
+        int "SD card SPI MISO GPIO"
+        default 13 if IDF_TARGET_ESP32S3
+        default 17
+        range 0 48 if IDF_TARGET_ESP32S3
+        range 0 39
+        help
+            SPI MISO pin for the SD card.
+            DNESP32S3 onboard TF slot: MISO=13.
+
+    config ATS_SD_CS_GPIO
+        int "SD card SPI CS GPIO"
+        default 2 if IDF_TARGET_ESP32S3
+        default 27
+        range 0 48 if IDF_TARGET_ESP32S3
+        range 0 33
+        help
+            SPI chip-select pin for the SD card.
+            DNESP32S3 onboard TF slot: CS=2 (shared with REMOTE_IN).
+
+    config ATS_SD_MAX_FREQ_KHZ
+        int "SD card SPI max frequency (kHz)"
+        default 20000 if IDF_TARGET_ESP32S3
+        default 4000
+        range 400 40000
+        help
+            4 MHz suits breadboard wiring + level shifters (classic ESP32
+            DevKit setup). The DNESP32S3 onboard TF slot is stable at
+            20 MHz (~1.1 MB/s file writes) — the early 20 MHz failures
+            were the XL9555 latched-INT-on-MISO issue, fixed by
+            DriverService releasing INT at boot. 26/40 MHz fail card init
+            (SD SPI-mode spec tops out at 25 MHz + GPIO-matrix sampling
+            delay); don't bother.
+
+    config ATS_SD_BENCHMARK_ON_BOOT
+        bool "Run SD write benchmark once at boot"
+        default n
+        help
+            Runs SdBenchmarkService after the SD card is mounted and logs
+            sequential-write speed. Diagnostics only — leave off in
+            production builds.
+
+    config ATS_SD_BENCHMARK_DURATION_MS
+        int "SD benchmark duration (ms)"
+        depends on ATS_SD_BENCHMARK_ON_BOOT
+        default 10000
+        range 1000 60000
+        help
+            How long the boot benchmark writes 4KB blocks.
 
 endmenu
 

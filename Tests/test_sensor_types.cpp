@@ -29,7 +29,7 @@ TEST(SensorTypesTest, SensorDataInterfaceMethods) {
 TEST(SensorTypesTest, SensorErrorConstructWithMessage) {
     SensorError e(-1, "Read failed", 3);
     EXPECT_EQ(e.ErrorCode, -1);
-    EXPECT_EQ(e.Message, "Read failed");
+    EXPECT_STREQ(e.Message, "Read failed");
     EXPECT_EQ(e.SensorId, 3);
     EXPECT_EQ(e.GetType(), ModelType::SensorError);
     EXPECT_STREQ(e.GetTypeName(), "SensorError");
@@ -39,7 +39,7 @@ TEST(SensorTypesTest, SensorErrorDefaultConstructor) {
     SensorError e;
     EXPECT_EQ(e.ErrorCode, 0);
     EXPECT_EQ(e.SensorId, 0);
-    EXPECT_TRUE(e.Message.empty());
+    EXPECT_STREQ(e.Message, "");
 }
 
 TEST(SensorTypesTest, ThresholdEventConstruct) {

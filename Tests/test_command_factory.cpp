@@ -45,6 +45,25 @@ TEST(CommandFactoryTest, SystemUnknownCommand) {
     EXPECT_EQ(factory.Create(Cluster::System, 0x00).get(), nullptr);
 }
 
+// ── Ota cluster ─────────────────────────────────────────────────────────────
+
+TEST(CommandFactoryTest, CreateOtaStartUpdateCommand) {
+    auto factory = makeFactory();   // Ota dep nullptr — factory still builds it
+    auto cmd = factory.Create(Cluster::Ota, OtaCmd::StartUpdate);
+    ASSERT_NE(cmd.get(), nullptr);
+}
+
+TEST(CommandFactoryTest, CreateOtaGetProgressCommand) {
+    auto factory = makeFactory();
+    auto cmd = factory.Create(Cluster::Ota, OtaCmd::GetProgress);
+    ASSERT_NE(cmd.get(), nullptr);
+}
+
+TEST(CommandFactoryTest, OtaUnknownCommand) {
+    auto factory = makeFactory();
+    EXPECT_EQ(factory.Create(Cluster::Ota, 0xFF).get(), nullptr);
+}
+
 // ── Sensor cluster (commands take nullptr Sensor → return error path) ──────
 
 TEST(CommandFactoryTest, CreateGetSensorDataCommand) {
