@@ -1,6 +1,6 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Architecture-Service_+_MVVM_+_Storage-gold?style=for-the-badge" alt="Architecture">
-  <img src="https://img.shields.io/badge/MCU-ESP32-E7352C?style=for-the-badge&logo=espressif" alt="ESP32">
+  <img src="https://img.shields.io/badge/MCU-ESP32_·_ESP32--S3-E7352C?style=for-the-badge&logo=espressif" alt="ESP32 / ESP32-S3">
   <img src="https://img.shields.io/badge/RTOS-FreeRTOS-00A86B?style=for-the-badge" alt="FreeRTOS">
   <img src="https://img.shields.io/badge/Language-C++23-00599C?style=for-the-badge&logo=cplusplus" alt="C++">
   <img src="https://img.shields.io/badge/IDF-v6.0.1-blue?style=for-the-badge" alt="ESP-IDF">
@@ -44,6 +44,7 @@
   <a href="#security">Security</a> &bull;
   <a href="#ble-dual-role">BLE</a> &bull;
   <a href="#observable-pattern">Observable</a> &bull;
+  <a href="#supported-boards">Boards</a> &bull;
   <a href="#getting-started">Getting Started</a>
 </p>
 
@@ -244,7 +245,7 @@ graph TB
 | `AtsStorageService` | `Arcana::Storage` | `AtsStorageService` | Daily `.ats` files on SD card; sensor data + credentials persistence |
 | `WifiService` | `Arcana::Wifi` | `WifiService` | WiFi connect + SNTP sync; replaces `protocol_examples_common` |
 | `IoService` | `Arcana::Io` | `IoService` | GPIO button state machine (Button A: upload/cancel, Button B: format) |
-| `OtaService` | `Arcana` | `OtaService` | OTA firmware update support |
+| `OtaService` | `Arcana` | `OtaService` | A/B OTA: HTTP download → size + CRC-32 verify → slot swap → auto-rollback on boot failure (ESP32-S3 16 MB table) |
 | `RegistrationService` | `Arcana::Registration` | `RegistrationService` | TOFU device provisioning: HTTP POST → MQTT credentials stored in device.ats |
 | `HttpUploadService` | `Arcana::Upload` | `HttpUploadService` | HTTP upload of pending `.ats` files to server; progress callback |
 | `LogService` | `Arcana` | — | Structured logging with ATS/device/serial appenders |
@@ -706,6 +707,8 @@ Commands follow a **Matter/ZCL-style two-layer dispatch**: a `Cluster` identifie
 | | | Scan | `0x03` | **Async** | Trigger BLE scan, results via response stream |
 | **Mqtt** | `0x03` | GetStatus | `0x01` | Sync | MQTT connection state |
 | **Security** | `0x04` | KeyExchange | `0x01` | Sync | ECDH P-256 key exchange (requires encryption) |
+| **Ota** | `0x05` | StartUpdate | `0x01` | **Async** | Begin firmware update (host/port/path/size/crc32); runs in background task, ends in reset |
+| | | GetProgress | `0x02` | Sync | Poll update state: `{active, percent}` |
 
 ### Status Codes
 
@@ -1019,12 +1022,40 @@ graph TD
 
 ---
 
+## Supported Boards
+
+The firmware targets two boards from one codebase. CMake selects the board
+implementation by `IDF_TARGET`; all platform-independent logic lives in
+`main/share/` and each board contributes a `BoardConfig.hpp` + `Board.cpp`
+factory (display + sensor) plus any board-only HAL drivers.
+
+| | **ESP32 DevKit** (classic) | **ALIENTEK DNESP32S3** |
+|---|---|---|
+| Target | `esp32` (Xtensa LX6, dual-core) | `esp32s3` (Xtensa LX7, dual-core) |
+| Module | ESP32-WROOM | ESP32-S3-WROOM-1 **N16R8** |
+| Flash / PSRAM | 4 MB / — | 16 MB / 8 MB Octal PSRAM |
+| Display | SSD1306 OLED (I²C, 128×64) | ST7789 SPI LCD (320×240, SPILCD socket) |
+| Environment sensor | DHT11/DHT22 (GPIO15) | S3 internal die-temperature sensor¹ |
+| IO expander | — | XL9555 (16-bit, I²C0) — keys, LCD/camera power, beeper |
+| SD card | SDSPI (CLK4/MOSI32/MISO17/CS27 @ 4 MHz) | SDSPI onboard TF slot (CLK12/MOSI11/MISO13/CS2 @ 20 MHz, ~1.1 MB/s) |
+| Buttons | A=GPIO5, B=GPIO36 | A disabled², B=BOOT key (IO0) |
+| Partition table | 4 MB factory-only | 16 MB **A/B OTA** (ota_0/ota_1 + 7.9 MB FAT) |
+| Flash/monitor | external USB-UART | native USB-C (USB-Serial-JTAG) or CH340 |
+
+¹ The DNESP32S3 has no wirable ambient temp/humidity sensor — the U4 DHT
+socket only reaches the LCD DC line or the BOOT key — so the sensor pipeline
+is fed by the chip's internal temperature sensor (reads above ambient).
+² KEY0–3 sit behind the XL9555 expander; GPIO5 is the camera's D1 line.
+
+Full DNESP32S3 pin map, mux-conflict matrix, OV5640 camera and ESP-Prog-2
+notes: [`docs/DNESP32S3-pinmap.md`](docs/DNESP32S3-pinmap.md).
+
 ## Getting Started
 
 ### Prerequisites
 
-- [ESP-IDF v5.5.2+](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/get-started/)
-- ESP32 development board
+- [ESP-IDF v6.0.1+](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/get-started/)
+- An ESP32 or ESP32-S3 development board (see [Supported Boards](#supported-boards))
 
 ### Build & Flash
 
@@ -1033,18 +1064,29 @@ git clone https://github.com/jrjohn/arcana-embedded-esp32.git
 cd arcana-embedded-esp32
 
 # Set up ESP-IDF environment
-source ~/.espressif/v5.5.2/esp-idf/export.sh
+source ~/.espressif/v6.0.1/esp-idf/export.sh
 
 # Configure credentials (required on first clone)
 cp sdkconfig.credentials.example sdkconfig.credentials
 # Edit sdkconfig.credentials with your Wi-Fi and MQTT settings
 
-# Build
+# --- Classic ESP32 DevKit ---
+idf.py set-target esp32          # default; sdkconfig.defaults applies
 idf.py build
-
-# Flash and monitor
 idf.py -p /dev/ttyUSB0 flash monitor
+
+# --- ALIENTEK DNESP32S3 ---
+idf.py set-target esp32s3        # picks up sdkconfig.defaults.esp32s3 + board dir
+idf.py build
+idf.py -p /dev/cu.usbmodem* flash monitor   # native USB-C
+
+# NOTE: switching the OTA partition layout (esp32 <-> esp32s3) requires a
+# one-time `idf.py erase-flash` so stale NVS/app data does not linger.
 ```
+
+Per-board pin assignments, flash size and PSRAM come from `IDF_TARGET`-gated
+Kconfig defaults and `sdkconfig.defaults.<target>` — no manual menuconfig
+needed to switch boards.
 
 ### Credentials
 
@@ -1073,9 +1115,12 @@ idf.py menuconfig
 | | Number of LEDs | 3 |
 | | Cycle Interval | 1000 ms |
 | **Observable Sensor** | DHT Type | DHT11 |
-| | GPIO Pin | (Kconfig) |
+| | GPIO Pin | 15 (esp32) / -1 disabled (esp32s3 uses internal tsens) |
 | | Read Interval | (Kconfig) |
-| **BLE Service** | Device Name | `ARCANA-ESP32` |
+| **ATS Storage** | SD SPI pins | per-target (esp32: 4/32/17/27 · esp32s3: 12/11/13/2) |
+| | SD SPI max freq | 4 MHz (esp32) / 20 MHz (esp32s3) |
+| | Boot benchmark | OFF |
+| **BLE Service** | Device Name | `ARCANA-ESP32S3` |
 | | Max Connections | 3 |
 | **Command Service** | Encryption (AES-256-CCM) | OFF |
 | | PSK (64 hex chars) | `0011...EEFF` |
