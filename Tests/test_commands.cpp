@@ -100,6 +100,24 @@ TEST(OtaCommandsTest, StartRejectsWhenBusyOrUnwired) {
     EXPECT_EQ(cmd.Execute(bad).Status, kStatusInvalidParam);
 }
 
+TEST(OtaCommandsTest, StartAcceptsValidPayload) {
+    uint8_t buf[128];
+    uint16_t len = buildOtaPayload(buf, "192.168.11.44", "/mqtt5.bin",
+                                   8070, 1688064, 0xf204eea8);
+    CommandRequest req;
+    req.ClusterId = Cluster::Ota;
+    req.Command = OtaCmd::StartUpdate;
+    memcpy(req.Payload, buf, len);
+    req.PayloadLen = len;
+
+    FakeOta ota;  // not active, wired
+    OtaUpdateCommand cmd(&ota);
+    auto rsp = cmd.Execute(req);   // host xTaskCreate stub returns pdPASS
+    EXPECT_EQ(rsp.Status, kStatusOk);
+    EXPECT_EQ(rsp.ClusterId, Cluster::Ota);
+    EXPECT_EQ(rsp.Command, OtaCmd::StartUpdate);
+}
+
 TEST(OtaCommandsTest, GetProgressReportsState) {
     FakeOta ota; ota.active = true; ota.progress = 42;
     GetOtaProgressCommand cmd(&ota);

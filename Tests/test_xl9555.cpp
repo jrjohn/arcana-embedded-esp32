@@ -72,6 +72,17 @@ TEST(Xl9555Test, PinModeWritesOnlyTheChangedPort) {
     EXPECT_EQ(gRegs[0x07], 0xFF & ~0x0C);        // bits 2,3 now outputs
 }
 
+TEST(Xl9555Test, PinModeWritesPort0LowByte) {
+    auto& xl = Xl9555::getInstance();
+    memset(gWriteCount, 0, sizeof(gWriteCount));
+
+    // SpkEn|Beep are port-0 bits — exercises the low-byte config branch
+    EXPECT_EQ(xl.pinMode(Xl9555::kSpkEn | Xl9555::kBeep, false), ESP_OK);
+    EXPECT_EQ(gWriteCount[0x06], 1);             // port-0 cfg written
+    EXPECT_EQ(gWriteCount[0x07], 0);             // port-1 cfg untouched
+    EXPECT_EQ(gRegs[0x06], 0xFF & ~0x0C);        // bits 2,3 now outputs
+}
+
 TEST(Xl9555Test, PinWriteSkipsWhenShadowUnchanged) {
     auto& xl = Xl9555::getInstance();
     memset(gWriteCount, 0, sizeof(gWriteCount));

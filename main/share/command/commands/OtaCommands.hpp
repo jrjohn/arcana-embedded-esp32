@@ -87,22 +87,27 @@ public:
         sOta = mOta;
         BaseType_t ret = xTaskCreate(otaTask, "ota_update", 6144, nullptr,
                                      tskIDLE_PRIORITY + 1, nullptr);
+        // LCOV_EXCL_START — RTOS task-create failure (defensive, IEC 62304
+        // §5.5.3). Host stub xTaskCreate always returns pdPASS.
         if (ret != pdPASS) {
             rsp.Status = kStatusError;
             return rsp;
         }
+        // LCOV_EXCL_STOP
 
         rsp.Status = kStatusOk;
         return rsp;
     }
 
 private:
+    // LCOV_EXCL_START — on-device OTA task entry: a successful update ends
+    // in esp_restart() inside startUpdate(); not host-reachable.
     static void otaTask(void*) {
         sOta->startUpdate(sParams.host, sParams.port, sParams.path,
                           sParams.expectedSize, sParams.expectedCrc32);
-        // Only reached on failure — success restarts inside startUpdate()
         vTaskDelete(nullptr);
     }
+    // LCOV_EXCL_STOP
 
     // One OTA at a time (guarded by isActive); static storage outlives the
     // command object, which the dispatcher destroys right after Execute().

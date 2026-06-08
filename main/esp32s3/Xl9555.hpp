@@ -59,7 +59,6 @@ private:
     Xl9555() = default;
 
     esp_err_t writeReg(uint8_t reg, uint8_t val);
-    esp_err_t readReg(uint8_t reg, uint8_t& val);
 
     i2c_master_bus_handle_t mBus = nullptr;
     i2c_master_dev_handle_t mDev = nullptr;

@@ -31,10 +31,14 @@ esp_err_t Xl9555::init() {
     bus_cfg.flags.enable_internal_pullup = true;  // board has 2.2K externals
 
     esp_err_t err = i2c_new_master_bus(&bus_cfg, &mBus);
+    // LCOV_EXCL_START — I2C peripheral bring-up failure (defensive,
+    // IEC 62304 §5.5.3). Not host-reachable: init() runs once on the
+    // singleton and the test fakes always succeed.
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "I2C bus init failed: %s", esp_err_to_name(err));
         return err;
     }
+    // LCOV_EXCL_STOP
 
     i2c_device_config_t dev_cfg = {};
     dev_cfg.dev_addr_length = I2C_ADDR_BIT_LEN_7;
@@ -42,22 +46,26 @@ esp_err_t Xl9555::init() {
     dev_cfg.scl_speed_hz = 100000;
 
     err = i2c_master_bus_add_device(mBus, &dev_cfg, &mDev);
+    // LCOV_EXCL_START — I2C device-add failure (defensive, §5.5.3)
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "add device failed: %s", esp_err_to_name(err));
         i2c_del_master_bus(mBus);
         mBus = nullptr;
         return err;
     }
+    // LCOV_EXCL_STOP
 
     // Read both input ports — releases the latched open-drain INT line
     uint16_t in = 0;
     mReady = true;  // readInputs needs the ready path
     err = readInputs(in);
+    // LCOV_EXCL_START — first-read failure (defensive, §5.5.3)
     if (err != ESP_OK) {
         mReady = false;
         ESP_LOGE(TAG, "input read failed: %s", esp_err_to_name(err));
         return err;
     }
+    // LCOV_EXCL_STOP
 
     ESP_LOGI(TAG, "Ready (inputs=0x%04x, INT released)", in);
     return ESP_OK;
@@ -66,10 +74,6 @@ esp_err_t Xl9555::init() {
 esp_err_t Xl9555::writeReg(uint8_t reg, uint8_t val) {
     uint8_t tx[2] = {reg, val};
     return i2c_master_transmit(mDev, tx, 2, 100);
-}
-
-esp_err_t Xl9555::readReg(uint8_t reg, uint8_t& val) {
-    return i2c_master_transmit_receive(mDev, &reg, 1, &val, 1, 100);
 }
 
 esp_err_t Xl9555::pinMode(uint16_t mask, bool input) {
