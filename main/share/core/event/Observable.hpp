@@ -106,23 +106,47 @@ public:
     Observable(const Observable&) = delete;
     Observable& operator=(const Observable&) = delete;
 
-    // Movable
+    // Movable — transfers ALL resources (async queue/task and name included)
+    // and nulls the source so its destructor is a no-op. The earlier version
+    // moved only mObservers/mMutex/mNextId, leaving the moved-to mQueue/
+    // mTaskHandle/mName uninitialized — a latent UB in the destructor. Member
+    // init-list order follows declaration order (mObservers, mMutex, mNextId,
+    // mName, mQueue, mTaskHandle) to satisfy -Werror=reorder.
     Observable(Observable&& Other) noexcept
         : mObservers(std::move(Other.mObservers))
         , mMutex(Other.mMutex)
-        , mNextId(Other.mNextId) {
+        , mNextId(Other.mNextId)
+        , mName(Other.mName)
+        , mQueue(Other.mQueue)
+        , mTaskHandle(Other.mTaskHandle) {
         Other.mMutex = nullptr;
+        Other.mQueue = nullptr;
+        Other.mTaskHandle = nullptr;
+        Other.mName = nullptr;
     }
 
     Observable& operator=(Observable&& Other) noexcept {
         if (this != &Other) {
+            // Release our own resources before taking Other's
+            if (mTaskHandle) {
+                vTaskDelete(mTaskHandle);
+            }
+            if (mQueue) {
+                vQueueDelete(mQueue);
+            }
             if (mMutex) {
                 vSemaphoreDelete(mMutex);
             }
             mObservers = std::move(Other.mObservers);
             mMutex = Other.mMutex;
             mNextId = Other.mNextId;
+            mName = Other.mName;
+            mQueue = Other.mQueue;
+            mTaskHandle = Other.mTaskHandle;
             Other.mMutex = nullptr;
+            Other.mQueue = nullptr;
+            Other.mTaskHandle = nullptr;
+            Other.mName = nullptr;
         }
         return *this;
     }
