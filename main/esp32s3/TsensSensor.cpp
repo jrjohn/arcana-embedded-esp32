@@ -17,13 +17,15 @@ TsensSensor::TsensSensor(const SensorConfig& Config)
     if (err == ESP_OK) {
         err = temperature_sensor_enable(mHandle);
     }
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "init failed: %s", esp_err_to_name(err));
-        return;
-    }
 
-    mInitialized = true;
-    ESP_LOGI(TAG, "Initialized (internal die temperature, -10..80C)");
+    // Single exit (no early return) so the closing brace's basic block is
+    // always reached — gcov otherwise leaves it uncovered on the error path.
+    if (err == ESP_OK) {
+        mInitialized = true;
+        ESP_LOGI(TAG, "Initialized (internal die temperature, -10..80C)");
+    } else {
+        ESP_LOGE(TAG, "init failed: %s", esp_err_to_name(err));
+    }
 }
 
 TsensSensor::~TsensSensor() {
