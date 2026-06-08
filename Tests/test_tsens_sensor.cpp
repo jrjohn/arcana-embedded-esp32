@@ -86,3 +86,13 @@ TEST(TsensSensorTest, DestructorUninstallsWhenInstalled) {
     { TestableTsens sensor{SensorConfig()}; }
     EXPECT_EQ(gUninstalls, before + 1);
 }
+
+TEST(TsensSensorTest, DeleteViaBasePointerUninstalls) {
+    // TsensSensor has a virtual destructor (ObservableSensor base); exercise
+    // the deleting-destructor variant via a base-class pointer, as the DI
+    // container would when a board owns the sensor polymorphically.
+    int before = gUninstalls;
+    ObservableSensor* s = new TsensSensor(SensorConfig().WithId(3));
+    delete s;
+    EXPECT_EQ(gUninstalls, before + 1);
+}
