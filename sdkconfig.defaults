@@ -47,6 +47,13 @@ CONFIG_ESP_TLS_SKIP_SERVER_CERT_VERIFY=y
 # FatFS for SD card
 CONFIG_FATFS_LFN_HEAP=y
 CONFIG_FATFS_MAX_LFN=64
+# exFAT: lets a single .ats exceed 4GB (FSIZE_t becomes 64-bit) — parity with the
+# STM32 build (which uses FF_FS_EXFAT=1). FatFs still mounts FAT32 too, so existing
+# FAT32 cards keep working (and now reach 4GB via the raw-FatFs FatFsFilePort).
+# VERIFY: confirm this Kconfig exists in ESP-IDF v6 (idf.py menuconfig → Component
+# config → FAT Filesystem support). If absent, enable exFAT via a main/ ffconf.h
+# override (FF_FS_EXFAT=1). exFAT carries Microsoft IP terms — product/legal sign-off.
+CONFIG_FATFS_EXFAT_ENABLED=y
 
 # TLS: reduce memory for HTTPS upload on heap-constrained ESP32.
 # MBEDTLS_DYNAMIC_BUFFER was removed in IDF 6.0; MBEDTLS_SSL_VARIABLE_BUFFER_LENGTH

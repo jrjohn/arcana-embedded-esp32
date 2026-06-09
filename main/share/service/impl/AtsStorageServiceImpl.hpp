@@ -2,7 +2,7 @@
 
 #include "AtsStorageService.hpp"
 #include "ats/ArcanaTsDb.hpp"
-#include "VfsFilePort.hpp"
+#include "FatFsFilePort.hpp"   // raw FatFs (64-bit f_lseek) — replaces stdio VfsFilePort's 2GB cap
 #include "FreeRtosMutex.hpp"
 #include "Esp32AesCtrCipher.hpp"
 #include "freertos/FreeRTOS.h"
@@ -86,13 +86,13 @@ private:
 
     // ArcanaTS sensor DB (daily rotation)
     arcana::ats::ArcanaTsDb mDb;
-    arcana::ats::VfsFilePort mFilePort;
+    arcana::ats::FatFsFilePort mFilePort;
     arcana::ats::FreeRtosMutex mMutex;
     arcana::ats::Esp32AesCtrCipher mCipher;
 
     // ArcanaTS device DB (permanent)
     arcana::ats::ArcanaTsDb mDeviceDb;
-    arcana::ats::VfsFilePort mDeviceFilePort;
+    arcana::ats::FatFsFilePort mDeviceFilePort;
 
     // Buffers
     static uint8_t sSlowBuf[arcana::ats::BLOCK_SIZE];

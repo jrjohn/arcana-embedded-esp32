@@ -68,8 +68,13 @@ static void deriveKey(uint8_t key[32]) {
 // ---------------------------------------------------------------------------
 
 AtsStorageServiceImpl::AtsStorageServiceImpl()
-    : mFilePort(MOUNT_POINT)
-    , mDeviceFilePort(MOUNT_POINT)
+    // Raw-FatFs ports use the FatFs drive prefix, NOT the VFS "/sdcard" path.
+    // "" = default volume (drive 0), where esp_vfs_fat mounts the single SD card.
+    // (esp_vfs_fat stays mounted for the upload/housekeeping code that still uses
+    //  the "/sdcard" VFS path.)  VERIFY-ON-HW: if the SD lands on a non-0 pdrv,
+    //  change these to "0:" / the actual drive.
+    : mFilePort("")
+    , mDeviceFilePort("")
     , mStatsObs()
 {
     output.StatsEvents = &mStatsObs;

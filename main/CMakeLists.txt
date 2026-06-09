@@ -46,6 +46,7 @@ idf_component_register(
         # db/arcanats/
         "share/db/arcanats/ats/ArcanaTsDb.cpp"
         "share/db/arcanats/port/VfsFilePort.cpp"
+        "share/db/arcanats/port/FatFsFilePort.cpp"   # raw-FatFs 64-bit port (active); VfsFilePort kept for tests/fallback
 
         # command/
         "share/command/CommandFactory.cpp"
