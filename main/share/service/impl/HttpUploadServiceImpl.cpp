@@ -9,6 +9,7 @@
 #include "freertos/task.h"
 #include <cstdio>
 #include <cstring>
+#include "ff.h"   // raw FatFs (f_open/f_size/f_lseek/f_read) — >2GB-safe vs stdio fseek/ftell
 
 static const char* TAG = "HttpUpload";
 
@@ -154,16 +155,20 @@ done:
 
 bool HttpUploadServiceImpl::uploadFile(const char* filename, const char* deviceId,
                                         const char* token) {
+    // Raw FatFs (not fopen/ftell): ftell/fseek use a signed-32-bit long on ESP32 and
+    // break past 2GB. f_size/f_lseek use FSIZE_t (32-bit unsigned on FAT32 → 4GB),
+    // covering the daily .ats max — same approach as the STM32 upload path. Path is
+    // drive-relative (no "/sdcard" VFS prefix) since this goes through raw FatFs.
     char filepath[64];
-    snprintf(filepath, sizeof(filepath), "%s/%s", MOUNT_POINT, filename);
+    snprintf(filepath, sizeof(filepath), "/%s", filename);
 
-    FILE* fp = fopen(filepath, "rb");
-    if (!fp) { ESP_LOGW(TAG, "Cannot open %s", filepath); return false; }
+    FIL fp;
+    if (f_open(&fp, filepath, FA_READ) != FR_OK) {
+        ESP_LOGW(TAG, "Cannot open %s", filepath); return false;
+    }
 
-    fseek(fp, 0, SEEK_END);
-    uint32_t fileSize = (uint32_t)ftell(fp);
-    fseek(fp, 0, SEEK_SET);
-    if (fileSize == 0) { fclose(fp); return false; }
+    uint32_t fileSize = (uint32_t)f_size(&fp);
+    if (fileSize == 0) { f_close(&fp); return false; }
 
     mProgress.totalBytes = fileSize;
     ESP_LOGI(TAG, "%s: %luKB on SD", filename, (unsigned long)(fileSize / 1024));
@@ -173,13 +178,13 @@ bool HttpUploadServiceImpl::uploadFile(const char* filename, const char* deviceI
     uint32_t resumeOffset = queryServerOffset(filename, deviceId);
     if (resumeOffset >= fileSize) {
         ESP_LOGI(TAG, "%s already complete on server", filename);
-        fclose(fp); return true;
+        f_close(&fp); return true;
     }
     if (resumeOffset > 0) {
         ESP_LOGI(TAG, "Resuming %s from %luKB/%luKB",
                  filename, (unsigned long)(resumeOffset/1024),
                  (unsigned long)(fileSize/1024));
-        fseek(fp, resumeOffset, SEEK_SET);
+        f_lseek(&fp, resumeOffset);
         mProgress.bytesSent = resumeOffset;
     }
 
@@ -204,7 +209,7 @@ bool HttpUploadServiceImpl::uploadFile(const char* filename, const char* deviceI
     cfg.crt_bundle_attach = esp_crt_bundle_attach;
 
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
-    if (!client) { fclose(fp); return false; }
+    if (!client) { f_close(&fp); return false; }
 
     // Headers
     char authHeader[128];
@@ -219,7 +224,7 @@ bool HttpUploadServiceImpl::uploadFile(const char* filename, const char* deviceI
     esp_err_t err = esp_http_client_open(client, (int)remainSize);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "open failed: %s", esp_err_to_name(err));
-        esp_http_client_cleanup(client); fclose(fp); return false;
+        esp_http_client_cleanup(client); f_close(&fp); return false;
     }
 
     ESP_LOGI(TAG, "open OK, heap=%lu, writing...",
@@ -232,8 +237,10 @@ bool HttpUploadServiceImpl::uploadFile(const char* filename, const char* deviceI
 
     while (sent < remainSize) {
         size_t want = (remainSize - sent > sizeof(buf)) ? sizeof(buf) : (remainSize - sent);
-        size_t br = fread(buf, 1, want, fp);
-        if (br == 0) { ESP_LOGE(TAG, "fread err at %lu", (unsigned long)sent); ok = false; break; }
+        UINT br = 0;
+        if (f_read(&fp, buf, (UINT)want, &br) != FR_OK || br == 0) {
+            ESP_LOGE(TAG, "f_read err at %lu", (unsigned long)sent); ok = false; break;
+        }
 
         int w = esp_http_client_write(client, (const char*)buf, (int)br);
         if (w <= 0) {
@@ -272,7 +279,7 @@ bool HttpUploadServiceImpl::uploadFile(const char* filename, const char* deviceI
 
     esp_http_client_close(client);
     esp_http_client_cleanup(client);
-    fclose(fp);
+    f_close(&fp);
     return ok;
 }
 
