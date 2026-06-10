@@ -15,9 +15,9 @@ namespace Arcana::Storage {
  * ArcanaTS-based storage service for ESP32.
  *
  * - Single .ats file per day on SD card (FAT32, SPI mode)
- * - Multi-channel: DHT11 sensor data + error log
- * - Block I/O: 4KB writes, 508 records/block (DHT11 = 8 bytes/rec)
- * - ChaCha20 encryption, CRC-32 integrity
+ * - Multi-channel: ADS1298 8ch ECG + error log
+ * - Block I/O: 4KB blocks, ~140 records/block (ADS1298 = 28 bytes/rec, tagged multi-channel)
+ * - AES-256-CTR encryption (Esp32AesCtrCipher), CRC-32 integrity
  * - Daily midnight rotation
  * - Permanent device.ats for lifecycle/config/credentials
  */
