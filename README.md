@@ -55,11 +55,11 @@
 | Dimension | Score | Notes |
 |-----------|-------|-------|
 | **Architecture Pattern** | 9.5/10 | 5-phase AppContainer lifecycle; MVVM display layer; TOFU provisioning; graceful storage degradation; single big `main/` component organised by layer (`service/transport/db/command/view/driver/core`) |
-| **Security** | 9.5/10 | AES-256-CCM + ECDH PFS + replay protection + 7 attack mitigations |
+| **Security** | 9.5/10 | AES-256-CCM commands + ECDH PFS + replay protection + 7 attack mitigations; all device↔cloud transport now TLS (HTTPS registration/upload, MQTTS 8883); registration response on HW AES-256-CTR |
 | **Protocol Design** | 9/10 | Unified Frame + protobuf across BLE/MQTT, shared wire format with STM32 |
 | **Extensibility** | 9/10 | New command = 1 class + 1 factory case; new service = abstract + impl |
 | **Observable System** | 9/10 | Sync/async modes, RAII subscription, WeakObserver, 3 template variants |
-| **Storage / Persistence** | 8/10 | ArcanaTs time-series DB with ChaCha20/AES-CTR + CRC32; optional SD; graceful degradation |
+| **Storage / Persistence** | 8/10 | ArcanaTs time-series DB, **HW AES-256-CTR** (`Esp32AesCtrCipher`, both ESP32 + ESP32-S3 have AES accelerators; ChaCha20 is the STM32-only path) + CRC32; raw-FatFs port lifts the daily file off the old 2 GB stdio cap to the FAT32 **4 GB** ceiling; optional SD; graceful degradation |
 | **Resource Efficiency** | 7/10 | ~12 async Observable tasks; MVVM render via task notification (zero idle cost); ESP-IDF 6.0 picolibc shrinks libc footprint |
 | **Thread Safety** | 8/10 | Mutex-protected crypto sessions; std::string in queue (High issue) |
 | **Testing** | 10/10 | 21 host tests, all passing. **100.0% line coverage** (2798/2798 lines, 0 uncovered) verified by Sonar. mbedtls fault-injection via linker `--wrap`, FlakyFilePort precise call-count injection, IEC 62304 §5.5.3 LCOV_EXCL annotations on defensive paths |
@@ -148,6 +148,11 @@
 | 17 | Dead code: `uploadMonTask` static function | Removed in commit `287c977`. The static `uploadMonTask` was never passed to `xTaskCreate` (the inline poll in `AppContainer::run()` is the actual implementation). Also removed unused `int clen` variable in `HttpUploadServiceImpl.cpp` |
 | 18 | `mqtt5.bin` would not build under ESP-IDF 6.0 | mbedtls 4.0 moved legacy crypto headers (`aes.h`, `ccm.h`, `ecdh.h`, `sha256.h`, `entropy.h`, `ctr_drbg.h`) into `mbedtls/private/` and gates them behind `MBEDTLS_DECLARE_PRIVATE_IDENTIFIERS`. `mbedtls_entropy_*` and `mbedtls_ctr_drbg_*` were removed entirely. Resolved in commits `eb02a76` (firmware), `54d8f6b` (CI), `d865117` (host tests): updated 5 source files to private headers + define guard, replaced ctr_drbg with `EspRng` wrapper around `esp_fill_random()`, added `Tests/mocks/mbedtls/private/*.h` redirector stubs for system mbedtls 2.28 |
 | 19 | Host tests had no infrastructure | Built up from zero starting at commit `9e11332`. Final state: 21 host tests in Tests/, gtest framework, mbedtls fault injection via linker `--wrap`, `FlakyFilePort` for ICipher/IFilePort failure paths, Sonar reports 100.0% line coverage. Fault-injection design: counter-based `_after_n` flags for "succeed N times then fail on call N+1" patterns |
+| 20 | Daily `.ats` silently truncated at 2 GB | `VfsFilePort` used stdio `fseek/ftell` whose signed 32-bit `long` breaks past 2^31 — each day's ECG file (~2.4 GB) lost its last hours. Replaced the storage + upload read path with a raw-FatFs `FatFsFilePort` (`f_open`/`f_size`/`f_lseek`/`f_read`, `FSIZE_t` unsigned 32-bit → FAT32 4 GB single-file ceiling). Hardware-validated: a `20260609.ats` grew cleanly to 2.40 GB, decrypted intact past the 2^31 boundary. Commits `8d4ae42` (storage) + `7feb88f` (upload) |
+| 21 | DNESP32S3 had no upload-trigger button | GPIO button A is unusable on this board (GPIO5 = camera D1, phantom events) so it was disabled — leaving no way to start an upload. The four physical keys sit on the XL9555 I2C expander; bound **KEY2** (mask `0x2000`) as button A via a new `BOARD_BUTTON_A_XL9555` path in `IoServiceImpl` that polls `Xl9555::readInputs()`. The classic ESP32 (GPIO5) path is untouched. Commit `7c8b9bb` |
+| 22 | WAN uploads stalled at 0 % (PMTU blackhole) | HTTPS upload to the WAN server delivered zero body bytes while handshake + small GETs succeeded. Root cause: the site gateway's WAN MTU (1359) with no TCP MSS clamping + lwIP's lack of PMTU-blackhole detection (full-size 1480 B segments died silently). Fixed device-side with `CONFIG_LWIP_TCP_MSS=1280` + `TCP_SND_BUF/WND` 5760→46080, and a robust write loop (retry on `esp_http_client_write`==0 / EINPROGRESS, partial-write handling, `cfg.timeout_ms` 30 s→5 s). Fleet-wide fix is an MSS clamp on the gateway. Commit `9f75bc9` |
+| 23 | MQTT ran in clear text (plain 1883) | Connection, credentials and telemetry were on plain `mqtt://...:1883`. Added `cfg.broker.verification.crt_bundle_attach` so an `mqtts://arcana.boo:8883` URL verifies the broker's Let's Encrypt cert — connection now inside TLS. Commit `bb82120` |
+| 24 | Registration failed + used software ChaCha20 | The device POSTed `http://arcana.boo:8088` directly, but :8088 is loopback-only behind nginx → registration always failed and no per-device token was issued. Now POSTs `https://arcana.boo/api/register` (nginx 443, `crt_bundle_attach`) — device registers, persists per-device MQTT creds + upload token. Response crypto also migrated ChaCha20 → **HW AES-256-CTR** (`Esp32AesCtrCipher`): request carries a `cipher` field, server defaults to ChaCha20 when absent so STM32 (no AES HW) is unaffected. Commit `64afc26` |
 
 ### Trade-offs
 
@@ -171,7 +176,8 @@
 | Transport | Status | Notes |
 |-----------|--------|-------|
 | **BLE GATT** | Supported | Write to 0xFF10, Notify on 0xFF11 |
-| **MQTT** | Supported | Binary payload on `arcana/cmd` / `arcana/rsp` |
+| **MQTT** | Supported | MQTTS (TLS) on `arcana.boo:8883`, LE-cert verified; binary payload on `arcana/cmd` / `arcana/rsp`. Telemetry published as JSON on `arcana/sensor` |
+| **HTTPS** | Supported | Registration `POST /api/register` + `.ats` upload `POST /upload/...` via nginx 443 (Bearer token, Content-Range resume) |
 | **UART** | Ready | Frame layer provides packet boundaries + CRC |
 | **TCP Raw Socket** | Ready | Frame layer provides length-delimited framing |
 
