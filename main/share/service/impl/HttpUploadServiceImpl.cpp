@@ -23,20 +23,6 @@ static const char* TAG = "HttpUpload";
 // (MOUNT_POINT removed — upload read path now opens raw-FatFs "/<file>" directly, not the /sdcard VFS path)
 static const size_t CHUNK_SIZE = 2048;
 
-// ECC P-256 self-signed cert for local HTTPS test server (611 bytes vs RSA 1147)
-static const char LOCAL_SERVER_CERT[] =
-"-----BEGIN CERTIFICATE-----\n"
-"MIIBlzCCATygAwIBAgIUHOkyHLjbJ7t1s++opThEv88gI80wCgYIKoZIzj0EAwIw\n"
-"GDEWMBQGA1UEAwwNMTkyLjE2OC4xMS40NDAeFw0yNjA0MDIxNDAyMzFaFw0yNzA0\n"
-"MDIxNDAyMzFaMBgxFjAUBgNVBAMMDTE5Mi4xNjguMTEuNDQwWTATBgcqhkjOPQIB\n"
-"BggqhkjOPQMBBwNCAATf2jDGtUWlg0llL7/DqAp5QNKtEjQA6/EwTZIOsdUZrDB0\n"
-"3AcpAUnA6MvNC79RosYnYtMtPrmC0UgajyVDtV29o2QwYjAdBgNVHQ4EFgQU9WW4\n"
-"O/NhIMTpkirAyMelDOgHto8wHwYDVR0jBBgwFoAU9WW4O/NhIMTpkirAyMelDOgH\n"
-"to8wDwYDVR0TAQH/BAUwAwEB/zAPBgNVHREECDAGhwTAqAssMAoGCCqGSM49BAMC\n"
-"A0kAMEYCIQDtzsA/80iLWDPMK5SXGixYoq9YeBw93lqm7BHhuz14/gIhAMcJrTZm\n"
-"Z9Pm0yYfG5F8r/fbNWWhHB0Z6DpnDHrxyvDe\n"
-"-----END CERTIFICATE-----\n";
-
 /// Check if upload token "{device_id}|{expiry}|{sig}" is expired
 static bool isTokenExpired(const char* token) {
     if (!token || token[0] == '\0') return true;
@@ -205,7 +191,10 @@ bool HttpUploadServiceImpl::uploadFile(const char* filename, const char* deviceI
     esp_http_client_config_t cfg = {};
     cfg.url = url;
     cfg.method = HTTP_METHOD_POST;
-    cfg.timeout_ms = 30000;
+    // 5s, NOT 30s: one stalled TLS write must return quickly so the retry loop
+    // below gets many attempts inside nginx's ~60s client_body_timeout window.
+    // With 30s a single stall burned half the window in one blocking call.
+    cfg.timeout_ms = 5000;
     cfg.crt_bundle_attach = esp_crt_bundle_attach;
 
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
@@ -242,13 +231,49 @@ bool HttpUploadServiceImpl::uploadFile(const char* filename, const char* deviceI
             ESP_LOGE(TAG, "f_read err at %lu", (unsigned long)sent); ok = false; break;
         }
 
-        int w = esp_http_client_write(client, (const char*)buf, (int)br);
-        if (w <= 0) {
-            ESP_LOGE(TAG, "write err at %lu: w=%d errno=%d",
-                     (unsigned long)(resumeOffset + sent), w, errno);
-            ok = false; break;
+        // Write the whole chunk. Over TLS, esp_http_client_write can return 0
+        // when the socket send buffer is full / mbedTLS reports WANT_WRITE
+        // (errno EINPROGRESS=119) — that is "retry", NOT fatal — and it may
+        // also return a PARTIAL count. The old code aborted on w<=0 (every
+        // upload died at ~3KB) and dropped bytes on a partial write. Loop until
+        // all `br` bytes are sent, tolerating 0 (retry) and partials (advance).
+        UINT wsent = 0;
+        int stalls = 0;
+        TickType_t stallStart = 0;
+        while (wsent < br) {
+            int w = esp_http_client_write(client, (const char*)buf + wsent, (int)(br - wsent));
+            if (w < 0) {
+                ESP_LOGE(TAG, "write err at %lu: w=%d errno=%d",
+                         (unsigned long)(resumeOffset + sent + wsent), w, errno);
+                ok = false; break;
+            }
+            if (w == 0) {
+                // Each w==0 already cost cfg.timeout_ms (5s) inside the client.
+                if (stalls == 0) {
+                    stallStart = xTaskGetTickCount();
+                    ESP_LOGW(TAG, "STALL begin at %lu (errno=%d heap=%lu)",
+                             (unsigned long)(resumeOffset + sent + wsent), errno,
+                             (unsigned long)esp_get_free_heap_size());
+                }
+                if (++stalls >= 8) {   // 8 × 5s ≈ 40s zero progress → nginx will 408 anyway
+                    ESP_LOGE(TAG, "write stalled %lums at %lu (errno=%d)",
+                             (unsigned long)((xTaskGetTickCount() - stallStart) * portTICK_PERIOD_MS),
+                             (unsigned long)(resumeOffset + sent + wsent), errno);
+                    ok = false; break;
+                }
+                continue;
+            }
+            if (stalls) {
+                ESP_LOGW(TAG, "STALL recovered after %lums (%d tries), w=%d",
+                         (unsigned long)((xTaskGetTickCount() - stallStart) * portTICK_PERIOD_MS),
+                         stalls, w);
+                stalls = 0;
+            }
+            wsent += (UINT)w;
         }
-        sent += w;
+        if (!ok) break;
+
+        sent += br;
         mProgress.bytesSent = resumeOffset + sent;
         notifyProgress();
 

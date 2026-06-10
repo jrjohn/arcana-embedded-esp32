@@ -62,9 +62,19 @@ CONFIG_MBEDTLS_SSL_VARIABLE_BUFFER_LENGTH=y
 CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN=4096
 CONFIG_MBEDTLS_SSL_OUT_CONTENT_LEN=4096
 
-# TCP: keep defaults (5760) — larger values eat too much heap on ESP32
-# CONFIG_LWIP_TCP_SND_BUF_DEFAULT=5760
-# CONFIG_LWIP_TCP_WND_DEFAULT=5760
+# TCP tuning for WAN uploads (2026-06-10).
+# MSS 1280 (packet = 1320B): lwIP has NO path-MTU blackhole detection — a hop
+# with MTU < 1480 (e.g. an ISP/tunnel uplink; we hit a gateway WAN at MTU 1359)
+# silently eats full-size 1440-MSS segments: handshake/headers pass, every bulk
+# data segment dies, uploads stall forever at ~0%. 1320 fits virtually all real
+# paths. (The site firewall now also clamps MSS, but devices roam — 4G hotspots,
+# other sites — so keep the device self-sufficient.)
+# SND_BUF/WND 46080 (= 36 × 1280): the old 5760 allowed only ~4 segments in
+# flight — at WAN RTTs that caps throughput to a crawl. Heap cost is fine on
+# both targets (upload runs with BLE deinited; S3 has PSRAM).
+CONFIG_LWIP_TCP_MSS=1280
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=46080
+CONFIG_LWIP_TCP_WND_DEFAULT=46080
 
 # CI: IRAM optimization (overflow fix). FREERTOS_PLACE_FUNCTIONS_INTO_FLASH
 # and RINGBUF_PLACE_FUNCTIONS_INTO_FLASH became the default in IDF 6.0 and
