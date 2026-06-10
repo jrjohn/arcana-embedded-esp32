@@ -20,7 +20,7 @@ static const char* TAG = "HttpUpload";
 #define CONFIG_UPLOAD_SERVER_PORT  443
 #endif
 
-static const char* MOUNT_POINT = "/sdcard";
+// (MOUNT_POINT removed — upload read path now opens raw-FatFs "/<file>" directly, not the /sdcard VFS path)
 static const size_t CHUNK_SIZE = 2048;
 
 // ECC P-256 self-signed cert for local HTTPS test server (611 bytes vs RSA 1147)
