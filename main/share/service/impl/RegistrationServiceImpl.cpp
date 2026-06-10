@@ -1,7 +1,7 @@
 #include "impl/RegistrationServiceImpl.hpp"
 #include "impl/AtsStorageServiceImpl.hpp"
 #include "FrameCodec.hpp"
-#include "ChaCha20.hpp"
+#include "Esp32AesCtrCipher.hpp"   // ESP32 HW AES-256-CTR for the registration response
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_http_client.h"
@@ -28,7 +28,7 @@ static const char* TAG = "Registration";
 #define CONFIG_REG_SERVER_HOST  "arcana.boo"
 #endif
 #ifndef CONFIG_REG_SERVER_PORT
-#define CONFIG_REG_SERVER_PORT  8088
+#define CONFIG_REG_SERVER_PORT  443
 #endif
 
 namespace Arcana::Registration {
@@ -310,6 +310,11 @@ bool RegistrationServiceImpl::httpRegister() {
     pbWriteField(p, 3, 0, &fwVer, 0);
     // field 4: ecdh_pub (bytes, 64)
     pbWriteField(p, 4, 2, devPub, 64);
+    // field 5: cipher (varint) — 2 = AES-256-CTR (ESP32 has HW AES). The server
+    // encrypts the response with this cipher; if absent it defaults to 1=ChaCha20
+    // (STM32, which has no AES hardware), so STM32 stays on ChaCha20 unchanged.
+    uint32_t cipher = 2;
+    pbWriteField(p, 5, 0, &cipher, 0);
 
     uint16_t pbLen = (uint16_t)(p - pbBuf);
 
@@ -329,9 +334,10 @@ bool RegistrationServiceImpl::httpRegister() {
     }
     // LCOV_EXCL_STOP
 
-    // --- HTTP POST (TLS termination done by reverse proxy if needed) ---
+    // --- HTTPS POST via the reverse proxy (nginx 443 → reg-api); the
+    // internal :8088 is loopback-only, so the device must go through 443. ---
     char url[128];
-    snprintf(url, sizeof(url), "http://%s:%d/api/register",
+    snprintf(url, sizeof(url), "https://%s:%d/api/register",
              CONFIG_REG_SERVER_HOST, CONFIG_REG_SERVER_PORT);
 
     esp_http_client_config_t cfg = {};
@@ -339,6 +345,7 @@ bool RegistrationServiceImpl::httpRegister() {
     cfg.method = HTTP_METHOD_POST;
     cfg.timeout_ms = 15000;
     cfg.event_handler = httpEventHandler;
+    cfg.crt_bundle_attach = esp_crt_bundle_attach;   // verify arcana.boo's LE cert
 
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
     esp_http_client_set_header(client, "Content-Type", "application/octet-stream");
@@ -377,9 +384,12 @@ bool RegistrationServiceImpl::httpRegister() {
                 if (!found && pLen > 12) {
                     uint8_t decBuf[256];
                     memcpy(decBuf, framePayload + 12, pLen - 12);
-                    // ChaCha20 decrypt (server encrypts with device_key)
-                    // Note: server uses ChaCha20, NOT AES — this is registration-specific
-                    arcana::crypto::ChaCha20::crypt(mDeviceKey, framePayload, 0, decBuf, pLen - 12);
+                    // AES-256-CTR decrypt (we sent cipher=2; server encrypts the
+                    // response with HW AES). nonce = framePayload[0:12], key =
+                    // device public_key[:32], counter=0 — matches the storage cipher's
+                    // IV layout. STM32 (cipher=1) keeps its own ChaCha20 path.
+                    arcana::ats::Esp32AesCtrCipher aes;
+                    aes.crypt(mDeviceKey, framePayload, 0, decBuf, pLen - 12);
                     found = parseResponse(decBuf, pLen - 12);
                 }
                 // LCOV_EXCL_STOP
