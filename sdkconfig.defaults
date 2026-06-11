@@ -1,6 +1,13 @@
 # MQTT5 Protocol
 CONFIG_MQTT_PROTOCOL_5=y
 
+# Command-channel encryption (AES-256-CCM + ECDH P-256 session keys).
+# Enables CryptoEngine + KeyExchangeManager for BLE and MQTT commands.
+# The 256-bit PSK is a per-deployment provisioning secret and is NOT committed:
+# override CONFIG_CMD_ENCRYPTION_PSK in the (git-ignored) sdkconfig before a
+# production build. The Kconfig default is an all-placeholder key — do NOT ship it.
+CONFIG_CMD_ENCRYPTION_ENABLED=y
+
 # Bluetooth (Bluedroid BLE Dual-Role)
 CONFIG_BT_ENABLED=y
 CONFIG_BT_BLE_42_FEATURES_SUPPORTED=y
