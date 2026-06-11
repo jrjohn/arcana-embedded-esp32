@@ -931,6 +931,21 @@ sequenceDiagram
 - Up to 3 simultaneous client connections with per-client CCCD tracking
 - Automatic re-advertising after client disconnect
 - Observable for connection events and command writes
+- Server advertises a preferred ATT MTU of 517 (`esp_ble_gatt_set_local_mtu`)
+
+**MTU note (verified on hardware):** a Response notify can only carry `ATT_MTU - 3`
+bytes. At the BLE default `ATT_MTU = 23` that is 20 bytes, so a response longer than
+20 bytes is silently truncated (`BT_GATT: attribute value too long, truncated to 20`).
+Example: the System::Ping response is 21 bytes (9 frame + 12 protobuf incl. the 8-byte
+µs timestamp) and loses its last byte at default MTU. Only the **central** can raise the
+MTU — after it requests an MTU exchange (e.g. nRF Connect's *Request MTU* → 247) the full
+21 bytes arrive intact. The device already supports up to 517, so no firmware change is
+needed; clients sending responses > 20 bytes should negotiate a larger MTU on connect.
+
+To verify BLE receive end-to-end without a custom client: connect, enable notify on
+0xFF11, and write the plaintext Ping frame `AC DA 01 01 00 04 00 08 00 10 01 F8 3F` to
+0xFF10 — the device logs `Command write … → Executing cluster=0x00 cmd=0x01 (source=0)`
+and notifies the Ping response on 0xFF11.
 
 ### GATT Client -- Remote Sensor Discovery
 
