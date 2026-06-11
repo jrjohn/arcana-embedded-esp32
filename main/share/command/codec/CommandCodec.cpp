@@ -46,6 +46,20 @@ esp_err_t CommandCodec::Init() {
     return ESP_OK;
 }
 
+void CommandCodec::SetKey(const uint8_t key[CryptoEngine::kKeyLen]) {
+    if (!mEncryptionEnabled) return;
+    // Re-key the PSK fallback engine...
+    if (mCrypto.Init(key) != ESP_OK) {
+        ESP_LOGE(TAG, "SetKey: crypto re-init failed");
+        return;
+    }
+    // ...and the ECDH manager (auth tag + HKDF salt use the same key).
+    if (mKeyExchangeMgr) {
+        mKeyExchangeMgr->SetPsk(key);
+    }
+    ESP_LOGI(TAG, "Command key replaced with per-device key");
+}
+
 bool CommandCodec::DecodeRequest(CommandSource source, uint16_t connId,
                                   const uint8_t* data, size_t len,
                                   CommandRequest& out) {

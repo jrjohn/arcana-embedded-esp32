@@ -17,7 +17,7 @@
 #endif
 #include "mbedtls/ecp.h"
 #include "mbedtls/private/ecdh.h"
-#include "mbedtls/md.h"
+#include "CryptoMac.hpp"
 #include <cstring>
 #include <cstdio>
 
@@ -98,7 +98,7 @@ static int pbDecode(const uint8_t* buf, size_t bufLen, PbField* fields, int maxF
 // Credential pack/unpack (same format as STM32)
 // ---------------------------------------------------------------------------
 
-static const uint16_t CRED_PLAIN_SIZE = 256;
+static const uint16_t CRED_PLAIN_SIZE = 272;   // >= CREDS data field (264) + slack
 static const uint8_t CRED_VALID_MAGIC[2] = {0xCE, 0xED};
 
 static void packCreds(uint8_t* plain, const RegistrationService::Credentials& c) {
@@ -110,20 +110,21 @@ static void packCreds(uint8_t* plain, const RegistrationService::Credentials& c)
     memcpy(plain + off, &c.mqttPort,    2); off += 2;
     memcpy(plain + off, c.uploadToken, 72); off += 72;
     memcpy(plain + off, c.topicPrefix, 36); off += 36;
-    // Validation magic BEFORE commKey (offset 218-219)
+    // Validation magic (offset 218-219)
     plain[off] = CRED_VALID_MAGIC[0]; off += 1;  // off=218→219
     plain[off] = CRED_VALID_MAGIC[1]; off += 1;  // off=219→220
-    // commKey at offset 220-231 (only first 12 bytes fit in 232 save range)
-    // Full commKey doesn't fit in 232 bytes — truncate to fit
-    // Actually: 218 + 2 magic + 12 remaining = 232. Not enough for 32-byte key.
-    // Solution: skip commKey in persistence, re-derive on next boot via ECDH
     plain[off] = c.hasCommKey ? 1 : 0; off += 1;  // off=220→221
+    // Per-device ECDH command key (offset 221-252). The CREDS record was
+    // enlarged (232→264 data) specifically to persist this — it survives
+    // reboots so the command channel re-keys without a fresh registration.
+    memcpy(plain + off, c.commKey, 32); off += 32;  // off=221→253
 }
 
 static bool unpackCreds(const uint8_t* plain, RegistrationService::Credentials& c) {
     // Layout: [user:36][pass:36][broker:36][port:2][token:72][prefix:36]=218
-    //         [magic:2][hasCommKey:1] = 221 total
-    // commKey not persisted — re-derived via ECDH on each boot if needed
+    //         [magic:2][hasCommKey:1][commKey:32] = 253 total
+    // Old 232-byte records have a different layout → the magic check below fails
+    // on them, so we never read a stale commKey (device re-registers instead).
 
     if (plain[218] != CRED_VALID_MAGIC[0] || plain[219] != CRED_VALID_MAGIC[1])
         return false;
@@ -137,9 +138,8 @@ static bool unpackCreds(const uint8_t* plain, RegistrationService::Credentials& 
     memcpy(c.topicPrefix, plain + off, 36); off += 36;
     // off=218, skip magic (2 bytes)
     off += 2;
-    c.hasCommKey = (plain[off] == 1);
-    // commKey not loaded — will be re-derived if needed
-    memset(c.commKey, 0, 32);
+    c.hasCommKey = (plain[off] == 1); off += 1;   // off=220→221
+    memcpy(c.commKey, plain + off, 32);            // off=221→253
 
     return c.mqttUser[0] != '\0' && c.mqttBroker[0] != '\0';
 }
@@ -210,9 +210,8 @@ bool RegistrationServiceImpl::saveCredentials() {
 
     uint8_t data[CRED_PLAIN_SIZE];
     packCreds(data, mCreds);
-    // ATS credentials record = [ts:4][data:232] = 236 bytes
-    // Pass only 232 bytes (ATS adds timestamp)
-    bool ok = storage.saveCredentials(data, 232);
+    // ATS credentials record = [ts:4][data:264] = 268 bytes (ATS adds the ts)
+    bool ok = storage.saveCredentials(data, 264);
     ESP_LOGI(TAG, "Credentials %s to device.ats", ok ? "saved" : "SAVE FAILED");
     return ok;
 }
@@ -222,10 +221,20 @@ bool RegistrationServiceImpl::saveCredentials() {
 // ---------------------------------------------------------------------------
 
 bool RegistrationServiceImpl::doRegistration() {
-    if (mCreds.valid) return true;
+    // Use cached creds, else load from storage.
+    bool haveCreds = mCreds.valid || (loadCredentials() && mCreds.valid);
 
-    // Try loading from storage first
-    if (loadCredentials() && mCreds.valid) return true;
+#ifdef CONFIG_CMD_ENCRYPTION_ENABLED
+    // Command encryption needs a per-device ECDH commKey. If we have creds but
+    // no commKey (e.g. the device registered before the server supported ECDH),
+    // re-register once to obtain one — otherwise the command channel would stay
+    // on the compile-time bootstrap PSK forever.
+    if (haveCreds && mCreds.hasCommKey) return true;
+    if (haveCreds)
+        ESP_LOGI(TAG, "Creds present but no commKey — re-registering for per-device key");
+#else
+    if (haveCreds) return true;
+#endif
 
     // POST to server
     if (!httpRegister()) return false;
@@ -428,26 +437,17 @@ bool RegistrationServiceImpl::httpRegister() {
         if (ret == 0 && sharedLen <= 32) {
             mbedtls_mpi_write_binary(&shared, sharedBuf, 32);
 
-            // HKDF: prk = HMAC-SHA256(device_id[:8], shared)
-            uint8_t prk[32];
-            const mbedtls_md_info_t* mi = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
-
-            mbedtls_md_context_t hm;
-            mbedtls_md_init(&hm);
-            mbedtls_md_setup(&hm, mi, 1);
-            mbedtls_md_hmac_starts(&hm, (const uint8_t*)mDeviceId, 8);
-            mbedtls_md_hmac_update(&hm, sharedBuf, 32);
-            mbedtls_md_hmac_finish(&hm, prk);
-            mbedtls_md_free(&hm);
-
-            // comm_key = HMAC-SHA256(prk, "ARCANA-COMM\x01")
-            const uint8_t info[] = "ARCANA-COMM\x01";
-            mbedtls_md_init(&hm);
-            mbedtls_md_setup(&hm, mi, 1);
-            mbedtls_md_hmac_starts(&hm, prk, 32);
-            mbedtls_md_hmac_update(&hm, info, 12);
-            mbedtls_md_hmac_finish(&hm, mCreds.commKey);
-            mbedtls_md_free(&hm);
+            // comm_key = HKDF-SHA256(ikm=shared, salt=device_id[:8],
+            //                        info="ARCANA-COMM"). Built on the raw SHA-256
+            // primitive via Crypto:: — the mbedtls_md HMAC layer fails at runtime
+            // on IDF 6.0 (PSA dispatch without psa_crypto_init), which would yield
+            // a comm_key that does NOT match the Python server's. Must stay
+            // byte-identical to ecdh_derive_comm_key() server-side.
+            const uint8_t info[] = "ARCANA-COMM";  // 11 chars, no null
+            Crypto::HkdfSha256(sharedBuf, 32,
+                               (const uint8_t*)mDeviceId, 8,
+                               info, sizeof(info) - 1,
+                               mCreds.commKey, 32);
 
             mCreds.hasCommKey = true;
             ESP_LOGI(TAG, "ECDH comm_key derived");

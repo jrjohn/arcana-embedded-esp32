@@ -756,11 +756,11 @@ bool AtsStorageServiceImpl::loadCredentials(uint8_t* outBuf, uint16_t bufSize,
     outLen = 0;
     if (!mDeviceDbReady || mDeviceDb.getChannelCount() < 3) return false;
 
-    uint8_t rec[236];
+    uint8_t rec[268];
     uint16_t n = mDeviceDb.queryLatest(2, rec, 1);
     if (n == 0) return false;
 
-    uint16_t dataLen = 232;
+    uint16_t dataLen = 264;   // CREDS record data field (was 232 + commKey:32)
     if (dataLen > bufSize) dataLen = bufSize;
     memcpy(outBuf, rec + 4, dataLen);
     outLen = dataLen;
@@ -771,9 +771,9 @@ bool AtsStorageServiceImpl::saveCredentials(const uint8_t* data, uint16_t len) {
     ESP_LOGI(TAG, "saveCredentials: ready=%d channels=%u len=%u",
              mDeviceDbReady, mDeviceDb.getChannelCount(), len);
     if (!mDeviceDbReady || mDeviceDb.getChannelCount() < 3) return false;
-    if (len > 232) return false;  // max data portion of credentials record
+    if (len > 264) return false;  // max data portion of credentials record
 
-    uint8_t rec[236] = {};
+    uint8_t rec[268] = {};
     uint32_t ts = atsGetTime();
     memcpy(rec, &ts, 4);
     memcpy(rec + 4, data, len);

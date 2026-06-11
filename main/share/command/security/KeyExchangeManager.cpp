@@ -40,6 +40,18 @@ esp_err_t KeyExchangeManager::Init(const uint8_t psk[CryptoEngine::kKeyLen]) {
     return ESP_OK;
 }
 
+void KeyExchangeManager::SetPsk(const uint8_t psk[CryptoEngine::kKeyLen]) {
+    if (mMutex) xSemaphoreTake(mMutex, portMAX_DELAY);
+    memcpy(mPsk, psk, CryptoEngine::kKeyLen);
+    // Drop every session/pending — they were authenticated under the old PSK.
+    for (int i = 0; i < kMaxSessions; ++i) {
+        mSessions[i].Active = false;
+    }
+    mPending.Valid = false;
+    if (mMutex) xSemaphoreGive(mMutex);
+    ESP_LOGI(TAG, "PSK replaced (per-device key); sessions cleared");
+}
+
 // Manual HMAC-SHA256 (RFC 2104 ipad/opad) built directly on the mbedtls_sha256
 // streaming primitive.
 //

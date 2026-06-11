@@ -44,6 +44,10 @@ public:
     virtual esp_err_t init() = 0;
     virtual esp_err_t start() = 0;
     virtual void stop() = 0;
+
+    // Re-key the command channel with the per-device key from registration.
+    // Default no-op (encryption disabled / test doubles); overridden by the impl.
+    virtual void SetCommandKey(const uint8_t /*key*/[32]) {}
 };
 
 } // namespace Arcana

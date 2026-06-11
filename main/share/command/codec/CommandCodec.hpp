@@ -17,6 +17,11 @@ public:
 
     void SetKeyExchangeManager(KeyExchangeManager* mgr) { mKeyExchangeMgr = mgr; }
 
+    // Replace the command key at runtime with the per-device key provisioned
+    // during registration. Re-keys both the PSK fallback engine and the
+    // KeyExchangeManager. No-op when encryption is disabled.
+    void SetKey(const uint8_t key[CryptoEngine::kKeyLen]);
+
     bool DecodeRequest(CommandSource source, uint16_t connId,
                        const uint8_t* data, size_t len,
                        CommandRequest& out);

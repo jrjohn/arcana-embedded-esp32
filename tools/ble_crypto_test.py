@@ -52,8 +52,7 @@ if not PSK_HEX:
         for line in open(env):
             if line.startswith("ARCANA_PSK="):
                 PSK_HEX = line.strip().split("=", 1)[1].strip()
-if not PSK_HEX:
-    sys.exit("ERROR: set ARCANA_PSK env (64 hex) to match firmware CONFIG_CMD_ENCRYPTION_PSK")
+# PSK_HEX may be empty when --device-key is used instead (checked in main()).
 
 # ── protobuf (manual, no .proto dependency) ─────────────────────────────────
 def _varint(v):
@@ -237,12 +236,18 @@ async def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--cmd", default="ping", choices=COMMANDS.keys())
     ap.add_argument("--no-key-exchange", action="store_true", help="use PSK directly (no ECDH session)")
+    ap.add_argument("--device-key", help="per-device command key (64 hex). Fetch from the "
+                    "server: GET /api/device/<MAC>/key. Overrides ARCANA_PSK (the bootstrap PSK).")
     ap.add_argument("--addr", help="BLE address/UUID (skip scan)")
     ap.add_argument("--timeout", type=float, default=15)
     args = ap.parse_args()
 
-    psk = bytes.fromhex(PSK_HEX)
-    print(f"PSK: {PSK_HEX[:8]}…{PSK_HEX[-8:]} (32B)  | target: {DEV_NAME}")
+    key_hex = args.device_key or PSK_HEX
+    if not key_hex:
+        sys.exit("ERROR: provide --device-key <hex> or set ARCANA_PSK")
+    psk = bytes.fromhex(key_hex)
+    kind = "per-device key" if args.device_key else "bootstrap PSK"
+    print(f"Key: {key_hex[:8]}…{key_hex[-8:]} (32B, {kind})  | target: {DEV_NAME}")
 
     addr = args.addr
     if not addr:
