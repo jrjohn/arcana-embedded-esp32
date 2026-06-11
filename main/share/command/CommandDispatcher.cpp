@@ -8,6 +8,16 @@ namespace Command {
 
 CommandDispatcher::CommandDispatcher(CommandFactory& factory)
     : mFactory(factory)
+#if CONFIG_IDF_TARGET_ESP32S3
+    // ESP32-S3 (ample RAM): deliver responses on a dedicated task so a slow
+    // BLE/MQTT transmit never blocks command intake/execution — a new command
+    // can arrive and be answered while a prior response is still going out, and
+    // back-to-back replies are serialized through the queue rather than
+    // interrupting each other. ~4.3 KB queue + 4 KB stack.
+    // Classic ESP32 omits this (default-constructed → synchronous send) to save
+    // that RAM; that's its constrained variant.
+    , mResponseEvents("cmdrsp", kRspQueueDepth, 4096, 5)
+#endif
 {
 }
 

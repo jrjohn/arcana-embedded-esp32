@@ -167,6 +167,7 @@
 | Singleton pattern | Global state | Natural fit for hardware peripherals (BLE, sensor); single instance enforced |
 | Custom Frame (not COBS/SLIP) | 9 bytes overhead | Includes version + flags + stream ID + magic for protocol detection; CRC covers entire frame |
 | 1 task per async Observable | 2-3 KB RAM per Observable | Clean decoupling; alternative would be shared thread pool with priority inversion risk |
+| Task-backed command-response queue (ESP32-S3 only) | ~4.3 KB queue + 4 KB task | Responses are delivered on a dedicated task (`cmdrsp`, depth 16) so a slow BLE/MQTT transmit never blocks command intake/execution — a new command can arrive and be answered while a prior response is still going out. The classic ESP32 keeps the synchronous send path to save the RAM (`#if CONFIG_IDF_TARGET_ESP32S3` in `CommandDispatcher`) |
 | TimerTypes in ObservableSensor | Foundation component grows | Avoids circular dependency between `main/` and component layer |
 | MQTT5 (not 3.1.1) | Slightly larger client | Supports user properties, reason codes, topic aliases for future use |
 | ESP-IDF 6.0 with `mbedtls/private/*` shim (not full PSA Crypto rewrite) | Future mbedtls 5.x may break the escape hatch (Cons #10) | Saves 1–3 days of focused crypto rewrite + host-test fault-injection rewrite. PSA migration is recoverable later if upstream ever forces it |

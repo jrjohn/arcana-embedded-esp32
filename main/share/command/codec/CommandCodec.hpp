@@ -2,6 +2,8 @@
 
 #include "CommandTypes.hpp"
 #include "CryptoEngine.hpp"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include <cstdint>
 #include <cstddef>
 #include "esp_err.h"
@@ -33,6 +35,12 @@ private:
     bool mEncryptionEnabled = false;
     CryptoEngine mCrypto;                       // PSK-based engine
     KeyExchangeManager* mKeyExchangeMgr = nullptr;
+    // Serializes the PSK mCrypto engine: DecodeRequest (decrypt) and
+    // EncodeResponse (encrypt) run on different tasks (BLE/MQTT event task vs
+    // the cmdrsp response task on ESP32-S3), and a single mbedtls_ccm_context is
+    // not safe for concurrent use. The session path is already guarded by
+    // KeyExchangeManager's own mutex. Created only when encryption is enabled.
+    SemaphoreHandle_t mCryptoMutex = nullptr;
 };
 
 } // namespace Command
