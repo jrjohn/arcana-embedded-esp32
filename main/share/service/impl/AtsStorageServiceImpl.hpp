@@ -8,6 +8,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
+#include "freertos/queue.h"
 
 namespace Arcana::Storage {
 
@@ -67,8 +68,10 @@ private:
     AtsStorageServiceImpl& operator=(const AtsStorageServiceImpl&) = delete;
 
     // Dedicated task
-    static void storageTask(void* param);
+    static void storageTask(void* param);   // consumer: drains ECG queue → SD
     void taskLoop();
+    static void sampleTask(void* param);     // producer: 1 kHz ECG → queue
+    void sampleLoop();
 
     // Daily rotation
     bool openDailyDb();
@@ -117,6 +120,14 @@ private:
     // Pending write data
     Sensor::SensorData mPendingData;
     SemaphoreHandle_t mWriteSem = nullptr;
+
+    // ECG deep ring: decouples the 1 kHz sampler (producer) from the SD writer
+    // (consumer) so a write stall buffers in the queue instead of pausing
+    // sampling. The queue is the "deep ring" (Phase 2); mDb still runs in
+    // medical mode (Block + double-buffer) behind the consumer.
+    QueueHandle_t mEcgQueue = nullptr;
+    TaskHandle_t  mSampleTaskHandle = nullptr;
+    uint32_t      mEcgQueueDrops = 0;   // sampler couldn't enqueue (ring full > timeout)
 
     // Stats
     Observable<StorageStats> mStatsObs;

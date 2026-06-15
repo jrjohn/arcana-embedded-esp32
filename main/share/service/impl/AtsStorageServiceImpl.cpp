@@ -5,6 +5,8 @@
 #include "ats/ArcanaTsTypes.hpp"
 #include "esp_log.h"
 #include "esp_mac.h"
+#include "esp_heap_caps.h"
+#include "freertos/idf_additions.h"   // xQueueCreateWithCaps / vQueueDeleteWithCaps
 #include "esp_vfs_fat.h"
 #include "sdmmc_cmd.h"
 #include "driver/sdspi_host.h"
@@ -161,18 +163,44 @@ esp_err_t AtsStorageServiceImpl::init() {
     return ESP_OK;
 }
 
+// Deep ECG ring depth (records). At 1 kHz this is how long an SD stall can be
+// absorbed before the sampler has to back off: S3 ~2 s, classic ESP32 kept lean.
+#if CONFIG_IDF_TARGET_ESP32S3
+static constexpr UBaseType_t kEcgRingDepth = 2048;   // ~57 KB (28 B/rec), ~2 s @1kHz
+#else
+static constexpr UBaseType_t kEcgRingDepth = 512;    // ~14 KB, ~0.5 s @1kHz
+#endif
+
 esp_err_t AtsStorageServiceImpl::start() {
     mRunning = true;
 
-    // Pinned to the APP core so SD write bursts never jitter the WiFi/BT
-    // stacks on the PRO core (see core/TaskPriorities.hpp).
+    // Deep ring between the sampler and the SD writer (Phase 2): a write stall
+    // backs up here instead of pausing sampling. ~57 KB at depth 2048 — put it in
+    // PSRAM so it doesn't starve the internal heap shared with the WiFi/BT stacks
+    // (a plain xQueueCreate of that size aborts with ESP_ERR_NO_MEM after the
+    // radios are up). The sampler is a task, not an ISR, so PSRAM storage is fine.
+    mEcgQueue = xQueueCreateWithCaps(kEcgRingDepth, RECORD_SIZE,
+                                     MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!mEcgQueue) {   // no PSRAM (classic ESP32) — fall back to internal RAM
+        mEcgQueue = xQueueCreateWithCaps(kEcgRingDepth, RECORD_SIZE,
+                                         MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    }
+    if (!mEcgQueue) return ESP_ERR_NO_MEM;
+
+    // Consumer: drains the ring → mDb.append (medical mode) → SD. Pinned to the
+    // APP core so SD write bursts never jitter the WiFi/BT stacks on the PRO core.
     BaseType_t ret = xTaskCreatePinnedToCore(
         storageTask, "AtsStore", 4096,
         this, TaskCfg::kPrioStorage, &mTaskHandle, TaskCfg::kCoreApp);
     if (ret != pdPASS) return ESP_ERR_NO_MEM;
 
-    // Sensor subscription not needed for ECG benchmark mode —
-    // taskLoop generates synthetic 1KHz ECG data internally.
+    // Producer: synthetic 1 kHz ECG sampler. Higher priority than the writer so
+    // sampling cadence is never delayed by SD drains. (In production this is the
+    // ADS1298 DRDY-driven acquisition path.)
+    ret = xTaskCreatePinnedToCore(
+        sampleTask, "EcgSample", 3072,
+        this, TaskCfg::kPrioSampling, &mSampleTaskHandle, TaskCfg::kCoreApp);
+    if (ret != pdPASS) return ESP_ERR_NO_MEM;
 
     return ESP_OK;
 }
@@ -183,6 +211,11 @@ void AtsStorageServiceImpl::stop() {
         xSemaphoreGive(mWriteSem);
         vTaskDelay(pdMS_TO_TICKS(200));
         mTaskHandle = nullptr;
+    }
+    mSampleTaskHandle = nullptr;   // sampleLoop exits on !mRunning
+    if (mEcgQueue) {
+        vQueueDeleteWithCaps(mEcgQueue);
+        mEcgQueue = nullptr;
     }
 }
 
@@ -332,13 +365,14 @@ static const uint8_t ECG_LUT[] = {
 };
 static const uint16_t ECG_LUT_LEN = sizeof(ECG_LUT);
 
+// Consumer task: drain the deep ECG ring → mDb.append (medical mode) → SD.
+// The 1 kHz generation lives in sampleLoop() (producer); here we only write, so
+// an SD stall backs up in the queue rather than pausing sampling.
 void AtsStorageServiceImpl::taskLoop() {
     uint32_t lastDay = 0;
     uint32_t lastReportTick = xTaskGetTickCount();
     uint32_t windowOk = 0;
     uint32_t windowFail = 0;
-    uint16_t ecgPhase = 0;
-    TickType_t nextWake = xTaskGetTickCount();
 
     while (mRunning) {
         // Cooperative pause for upload
@@ -346,22 +380,20 @@ void AtsStorageServiceImpl::taskLoop() {
             vTaskDelay(pdMS_TO_TICKS(10));
         }
 
-        // 1KHz pacing — 1 record per ms
-        vTaskDelayUntil(&nextWake, 1);
-
-        if (!mDbReady) continue;
-
-        // Build synthetic ECG record (28 bytes: ts + 8×I24)
-        uint8_t rec[RECORD_SIZE];
-        serializeEcgRecord(atsGetTime(), ecgPhase, rec);
-        ecgPhase++;
-        if (ecgPhase >= ECG_LUT_LEN) ecgPhase = 0;
-
-        if (mDb.append(0, rec)) {
-            mTotalRecords++;
-            windowOk++;
+        if (mDbReady) {
+            // Block up to 1 s so the per-second report/flush still runs when the
+            // ring is briefly empty.
+            uint8_t rec[RECORD_SIZE];
+            if (xQueueReceive(mEcgQueue, rec, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                if (mDb.append(0, rec)) {
+                    mTotalRecords++;
+                    windowOk++;
+                } else {
+                    windowFail++;
+                }
+            }
         } else {
-            windowFail++;
+            vTaskDelay(pdMS_TO_TICKS(10));
         }
 
         // Report + flush every 1 second
@@ -375,10 +407,12 @@ void AtsStorageServiceImpl::taskLoop() {
             mStatsModel.kbPerSec = (uint16_t)(windowOk * RECORD_SIZE / 1024);
             mStatsObs.Notify(mStatsModel);
 
-            ESP_LOGI(TAG, "ECG 8ch: %u rec/s, %u KB/s, total=%lu, fail=%lu",
+            ESP_LOGI(TAG, "ECG 8ch: %u rec/s, %u KB/s, total=%lu, fail=%lu, qfull=%lu, qlen=%u",
                      (unsigned)windowOk,
                      (unsigned)(windowOk * RECORD_SIZE / 1024),
-                     (unsigned long)mTotalRecords, (unsigned long)windowFail);
+                     (unsigned long)mTotalRecords, (unsigned long)windowFail,
+                     (unsigned long)mEcgQueueDrops,
+                     (unsigned)uxQueueMessagesWaiting(mEcgQueue));
 
             windowOk = 0;
             windowFail = 0;
@@ -410,6 +444,47 @@ void AtsStorageServiceImpl::taskLoop() {
                     mRunning = false;
                 }
             }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Sampler task (producer)
+// ---------------------------------------------------------------------------
+
+void AtsStorageServiceImpl::sampleTask(void* param) {
+    static_cast<AtsStorageServiceImpl*>(param)->sampleLoop();
+    vTaskDelete(nullptr);
+}
+
+// Produces synthetic 1 kHz ECG and enqueues into the deep ring. Never touches
+// the SD card — so it keeps perfect cadence even while the writer is stalled.
+// (In production this is the ADS1298 DRDY-driven acquisition path.)
+void AtsStorageServiceImpl::sampleLoop() {
+    uint16_t ecgPhase = 0;
+    TickType_t nextWake = xTaskGetTickCount();
+
+    while (mRunning) {
+        while (mUploadPause && mRunning) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+            nextWake = xTaskGetTickCount();
+        }
+
+        vTaskDelayUntil(&nextWake, 1);   // 1 kHz pacing
+
+        if (!mDbReady) { nextWake = xTaskGetTickCount(); continue; }
+
+        uint8_t rec[RECORD_SIZE];
+        serializeEcgRecord(atsGetTime(), ecgPhase, rec);
+        if (++ecgPhase >= ECG_LUT_LEN) ecgPhase = 0;
+
+        // Enqueue into the deep ring. Block mode = wait if full (zero loss); the
+        // wait only triggers when the writer has fallen >ring-depth behind (a very
+        // long SD stall) and backpressures the sampler. Bounded so a dead writer
+        // can't wedge sampling forever — those rare cases count as qfull.
+        if (xQueueSend(mEcgQueue, rec, pdMS_TO_TICKS(2000)) != pdTRUE) {
+            mEcgQueueDrops++;
+            nextWake = xTaskGetTickCount();   // resync after a long block
         }
     }
 }
