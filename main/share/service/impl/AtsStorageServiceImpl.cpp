@@ -42,6 +42,8 @@ namespace Arcana::Storage {
 uint8_t AtsStorageServiceImpl::sKey[32] = {};
 uint8_t AtsStorageServiceImpl::sSlowBuf[arcana::ats::BLOCK_SIZE] = {};
 uint8_t AtsStorageServiceImpl::sReadCache[arcana::ats::BLOCK_SIZE] = {};
+uint8_t AtsStorageServiceImpl::sPrimaryBufA[arcana::ats::BLOCK_SIZE] = {};
+uint8_t AtsStorageServiceImpl::sPrimaryBufB[arcana::ats::BLOCK_SIZE] = {};
 uint8_t AtsStorageServiceImpl::sDevSlowBuf[arcana::ats::BLOCK_SIZE] = {};
 
 // Time source for ArcanaTS
@@ -430,10 +432,14 @@ bool AtsStorageServiceImpl::openDailyDb() {
     cfg.headerKey = nullptr;  // no header encryption for now
     cfg.deviceUid = mac;
     cfg.deviceUidSize = 6;
-    cfg.overflow = arcana::ats::OverflowPolicy::Drop;
-    cfg.primaryChannel = 0xFF;
-    cfg.primaryBufA = nullptr;
-    cfg.primaryBufB = nullptr;
+    // Medical mode for the ECG stream: zero-loss backpressure + a dedicated
+    // double-buffer on the primary channel (0). When an SD write stalls, records
+    // back up into the alternate buffer and append blocks-then-catches-up instead
+    // of dropping (was Drop + single slowBuf → lost 1–8% of samples under load).
+    cfg.overflow = arcana::ats::OverflowPolicy::Block;
+    cfg.primaryChannel = 0;            // ADS1298 ECG channel
+    cfg.primaryBufA = sPrimaryBufA;
+    cfg.primaryBufB = sPrimaryBufB;
     cfg.slowBuf = sSlowBuf;
     cfg.readCache = sReadCache;
 

@@ -98,6 +98,10 @@ private:
     static uint8_t sSlowBuf[arcana::ats::BLOCK_SIZE];
     static uint8_t sReadCache[arcana::ats::BLOCK_SIZE];
     static uint8_t sDevSlowBuf[arcana::ats::BLOCK_SIZE];
+    // Dedicated double-buffer for the primary (ECG) channel: one fills while the
+    // other is flushed to SD, so write stalls are absorbed instead of dropping.
+    static uint8_t sPrimaryBufA[arcana::ats::BLOCK_SIZE];
+    static uint8_t sPrimaryBufB[arcana::ats::BLOCK_SIZE];
 
     // Per-device encryption key
     static uint8_t sKey[32];  ///< 256-bit AES key
