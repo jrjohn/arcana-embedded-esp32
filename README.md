@@ -8,8 +8,8 @@
   <img src="https://img.shields.io/badge/Crypto-AES--256--CCM_+_ECDH-8B5CF6?style=for-the-badge" alt="Crypto">
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
   <br>
-  <img src="https://img.shields.io/badge/Tests-21%2F21_passing-brightgreen?style=for-the-badge" alt="Tests">
-  <img src="https://img.shields.io/badge/Coverage-100.0%25_lines-brightgreen?style=for-the-badge" alt="Coverage">
+  <img src="https://img.shields.io/badge/Tests-23%2F23_passing-brightgreen?style=for-the-badge" alt="Tests">
+  <img src="https://img.shields.io/badge/Coverage-96.6%25_lines-brightgreen?style=for-the-badge" alt="Coverage">
   <img src="https://img.shields.io/badge/Architecture%20Rating-⭐⭐⭐⭐⭐%209.1%2F10-blue.svg" alt="Architecture Rating">
 </p>
 
@@ -63,7 +63,7 @@
 | **Resource Efficiency** | 7/10 | ~12 async Observable tasks; MVVM render via task notification (zero idle cost); ESP-IDF 6.0 picolibc shrinks libc footprint |
 | **Thread Safety** | 8/10 | Mutex-protected crypto sessions; std::string in queue (High issue) |
 | **Testing** | 10/10 | 21 host tests, all passing. **100.0% line coverage** (2798/2798 lines, 0 uncovered) verified by Sonar. mbedtls fault-injection via linker `--wrap`, FlakyFilePort precise call-count injection, IEC 62304 §5.5.3 LCOV_EXCL annotations on defensive paths |
-| **Toolchain** | 9/10 | ESP-IDF 6.0 / mbedtls 4.0 / picolibc / xtensa-esp-elf 15.2 — current stable LTS supported through Sep 2028; CI pinned to `espressif/idf:v6.0` |
+| **Toolchain** | 9/10 | ESP-IDF 6.0 / mbedtls 4.0 / picolibc / xtensa-esp-elf 15.2 — current stable LTS supported through Sep 2028; CI pinned to `espressif/idf:v6.0.1` |
 | **Documentation** | 9.5/10 | Comprehensive README with data flows, protocol spec, security analysis |
 | **Overall** | **9.1/10** | Mature IoT platform — strong security, MVVM, provisioning, persistent storage, **production-grade test coverage** and current toolchain. Limited only by minor polling/naming issues and a latent broker-side ACL bug |
 
