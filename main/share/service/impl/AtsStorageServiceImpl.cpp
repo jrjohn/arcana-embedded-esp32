@@ -7,15 +7,12 @@
 #include "esp_mac.h"
 #include "esp_heap_caps.h"
 #include "freertos/idf_additions.h"   // xQueueCreateWithCaps / vQueueDeleteWithCaps
-#include "esp_vfs_fat.h"
 #include "sdmmc_cmd.h"
 #include "driver/sdspi_host.h"
 #include "driver/spi_common.h"
 #include <cstring>
 #include <cstdio>
 #include <ctime>
-#include <dirent.h>
-#include <unistd.h>
 
 static const char* TAG = "AtsStorage";
 
@@ -36,7 +33,10 @@ static const char* TAG = "AtsStorage";
 #define CONFIG_ATS_SD_MAX_FREQ_KHZ 4000
 #endif
 
-static const char* MOUNT_POINT = "/sdcard";
+// SD card + sdspi device handles (singleton service → file-scope is fine).
+// Shared by init_HAL (mount) and storageTask (safe-eject teardown/remount).
+static sdmmc_card_t      sCard;
+static sdspi_dev_handle_t sDevh = 0;
 
 namespace Arcana::Storage {
 
@@ -72,13 +72,11 @@ static void deriveKey(uint8_t key[32]) {
 // ---------------------------------------------------------------------------
 
 AtsStorageServiceImpl::AtsStorageServiceImpl()
-    // Raw-FatFs ports use the FatFs drive prefix, NOT the VFS "/sdcard" path.
-    // "" = default volume (drive 0), where esp_vfs_fat mounts the single SD card.
-    // (esp_vfs_fat stays mounted for the upload/housekeeping code that still uses
-    //  the "/sdcard" VFS path.)  VERIFY-ON-HW: if the SD lands on a non-0 pdrv,
-    //  change these to "0:" / the actual drive.
-    : mFilePort("")
-    , mDeviceFilePort("")
+    // exFAT ports open files on the shared mExFatVol (mounted in init_HAL). The
+    // volume object exists now (declared before the ports); begin() runs later.
+    : mFilePort(&mExFatVol)
+    , mDeviceFilePort(&mExFatVol)
+    , mUploadFilePort(&mExFatVol)
     , mStatsObs()
 {
     output.StatsEvents = &mStatsObs;
@@ -116,41 +114,71 @@ esp_err_t AtsStorageServiceImpl::init_HAL() {
         return ret;
     }
 
-    // Mount SD card via FatFS
-    esp_vfs_fat_sdmmc_mount_config_t mount_cfg = {};
-    mount_cfg.format_if_mount_failed = true;
-    mount_cfg.max_files = 4;
-    mount_cfg.allocation_unit_size = 16 * 1024;
-
+    // SD card init via ESP-IDF sdspi — NO esp_vfs_fat / FatFs. ESP-IDF's own
+    // FatFs exFAT is broken on this board's SPI host; SdFat owns the exFAT
+    // filesystem instead (over EspIdfBlockDev). ESP-IDF only inits the card.
     sdmmc_host_t host = SDSPI_HOST_DEFAULT();
     // Per-board ceiling: 4 MHz for long wires + level shifter (ESP32 DevKit),
     // 20 MHz for short direct traces (DNESP32S3 TF slot). See Kconfig.
     host.max_freq_khz = CONFIG_ATS_SD_MAX_FREQ_KHZ;
+    // sdmmc bounces non-DMA-capable / unaligned buffers; SdFat's cache is internal
+    // RAM but this is belt-and-suspenders for sector I/O alignment.
+    host.flags |= SDMMC_HOST_FLAG_ALLOC_ALIGNED_BUF;
+
     sdspi_device_config_t slot_cfg = SDSPI_DEVICE_CONFIG_DEFAULT();
     slot_cfg.gpio_cs = (gpio_num_t)CONFIG_ATS_SD_CS_GPIO;
     slot_cfg.host_id = SPI2_HOST;
 
-    // Mount with retries: a card whose multi-block write was cut off by a
-    // reset (the ESP resets, the card keeps power) can still be busy
-    // finishing internally and answers init with garbage (CRC/timeout) for
-    // a while. Give it a few seconds before giving up.
-    sdmmc_card_t* card = nullptr;
+    ret = sdspi_host_init();
+    if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
+        ESP_LOGE(TAG, "sdspi_host_init failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    ret = sdspi_host_init_device(&slot_cfg, &sDevh);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "sdspi_host_init_device failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    host.slot = sDevh;
+
+    // Init with retries: a card whose multi-block write was cut off by a reset
+    // (the ESP resets, the card keeps power) can stay busy and answer init with
+    // garbage (CRC/timeout). NOTE: only a COLD power-cycle reliably clears this;
+    // warm DTR/RTS resets can leave the card wedged (send_if_cond 0x108).
     for (int attempt = 1; ; attempt++) {
-        ret = esp_vfs_fat_sdspi_mount(MOUNT_POINT, &host, &slot_cfg, &mount_cfg, &card);
+        ret = sdmmc_card_init(&host, &sCard);
         if (ret == ESP_OK) break;
         if (attempt >= 3) {
-            ESP_LOGE(TAG, "SD card mount failed: %s", esp_err_to_name(ret));
+            ESP_LOGE(TAG, "SD card init failed: %s", esp_err_to_name(ret));
             return ret;
         }
-        ESP_LOGW(TAG, "SD mount attempt %d failed (%s) — retrying...",
+        ESP_LOGW(TAG, "SD init attempt %d failed (%s) — retrying...",
                  attempt, esp_err_to_name(ret));
         vTaskDelay(pdMS_TO_TICKS(2000));
     }
+    mBlockDev.setCard(&sCard);
 
-    ESP_LOGI(TAG, "SD card mounted at %s (%s, %lluMB)",
-             MOUNT_POINT, card->cid.name,
-             (unsigned long long)(((uint64_t)card->csd.capacity)
-                                  * card->csd.sector_size / (1024 * 1024)));
+    // Mount the power-fail-safe dual-FAT exFAT via SdFat. Reformat when the card
+    // is NOT dual-FAT — i.e. blank/FAT32 (mount fails) OR a legacy single-FAT exFAT
+    // (numberOfFats < 2). This migrates the medical logger to the dual-FAT layout so
+    // an abrupt power loss can never leave the card unmountable. WARNING: reformat
+    // erases existing data (one-time migration; upload/back up the card first).
+    bool mounted = mExFatVol.begin(&mBlockDev);
+    if (!mounted || mExFatVol.numberOfFats() < 2) {
+        ESP_LOGW(TAG, "Formatting card as power-fail-safe dual-FAT exFAT%s",
+                 mounted ? " — migrating legacy single-FAT card" : "");
+        uint8_t secBuf[512];
+        ExFatFormatter formatter;
+        if (!formatter.format(&mBlockDev, secBuf, nullptr) || !mExFatVol.begin(&mBlockDev)) {
+            ESP_LOGE(TAG, "dual-FAT format/mount failed");
+            return ESP_FAIL;
+        }
+    }
+
+    ESP_LOGI(TAG, "SD card mounted exFAT (%s, %lluMB, %u FATs)", sCard.cid.name,
+             (unsigned long long)(((uint64_t)sCard.csd.capacity)
+                                  * sCard.csd.sector_size / (1024 * 1024)),
+             mExFatVol.numberOfFats());
 
     return ESP_OK;
 }
@@ -285,8 +313,11 @@ void AtsStorageServiceImpl::storageTask(void* param) {
             // --- Safe eject: unmount, wait for Button A to resume ---
             ESP_LOGI(TAG, "Safe to remove SD card. Press Button A to resume.");
 
-            // Unmount FatFS VFS
-            esp_vfs_fat_sdcard_unmount(MOUNT_POINT, nullptr);
+            // Unmount exFAT + tear down the sdspi device so init_HAL can cleanly
+            // re-init (supports swapping the card while parked).
+            self->mExFatVol.end();
+            if (sDevh) { sdspi_host_remove_device(sDevh); sDevh = 0; }
+            sdspi_host_deinit();
 
             // Wait for Button A press to remount
             auto& ioSvc = Io::IoServiceImpl::getInstance();
@@ -318,25 +349,12 @@ void AtsStorageServiceImpl::storageTask(void* param) {
 
         // --- Format: delete all .ats files and recreate ---
         ESP_LOGW(TAG, "Formatting SD card — deleting all .ats files...");
-        remove("/sdcard/sensor.ats");
-        remove("/sdcard/device.ats");
-
-        // Also delete any daily rotation files (YYYYMMDD.ats)
-        DIR* dir = opendir(MOUNT_POINT);
-        if (dir) {
-            struct dirent* entry;
-            while ((entry = readdir(dir)) != nullptr) {
-                const char* name = entry->d_name;
-                size_t len = strlen(name);
-                if (len >= 4 && strcmp(name + len - 4, ".ats") == 0) {
-                    char path[300];
-                    snprintf(path, sizeof(path), "%s/%s", MOUNT_POINT, name);
-                    remove(path);
-                    ESP_LOGI(TAG, "Deleted: %s", name);
-                }
-            }
-            closedir(dir);
-        }
+        // Delete every *.ats on the volume root (sensor/device/YYYYMMDD).
+        self->fsListAts([](void* ctx, const char* name) {
+            auto* s = static_cast<AtsStorageServiceImpl*>(ctx);
+            s->fsRemove(name);
+            ESP_LOGI(TAG, "Deleted: %s", name);
+        }, self);
 
         ESP_LOGI(TAG, "Format complete — reopening databases");
         self->mTotalRecords = 0;
@@ -520,7 +538,7 @@ bool AtsStorageServiceImpl::openDailyDb() {
 
     if (!mDb.open("sensor.ats", cfg)) {
         ESP_LOGW(TAG, "sensor.ats open failed, recreating");
-        remove("/sdcard/sensor.ats");
+        fsRemove("sensor.ats");
         if (!mDb.open("sensor.ats", cfg)) {
             ESP_LOGE(TAG, "sensor.ats recreate failed");
             return false;
@@ -562,10 +580,9 @@ void AtsStorageServiceImpl::rotateDailyDb(uint32_t lastDay) {
     mDb.close();
     mDbReady = false;
 
-    char oldPath[64], newPath[64];
-    snprintf(oldPath, sizeof(oldPath), "%s/sensor.ats", MOUNT_POINT);
-    snprintf(newPath, sizeof(newPath), "%s/%08lu.ats", MOUNT_POINT, (unsigned long)lastDay);
-    rename(oldPath, newPath);
+    char newName[20];
+    snprintf(newName, sizeof(newName), "%08lu.ats", (unsigned long)lastDay);
+    fsRename("sensor.ats", newName);
 
     if (!openDailyDb()) {
         ESP_LOGE(TAG, "Failed to open new daily DB after rotation");
@@ -600,8 +617,8 @@ bool AtsStorageServiceImpl::openDeviceDbSafe(const arcana::ats::AtsConfig& cfg) 
 
     // Corrupt → recreate
     ESP_LOGW(TAG, "device.ats corrupt, recreating");
-    remove("/sdcard/device_old.ats");
-    rename("/sdcard/device.ats", "/sdcard/device_old.ats");
+    fsRemove("device_old.ats");
+    fsRename("device.ats", "device_old.ats");
     if (mDeviceDb.open("device.ats", cfg)) {
         if (initDeviceDbChannels()) return true;
         mDeviceDb.close();
@@ -734,38 +751,79 @@ uint16_t AtsStorageServiceImpl::queryByDate(uint32_t dateYYYYMMDD,
 }
 
 // ---------------------------------------------------------------------------
+// SD filesystem helpers (SdFat exFAT) — used by rotation / cleanup / listing.
+// Paths are volume-relative names ("sensor.ats"); SdFat prepends the root.
+// ---------------------------------------------------------------------------
+
+bool AtsStorageServiceImpl::fsRename(const char* oldName, const char* newName) {
+    char o[24], n[24];
+    snprintf(o, sizeof(o), "/%s", oldName);
+    snprintf(n, sizeof(n), "/%s", newName);
+    mExFatVol.remove(n);          // exFAT rename fails if target exists
+    return mExFatVol.rename(o, n);
+}
+
+bool AtsStorageServiceImpl::fsRemove(const char* name) {
+    char p[24];
+    snprintf(p, sizeof(p), "/%s", name);
+    return mExFatVol.remove(p);
+}
+
+void AtsStorageServiceImpl::fsListAts(void (*cb)(void* ctx, const char* name), void* ctx) {
+    ExFatFile root, entry;
+    if (!root.openRoot(&mExFatVol)) return;
+    char name[64];
+    while (entry.openNext(&root, O_RDONLY)) {
+        if (!entry.isHidden() && !entry.isSubDir()) {
+            size_t n = entry.getName(name, sizeof(name));
+            if (n >= 4 && strcmp(name + n - 4, ".ats") == 0) {
+                cb(ctx, name);
+            }
+        }
+        entry.close();
+    }
+    root.close();
+}
+
+// ---------------------------------------------------------------------------
 // Upload support
 // ---------------------------------------------------------------------------
 
 uint8_t AtsStorageServiceImpl::listPendingUploads(PendingFile* out, uint8_t maxCount) {
-    uint8_t count = 0;
-    DIR* dir = opendir(MOUNT_POINT);
-    if (!dir) return 0;
+    // Two phases to avoid interleaving directory iteration with DB reads on the
+    // same exFAT volume: (1) collect candidate "YYYYMMDD.ats" names + dates while
+    // iterating the dir, (2) after the dir is closed, filter by isDateUploaded().
+    struct Collect {
+        PendingFile* out;
+        uint8_t maxCount;
+        uint8_t count;
+    } ctx { out, maxCount, 0 };
 
-    struct dirent* entry;
-    while ((entry = readdir(dir)) != nullptr && count < maxCount) {
-        const char* name = entry->d_name;
-        size_t len = strlen(name);
-        if (len != 12) continue;
-        if (name[8] != '.' || name[9] != 'a' || name[10] != 't' || name[11] != 's') continue;
-        if (strcmp(name, "sensor.ats") == 0 || strcmp(name, "device.ats") == 0) continue;
-
+    fsListAts([](void* c, const char* name) {
+        auto* k = static_cast<Collect*>(c);
+        if (k->count >= k->maxCount) return;
+        if (strlen(name) != 12) return;                 // "YYYYMMDD.ats"
+        if (strcmp(name, "sensor.ats") == 0 || strcmp(name, "device.ats") == 0) return;
         uint32_t date = 0;
-        bool valid = true;
         for (int i = 0; i < 8; i++) {
-            if (name[i] < '0' || name[i] > '9') { valid = false; break; }
+            if (name[i] < '0' || name[i] > '9') return;
             date = date * 10 + (name[i] - '0');
         }
-        if (!valid || date < 20200101) continue;
-        if (isDateUploaded(date)) continue;
+        if (date < 20200101) return;
+        strncpy(k->out[k->count].name, name, 15);
+        k->out[k->count].name[15] = '\0';
+        k->out[k->count].size = 0;   // size filled lazily by the uploader
+        k->out[k->count].date = date;
+        k->count++;
+    }, &ctx);
 
-        strncpy(out[count].name, name, 15);
-        out[count].name[15] = '\0';
-        out[count].size = 0;  // size not available from dirent
-        out[count].date = date;
+    // Phase 2: drop already-uploaded dates (compact in place).
+    uint8_t count = 0;
+    for (uint8_t i = 0; i < ctx.count; i++) {
+        if (isDateUploaded(out[i].date)) continue;
+        if (count != i) out[count] = out[i];
         count++;
     }
-    closedir(dir);
     return count;
 }
 

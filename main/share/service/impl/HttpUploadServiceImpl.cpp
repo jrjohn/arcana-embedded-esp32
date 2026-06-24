@@ -9,9 +9,22 @@
 #include "freertos/task.h"
 #include <cstdio>
 #include <cstring>
-#include "ff.h"   // raw FatFs (f_open/f_size/f_lseek/f_read) — >2GB-safe vs stdio fseek/ftell
+#include "ats/ArcanaTsTypes.hpp"   // ATS_MODE_READ
+#include "ats/IMutex.hpp"
 
 static const char* TAG = "HttpUpload";
+
+// RAII guard for the storage service's SD mutex. SdFat has no internal locking,
+// so every access to the shared exFAT volume (the ECG writer holds it during
+// mDb.append; we hold it per SD op here) must be serialized — held only across
+// the SD call, never across the network write between chunks.
+namespace {
+struct SdLock {
+    arcana::ats::IMutex* m;
+    explicit SdLock(arcana::ats::IMutex* mm) : m(mm) { m->lock(); }
+    ~SdLock() { m->unlock(); }
+};
+}
 
 #ifndef CONFIG_UPLOAD_SERVER_HOST
 #define CONFIG_UPLOAD_SERVER_HOST  "arcana.boo"
@@ -20,7 +33,8 @@ static const char* TAG = "HttpUpload";
 #define CONFIG_UPLOAD_SERVER_PORT  443
 #endif
 
-// (MOUNT_POINT removed — upload read path now opens raw-FatFs "/<file>" directly, not the /sdcard VFS path)
+// Upload read path goes through AtsStorageService::uploadReadPort() (an IFilePort
+// on the SdFat exFAT volume) — no /sdcard VFS path, no direct SdFat dependency.
 static const size_t CHUNK_SIZE = 2048;
 
 /// Check if upload token "{device_id}|{expiry}|{sig}" is expired
@@ -141,20 +155,25 @@ done:
 
 bool HttpUploadServiceImpl::uploadFile(const char* filename, const char* deviceId,
                                         const char* token) {
-    // Raw FatFs (not fopen/ftell): ftell/fseek use a signed-32-bit long on ESP32 and
-    // break past 2GB. f_size/f_lseek use FSIZE_t (32-bit unsigned on FAT32 → 4GB),
-    // covering the daily .ats max — same approach as the STM32 upload path. Path is
-    // drive-relative (no "/sdcard" VFS prefix) since this goes through raw FatFs.
-    char filepath[64];
-    snprintf(filepath, sizeof(filepath), "/%s", filename);
+    // Read through the storage service's upload IFilePort (SdFat exFAT, 64-bit
+    // offsets) — depends on the IFilePort abstraction, not SdFat directly. The
+    // ECG writer shares this volume, so each SD op is serialized by the storage
+    // SD mutex (SdLock) — but never held across the network write.
+    auto& storage = static_cast<Storage::AtsStorageServiceImpl&>(
+        Storage::AtsStorageServiceImpl::getInstance());
+    arcana::ats::IMutex* sdmtx = storage.sdMutex();
+    arcana::ats::IFilePort* fp = storage.uploadReadPort();
 
-    FIL fp;
-    if (f_open(&fp, filepath, FA_READ) != FR_OK) {
-        ESP_LOGW(TAG, "Cannot open %s", filepath); return false;
+    {
+        SdLock g(sdmtx);
+        if (!fp->open(filename, arcana::ats::ATS_MODE_READ)) {
+            ESP_LOGW(TAG, "Cannot open /%s", filename); return false;
+        }
     }
 
-    uint32_t fileSize = (uint32_t)f_size(&fp);
-    if (fileSize == 0) { f_close(&fp); return false; }
+    uint32_t fileSize;
+    { SdLock g(sdmtx); fileSize = (uint32_t)fp->size(); }
+    if (fileSize == 0) { SdLock g(sdmtx); fp->close(); return false; }
 
     mProgress.totalBytes = fileSize;
     ESP_LOGI(TAG, "%s: %luKB on SD", filename, (unsigned long)(fileSize / 1024));
@@ -164,13 +183,14 @@ bool HttpUploadServiceImpl::uploadFile(const char* filename, const char* deviceI
     uint32_t resumeOffset = queryServerOffset(filename, deviceId);
     if (resumeOffset >= fileSize) {
         ESP_LOGI(TAG, "%s already complete on server", filename);
-        f_close(&fp); return true;
+        SdLock g(sdmtx); fp->close(); return true;
     }
     if (resumeOffset > 0) {
         ESP_LOGI(TAG, "Resuming %s from %luKB/%luKB",
                  filename, (unsigned long)(resumeOffset/1024),
                  (unsigned long)(fileSize/1024));
-        f_lseek(&fp, resumeOffset);
+        SdLock g(sdmtx);
+        fp->seek(resumeOffset);
         mProgress.bytesSent = resumeOffset;
     }
 
@@ -198,7 +218,7 @@ bool HttpUploadServiceImpl::uploadFile(const char* filename, const char* deviceI
     cfg.crt_bundle_attach = esp_crt_bundle_attach;
 
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
-    if (!client) { f_close(&fp); return false; }
+    if (!client) { SdLock g(sdmtx); fp->close(); return false; }
 
     // Headers
     char authHeader[128];
@@ -213,7 +233,9 @@ bool HttpUploadServiceImpl::uploadFile(const char* filename, const char* deviceI
     esp_err_t err = esp_http_client_open(client, (int)remainSize);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "open failed: %s", esp_err_to_name(err));
-        esp_http_client_cleanup(client); f_close(&fp); return false;
+        esp_http_client_cleanup(client);
+        { SdLock g(sdmtx); fp->close(); }
+        return false;
     }
 
     ESP_LOGI(TAG, "open OK, heap=%lu, writing...",
@@ -226,9 +248,14 @@ bool HttpUploadServiceImpl::uploadFile(const char* filename, const char* deviceI
 
     while (sent < remainSize) {
         size_t want = (remainSize - sent > sizeof(buf)) ? sizeof(buf) : (remainSize - sent);
-        UINT br = 0;
-        if (f_read(&fp, buf, (UINT)want, &br) != FR_OK || br == 0) {
-            ESP_LOGE(TAG, "f_read err at %lu", (unsigned long)sent); ok = false; break;
+        uint32_t br = 0;
+        {
+            SdLock g(sdmtx);
+            int n = fp->read(buf, (uint32_t)want);
+            if (n <= 0) {
+                ESP_LOGE(TAG, "read err at %lu", (unsigned long)sent); ok = false; break;
+            }
+            br = (uint32_t)n;
         }
 
         // Write the whole chunk. Over TLS, esp_http_client_write can return 0
@@ -237,7 +264,7 @@ bool HttpUploadServiceImpl::uploadFile(const char* filename, const char* deviceI
         // also return a PARTIAL count. The old code aborted on w<=0 (every
         // upload died at ~3KB) and dropped bytes on a partial write. Loop until
         // all `br` bytes are sent, tolerating 0 (retry) and partials (advance).
-        UINT wsent = 0;
+        uint32_t wsent = 0;
         int stalls = 0;
         TickType_t stallStart = 0;
         while (wsent < br) {
@@ -269,7 +296,7 @@ bool HttpUploadServiceImpl::uploadFile(const char* filename, const char* deviceI
                          stalls, w);
                 stalls = 0;
             }
-            wsent += (UINT)w;
+            wsent += (uint32_t)w;
         }
         if (!ok) break;
 
@@ -304,7 +331,7 @@ bool HttpUploadServiceImpl::uploadFile(const char* filename, const char* deviceI
 
     esp_http_client_close(client);
     esp_http_client_cleanup(client);
-    f_close(&fp);
+    { SdLock g(sdmtx); fp->close(); }
     return ok;
 }
 

@@ -2,7 +2,8 @@
 
 #include "AtsStorageService.hpp"
 #include "ats/ArcanaTsDb.hpp"
-#include "FatFsFilePort.hpp"   // raw FatFs (64-bit f_lseek) — replaces stdio VfsFilePort's 2GB cap
+#include "ExFatFilePort.hpp"   // SdFat ExFatLib (exFAT, 64-bit offsets) — replaces FatFsFilePort/FAT32
+#include "EspIdfBlockDev.hpp"  // SdFat block device over ESP-IDF sdmmc sector I/O
 #include "FreeRtosMutex.hpp"
 #include "Esp32AesCtrCipher.hpp"
 #include "freertos/FreeRTOS.h"
@@ -61,6 +62,14 @@ public:
     bool loadCredentials(uint8_t* outBuf, uint16_t bufSize, uint16_t& outLen);
     bool saveCredentials(const uint8_t* data, uint16_t len);
 
+    /// Shared exFAT volume + SD mutex. exfatVolume() is for device-side helpers
+    /// (e.g. the SD benchmark). The upload path uses uploadReadPort() (an IFilePort
+    /// on the shared volume) so it depends on the IFilePort abstraction, not SdFat
+    /// directly — and must serialize SD access with the writer via sdMutex().
+    ExFatVolume* exfatVolume() { return &mExFatVol; }
+    arcana::ats::IMutex* sdMutex() { return &mMutex; }
+    arcana::ats::IFilePort* uploadReadPort() { return &mUploadFilePort; }
+
 private:
     AtsStorageServiceImpl();
     ~AtsStorageServiceImpl();
@@ -87,15 +96,30 @@ private:
     static const uint16_t RECORD_SIZE = 28;
     void serializeEcgRecord(uint32_t ts, uint16_t ecgPhase, uint8_t* buf);
 
+    // SD card + SdFat exFAT (replaces esp_vfs_fat FAT32). ESP-IDF sdspi inits the
+    // card; SdFat owns the exFAT filesystem over EspIdfBlockDev. Declared before
+    // the file ports so &mExFatVol is valid in their ctor.
+    arcana::ats::EspIdfBlockDev mBlockDev;
+    ExFatVolume mExFatVol;
+
     // ArcanaTS sensor DB (daily rotation)
     arcana::ats::ArcanaTsDb mDb;
-    arcana::ats::FatFsFilePort mFilePort;
+    arcana::ats::ExFatFilePort mFilePort;
     arcana::ats::FreeRtosMutex mMutex;
     arcana::ats::Esp32AesCtrCipher mCipher;
 
     // ArcanaTS device DB (permanent)
     arcana::ats::ArcanaTsDb mDeviceDb;
-    arcana::ats::FatFsFilePort mDeviceFilePort;
+    arcana::ats::ExFatFilePort mDeviceFilePort;
+
+    // Reusable read port for the upload service (one upload at a time, pause-guarded).
+    arcana::ats::ExFatFilePort mUploadFilePort;
+
+    // SD filesystem helpers (SdFat exFAT) used by rotation/cleanup/listing.
+    bool fsRename(const char* oldName, const char* newName);
+    bool fsRemove(const char* name);
+    // Enumerate "*.ats" entries on the volume root; cb(name) per file.
+    void fsListAts(void (*cb)(void* ctx, const char* name), void* ctx);
 
     // Buffers
     static uint8_t sSlowBuf[arcana::ats::BLOCK_SIZE];

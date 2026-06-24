@@ -45,8 +45,9 @@ idf_component_register(
 
         # db/arcanats/
         "share/db/arcanats/ats/ArcanaTsDb.cpp"
-        "share/db/arcanats/port/VfsFilePort.cpp"
-        "share/db/arcanats/port/FatFsFilePort.cpp"   # raw-FatFs 64-bit port (active); VfsFilePort kept for tests/fallback
+        "share/db/arcanats/port/ExFatFilePort.cpp"   # SdFat exFAT port (active) — replaces FatFsFilePort/FAT32
+        "share/db/arcanats/port/VfsFilePort.cpp"     # kept for host tests/fallback
+        "share/db/arcanats/port/FatFsFilePort.cpp"   # legacy raw-FatFs port (no longer wired; kept for reference)
 
         # command/
         "share/command/CommandFactory.cpp"
@@ -112,6 +113,8 @@ idf_component_register(
         # storage / FS
         fatfs
         sdmmc
+        esp_driver_sdspi   # sdspi_host_* (manual SD-over-SPI card init for SdFat)
+        SdFat              # vendored greiman/SdFat — exFAT filesystem (components/SdFat)
         # network / IPC
         bt
         esp_wifi

@@ -26,6 +26,7 @@ static esp_err_t g_openResult = ESP_OK;
 static std::vector<uint8_t> g_lastPost;
 static int g_writeFailAfter = -1;  // -1 = never; otherwise fail after N bytes
 static int g_writeBytesSoFar = 0;
+static int g_writeStalls = 0;      // next N writes return 0 (TLS WANT_WRITE stall), then resume
 } // namespace
 
 extern "C" {
@@ -38,6 +39,7 @@ void http_test_reset(void) {
     g_lastPost.clear();
     g_writeFailAfter = -1;
     g_writeBytesSoFar = 0;
+    g_writeStalls = 0;
 }
 
 void http_test_set_open_result(esp_err_t result) {
@@ -47,6 +49,12 @@ void http_test_set_open_result(esp_err_t result) {
 void http_test_set_write_fail_after(int bytes) {
     g_writeFailAfter = bytes;
     g_writeBytesSoFar = 0;
+}
+
+// Simulate `count` consecutive TLS WANT_WRITE stalls (esp_http_client_write
+// returns 0) before writes resume — exercises the stall/retry path in uploadFile.
+void http_test_set_write_stalls(int count) {
+    g_writeStalls = count;
 }
 
 void http_test_set_response(const uint8_t* data, int len, int status_code) {
@@ -137,6 +145,10 @@ esp_err_t esp_http_client_open(esp_http_client_handle_t client, int) {
     return g_openResult;
 }
 int esp_http_client_write(esp_http_client_handle_t, const char* data, int len) {
+    if (g_writeStalls > 0) {
+        g_writeStalls--;
+        return 0;   // TLS WANT_WRITE stall: socket buffer full, "retry" not fatal
+    }
     if (g_writeFailAfter >= 0 && g_writeBytesSoFar + len > g_writeFailAfter) {
         return -1;  // simulate mid-stream failure
     }

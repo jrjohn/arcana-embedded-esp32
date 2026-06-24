@@ -1,11 +1,13 @@
 #include "impl/SdBenchmarkServiceImpl.hpp"
+#include "impl/AtsStorageServiceImpl.hpp"
+#include "ats/ArcanaTsTypes.hpp"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include <cstdio>
 #include <cstring>
 
 static const char* TAG = "SdBench";
-static const char* BENCH_FILE = "/sdcard/bench.tmp";
+static const char* BENCH_FILE = "bench.tmp";   // volume-relative (SdFat exFAT)
 // 32KB blocks measure the bus ceiling rather than per-call FATFS overhead
 // (4KB blocks cost one cluster-chain walk per ~1ms of bus time).
 static const size_t BLOCK_SIZE = 32 * 1024;
@@ -20,11 +22,22 @@ SdBenchmarkServiceImpl& SdBenchmarkServiceImpl::getInstance() {
 SdBenchmarkResult SdBenchmarkServiceImpl::runBenchmark(uint32_t durationMs) {
     SdBenchmarkResult result;
 
-    FILE* fp = fopen(BENCH_FILE, "wb");
-    if (!fp) {
-        ESP_LOGE(TAG, "Cannot create benchmark file");
-        result.error = true;
-        return result;
+    // Write through SdFat's exFAT on the storage service's shared volume, each
+    // SD op serialized by the storage SD mutex (SdFat has no internal locking).
+    auto& storage = static_cast<Storage::AtsStorageServiceImpl&>(
+        Storage::AtsStorageServiceImpl::getInstance());
+    arcana::ats::IMutex* sdmtx = storage.sdMutex();
+    arcana::ats::ExFatFilePort fp(storage.exfatVolume());
+
+    {
+        sdmtx->lock();
+        bool ok = fp.open(BENCH_FILE, arcana::ats::ATS_MODE_RW | arcana::ats::ATS_MODE_CREATE);
+        sdmtx->unlock();
+        if (!ok) {
+            ESP_LOGE(TAG, "Cannot create benchmark file");
+            result.error = true;
+            return result;
+        }
     }
 
     static uint8_t buf[BLOCK_SIZE];  // static — 32KB would overflow the task stack
@@ -35,22 +48,22 @@ SdBenchmarkResult SdBenchmarkServiceImpl::runBenchmark(uint32_t durationMs) {
     uint32_t blocksWritten = 0;
 
     while (esp_timer_get_time() < endUs) {
-        size_t written = fwrite(buf, 1, BLOCK_SIZE, fp);
-        if (written != BLOCK_SIZE) {
+        sdmtx->lock();
+        int32_t written = fp.write(buf, BLOCK_SIZE);
+        // Sync every 8 blocks (256KB) to measure real disk speed (not cache).
+        if (written == (int32_t)BLOCK_SIZE && ((blocksWritten + 1) & 7) == 0) {
+            fp.sync();
+        }
+        sdmtx->unlock();
+        if (written != (int32_t)BLOCK_SIZE) {
             ESP_LOGE(TAG, "Write failed at block %lu", (unsigned long)blocksWritten);
             result.error = true;
             break;
         }
         blocksWritten++;
-
-        // Sync every 8 blocks (256KB) to measure real disk speed (not cache)
-        if ((blocksWritten & 7) == 0) {
-            fflush(fp);
-        }
     }
 
-    fflush(fp);
-    fclose(fp);
+    { sdmtx->lock(); fp.sync(); fp.close(); sdmtx->unlock(); }
 
     int64_t elapsedUs = esp_timer_get_time() - startUs;
     uint32_t elapsedMs = (uint32_t)(elapsedUs / 1000);
@@ -64,7 +77,7 @@ SdBenchmarkResult SdBenchmarkServiceImpl::runBenchmark(uint32_t durationMs) {
     }
 
     // Cleanup
-    remove(BENCH_FILE);
+    { sdmtx->lock(); storage.exfatVolume()->remove("/bench.tmp"); sdmtx->unlock(); }
 
     ESP_LOGI(TAG, "Benchmark: %lu KB in %lu ms = %lu.%lu KB/s",
              (unsigned long)result.totalKB,
