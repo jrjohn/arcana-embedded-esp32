@@ -277,9 +277,16 @@ bool ExFatFormatter::format(FsBlockDevice* dev, uint8_t* secBuf, print_t* pr) {
            (uint32_t)(ROOT_CLUSTER - 2) * sectorsPerCluster;
   memset(secBuf, 0, BYTES_PER_SECTOR);
 
-  // Unused Label entry.
+  // Volume Label "ARCANA" (UTF-16LE) so the card shows a friendly name in
+  // macOS/Windows file managers instead of "Untitled".
   label = reinterpret_cast<DirLabel_t*>(secBuf);
-  label->type = EXFAT_TYPE_LABEL & 0X7F;
+  label->type = EXFAT_TYPE_LABEL;            // in-use (bit 7 set)
+  static const char kVolumeLabel[] = "ARCANA";
+  label->labelLength = sizeof(kVolumeLabel) - 1;
+  for (size_t i = 0; i < sizeof(kVolumeLabel) - 1; i++) {
+    label->unicode[2 * i] = (uint8_t)kVolumeLabel[i];
+    label->unicode[2 * i + 1] = 0;
+  }
 
   // Allocation Bitmap directory entries (one per bitmap; flags bit0 = bitmap id).
   for (uint8_t b = 0; b < kNumBitmaps; b++) {
