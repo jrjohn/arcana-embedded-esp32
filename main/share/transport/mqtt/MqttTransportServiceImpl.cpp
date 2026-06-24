@@ -1,5 +1,6 @@
 #include "impl/MqttTransportServiceImpl.hpp"
 #include "esp_log.h"
+#include "esp_crt_bundle.h"   // verify broker's Let's Encrypt cert on mqtts://
 #include <cstring>
 #include <cstdio>
 #include <cinttypes>
@@ -75,6 +76,9 @@ esp_err_t MqttTransportServiceImpl::start() {
     cfg.broker.address.uri = CONFIG_BROKER_URL;
     cfg.session.protocol_ver = MQTT_PROTOCOL_V_5;
     cfg.network.disable_auto_reconnect = false;
+    // For mqtts:// URIs, verify the broker cert against the bundled CA roots
+    // (arcana.boo uses Let's Encrypt). Ignored for plain mqtt:// URIs.
+    cfg.broker.verification.crt_bundle_attach = esp_crt_bundle_attach;
 #ifdef CONFIG_MQTT_SVC_USERNAME
     if (strlen(CONFIG_MQTT_SVC_USERNAME) > 0) {
         cfg.credentials.username = CONFIG_MQTT_SVC_USERNAME;

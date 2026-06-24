@@ -8,8 +8,8 @@
   <img src="https://img.shields.io/badge/Crypto-AES--256--CCM_+_ECDH-8B5CF6?style=for-the-badge" alt="Crypto">
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
   <br>
-  <img src="https://img.shields.io/badge/Tests-23%2F23_passing-brightgreen?style=for-the-badge" alt="Tests">
-  <img src="https://img.shields.io/badge/Coverage-96.6%25_lines-brightgreen?style=for-the-badge" alt="Coverage">
+  <img src="https://img.shields.io/badge/Tests-24%2F24_passing-brightgreen?style=for-the-badge" alt="Tests">
+  <img src="https://img.shields.io/badge/Coverage-100.0%25_lines-brightgreen?style=for-the-badge" alt="Coverage">
   <img src="https://img.shields.io/badge/Architecture%20Rating-⭐⭐⭐⭐⭐%209.1%2F10-blue.svg" alt="Architecture Rating">
 </p>
 
@@ -55,11 +55,11 @@
 | Dimension | Score | Notes |
 |-----------|-------|-------|
 | **Architecture Pattern** | 9.5/10 | 5-phase AppContainer lifecycle; MVVM display layer; TOFU provisioning; graceful storage degradation; single big `main/` component organised by layer (`service/transport/db/command/view/driver/core`) |
-| **Security** | 9.5/10 | AES-256-CCM + ECDH PFS + replay protection + 7 attack mitigations |
+| **Security** | 9.5/10 | AES-256-CCM commands + ECDH PFS + replay protection + 7 attack mitigations; all device↔cloud transport now TLS (HTTPS registration/upload, MQTTS 8883); registration response on HW AES-256-CTR |
 | **Protocol Design** | 9/10 | Unified Frame + protobuf across BLE/MQTT, shared wire format with STM32 |
 | **Extensibility** | 9/10 | New command = 1 class + 1 factory case; new service = abstract + impl |
 | **Observable System** | 9/10 | Sync/async modes, RAII subscription, WeakObserver, 3 template variants |
-| **Storage / Persistence** | 8/10 | ArcanaTs time-series DB with ChaCha20/AES-CTR + CRC32; optional SD; graceful degradation |
+| **Storage / Persistence** | 8/10 | ArcanaTs time-series DB, **HW AES-256-CTR** (`Esp32AesCtrCipher`, both ESP32 + ESP32-S3 have AES accelerators; ChaCha20 is the STM32-only path) + CRC32; storage is **power-fail-safe dual-FAT exFAT** (vendored SdFat over ESP-IDF sdspi block I/O) — abrupt power loss can never leave the card unmountable, and a single `.ats` is no longer capped at 4 GB; legacy single-FAT cards auto-migrate on boot; optional SD; graceful degradation |
 | **Resource Efficiency** | 7/10 | ~12 async Observable tasks; MVVM render via task notification (zero idle cost); ESP-IDF 6.0 picolibc shrinks libc footprint |
 | **Thread Safety** | 8/10 | Mutex-protected crypto sessions; std::string in queue (High issue) |
 | **Testing** | 10/10 | 21 host tests, all passing. **100.0% line coverage** (2798/2798 lines, 0 uncovered) verified by Sonar. mbedtls fault-injection via linker `--wrap`, FlakyFilePort precise call-count injection, IEC 62304 §5.5.3 LCOV_EXCL annotations on defensive paths |
@@ -99,7 +99,7 @@
 | 22 | **MVVM display layer** | `LcdViewModel` subscribes to Service Observables and transforms data into `LcdOutput` with per-field dirty flags (`DIRTY_SENSOR`, `DIRTY_STORAGE`, `DIRTY_TIME`, `DIRTY_TOAST`). `MainView` owns a FreeRTOS render task that blocks on `ulTaskNotifyTake` — woken only when ViewModel has new data. Clean separation: ViewModel has no rendering code; MainView has no service subscriptions. Zero idle cost (no polling) |
 | 23 | **WifiService encapsulates network** | `WifiService` abstract interface exposes `connect()`, `syncNtp()`, `isConnected()`. Replaces `protocol_examples_common` / `example_connect()` dependency. `AppContainer::run()` calls `mWifi->connect()` then `mWifi->syncNtp(10000)` before `startServices()` — explicit, readable sequencing |
 | 24 | **TOFU device provisioning** | `RegistrationService` implements Trust-On-First-Use: first boot sends `POST /api/register` to obtain MQTT credentials + `comm_key`, stored in `device.ats`. Subsequent boots load from storage. Device ID is MAC-based hex string. Credentials struct carries `mqttUser`, `mqttPass`, `mqttBroker`, `mqttPort`, `uploadToken`, `topicPrefix`, and 32-byte `commKey` |
-| 25 | **ArcanaTs time-series DB** | Custom append-only binary database. Single `.ats` file per day on SD (FAT32 SPI), 4KB block writes, 508 records/block (DHT11 = 8 bytes/rec). Pluggable `ICipher` (ChaCha20 / AES-CTR / Null) and `IFilePort` (VFS) interfaces. CRC-32 integrity per block. Daily midnight file rotation. Permanent `device.ats` for lifecycle/credentials |
+| 25 | **ArcanaTs time-series DB** | Custom append-only binary database. Single `.ats` file per day on SD (power-fail-safe dual-FAT exFAT, SPI), 4KB block writes, 508 records/block (DHT11 = 8 bytes/rec). Pluggable `ICipher` (ChaCha20 / AES-CTR / Null) and `IFilePort` (`ExFatFilePort` over SdFat) interfaces. CRC-32 integrity per block. Daily midnight file rotation. Permanent `device.ats` for lifecycle/credentials |
 | 26 | **Graceful storage degradation** | `AppContainer::initHAL()` calls `mStorage->init_HAL()` without `ESP_ERROR_CHECK`. If SD init fails, `mStorage` is set to `nullptr`; all subsequent storage guards (`if (mStorage)`) skip storage-dependent logic. System continues without storage — BLE, MQTT, sensor, and command pipeline unaffected |
 | 27 | **IoService button abstraction** | GPIO button state machine behind abstract interface. Button A (GPIO5 active-LOW): press+release → upload request; during upload → cancel. Button B (GPIO36 active-LOW): hold 2s → format SD. `armCancel()` / `disarmCancel()` let `AppContainer` control cancel semantics without IoService knowing upload state |
 | 28 | **SensorData fan-out expands to 4 subscribers** | `output.DataEvents` now feeds `BleTransportService` (GATT notify), `LcdViewModel` (MVVM display), `MqttTransportService` (JSON publish), and `AtsStorageService` (time-series write to SD). Adding a new subscriber is one `input.SensorDataEvents` wire in `wireServices()` |
@@ -148,6 +148,15 @@
 | 17 | Dead code: `uploadMonTask` static function | Removed in commit `287c977`. The static `uploadMonTask` was never passed to `xTaskCreate` (the inline poll in `AppContainer::run()` is the actual implementation). Also removed unused `int clen` variable in `HttpUploadServiceImpl.cpp` |
 | 18 | `mqtt5.bin` would not build under ESP-IDF 6.0 | mbedtls 4.0 moved legacy crypto headers (`aes.h`, `ccm.h`, `ecdh.h`, `sha256.h`, `entropy.h`, `ctr_drbg.h`) into `mbedtls/private/` and gates them behind `MBEDTLS_DECLARE_PRIVATE_IDENTIFIERS`. `mbedtls_entropy_*` and `mbedtls_ctr_drbg_*` were removed entirely. Resolved in commits `eb02a76` (firmware), `54d8f6b` (CI), `d865117` (host tests): updated 5 source files to private headers + define guard, replaced ctr_drbg with `EspRng` wrapper around `esp_fill_random()`, added `Tests/mocks/mbedtls/private/*.h` redirector stubs for system mbedtls 2.28 |
 | 19 | Host tests had no infrastructure | Built up from zero starting at commit `9e11332`. Final state: 21 host tests in Tests/, gtest framework, mbedtls fault injection via linker `--wrap`, `FlakyFilePort` for ICipher/IFilePort failure paths, Sonar reports 100.0% line coverage. Fault-injection design: counter-based `_after_n` flags for "succeed N times then fail on call N+1" patterns |
+| 20 | Daily `.ats` silently truncated at 2 GB | `VfsFilePort` used stdio `fseek/ftell` whose signed 32-bit `long` breaks past 2^31 — each day's ECG file (~2.4 GB) lost its last hours. Replaced the storage + upload read path with a raw-FatFs `FatFsFilePort` (`f_open`/`f_size`/`f_lseek`/`f_read`, `FSIZE_t` unsigned 32-bit → FAT32 4 GB single-file ceiling). Hardware-validated: a `20260609.ats` grew cleanly to 2.40 GB, decrypted intact past the 2^31 boundary. Commits `8d4ae42` (storage) + `7feb88f` (upload) |
+| 21 | DNESP32S3 had no upload-trigger button | GPIO button A is unusable on this board (GPIO5 = camera D1, phantom events) so it was disabled — leaving no way to start an upload. The four physical keys sit on the XL9555 I2C expander; bound **KEY2** (mask `0x2000`) as button A via a new `BOARD_BUTTON_A_XL9555` path in `IoServiceImpl` that polls `Xl9555::readInputs()`. The classic ESP32 (GPIO5) path is untouched. Commit `7c8b9bb` |
+| 22 | WAN uploads stalled at 0 % (PMTU blackhole) | HTTPS upload to the WAN server delivered zero body bytes while handshake + small GETs succeeded. Root cause: the site gateway's WAN MTU (1359) with no TCP MSS clamping + lwIP's lack of PMTU-blackhole detection (full-size 1480 B segments died silently). Fixed device-side with `CONFIG_LWIP_TCP_MSS=1280` + `TCP_SND_BUF/WND` 5760→46080, and a robust write loop (retry on `esp_http_client_write`==0 / EINPROGRESS, partial-write handling, `cfg.timeout_ms` 30 s→5 s). Fleet-wide fix is an MSS clamp on the gateway. Commit `9f75bc9` |
+| 23 | MQTT ran in clear text (plain 1883) | Connection, credentials and telemetry were on plain `mqtt://...:1883`. Added `cfg.broker.verification.crt_bundle_attach` so an `mqtts://arcana.boo:8883` URL verifies the broker's Let's Encrypt cert — connection now inside TLS. Commit `bb82120` |
+| 24 | Registration failed + used software ChaCha20 | The device POSTed `http://arcana.boo:8088` directly, but :8088 is loopback-only behind nginx → registration always failed and no per-device token was issued. Now POSTs `https://arcana.boo/api/register` (nginx 443, `crt_bundle_attach`) — device registers, persists per-device MQTT creds + upload token. Response crypto also migrated ChaCha20 → **HW AES-256-CTR** (`Esp32AesCtrCipher`): request carries a `cipher` field, server defaults to ChaCha20 when absent so STM32 (no AES HW) is unaffected. Commit `64afc26` |
+| 25 | Command encryption off + ECDH key exchange broken on hardware | The command channel shipped with `CONFIG_CMD_ENCRYPTION_ENABLED=n` (plaintext) and, when enabled, **every** `Security::KeyExchange` failed at runtime with `HKDF failed` (status `0xFF`). Root cause: `KeyExchangeManager::HmacSha256` used the `mbedtls_md` HMAC layer, which on IDF 6.0 / mbedtls 4.0 dispatches through PSA Crypto and returns an error when `psa_crypto_init()` has not run. The host tests (Debian mbedtls 2.28, no PSA) passed, so the regression was invisible until run on-target. Fixed by reimplementing HMAC-SHA256 as manual RFC 2104 ipad/opad over the raw `mbedtls/private/sha256.h` primitive (HW-accelerated, PSA-free, the same primitive `CryptoEngine` uses), and enabled `CONFIG_CMD_ENCRYPTION_ENABLED=y` by default (256-bit PSK is a per-deployment provisioning secret, not committed). **Hardware-validated** over BLE: ECDH P-256 handshake → PSK-authenticated session key (HKDF-SHA256) → AES-256-CCM `Ping`/`fw_version` round-trip, device log `Session installed` / `Session removed`. New `tools/ble_crypto_test.py` is the matching ESP32 BLE client (AES-256-CCM + protobuf + ECDH; the node `ble-cmd-test` is ChaCha20+binary for STM32). `main/share/command/security/KeyExchangeManager.cpp`, `sdkconfig.defaults` |
+| 26 | Command key was a fleet-wide static PSK | The command-channel key was `CONFIG_CMD_ENCRYPTION_PSK` — one secret baked into every device's flash, so dumping one device's image compromised the whole fleet's key exchange. Now the compile-time PSK is only a **bootstrap key for unregistered devices**; once a device registers it switches to a **per-device key**: `commKey = HKDF-SHA256(ECDH(device, server), salt=deviceId[:8], "ARCANA-COMM")`, derived identically on device and server, persisted on the device (ATS `CREDS` record enlarged 232→264) and re-derived on demand server-side from `COMPANY_PRIV` for authorized operators (`GET /api/device/<id>/key`). On boot the device re-keys the command channel (`KeyExchangeManager::SetPsk` / `CommandCodec::SetKey`); a device that registered before the server supported ECDH re-registers once to obtain a `commKey`. The commKey HKDF uses the shared `Crypto::HmacSha256` (Issue 25 fix) so it matches the Python server byte-for-byte. **Hardware-validated** end-to-end: operator with the server-fetched per-device key completes the ECDH command round-trip; the old bootstrap PSK is rejected (`Decrypt/auth failed`). `RegistrationServiceImpl.cpp`, `ArcanaTsSchema.hpp`, `AppContainer.cpp`, `CryptoMac.hpp` |
+| 27 | ECG samples dropped under SD-write contention | Daily `.ats` files varied 1–8 % in size between full 24 h days. Block-timestamp analysis showed it wasn't recording gaps but **dropped samples**: the daily DB ran in IoT mode (`OverflowPolicy::Drop` + single shared `slowBuf`, no double-buffer), so while a 4 KB block was being flushed to the (shared-SPI, contended) SD card, incoming 1 kHz ECG records had nowhere to go and were discarded. Compounded by the storage task sitting at `IDLE+1` — starved by render/app tasks on the APP core. Switched the ECG stream to the ATS DB's designed **medical mode**: `OverflowPolicy::Block` (flush-then-retry backpressure, zero loss) + a dedicated double-buffer on the primary channel (`primaryChannel=0`, `primaryBufA/B`), and raised `kPrioStorage` IDLE+1→5. **Hardware-validated**: 44 s continuous capture with `fail=0` every second and a net **1000.1 rec/s = exactly the 1 kHz nominal, 0 % loss** (was 922–992/s). Per-second rate still jitters (871–1182) as the buffer absorbs SD stalls and catches up — but nothing is dropped. **Phase 2** then split the path into a producer (1 kHz sampler) + consumer (SD writer) across a **deep ring** (FreeRTOS queue, 2048 records ≈ 2 s, allocated in **PSRAM** so it doesn't starve the internal heap — a plain internal queue of that size aborts `ESP_ERR_NO_MEM` once the radios are up) so the sampler never pauses even while the writer is stalled. Validated: `fail=0` and `qfull=0` over 50 s with the ring oscillating 24–269 deep (never near 2048) at a net 999.5 rec/s. `AtsStorageServiceImpl.cpp`, `TaskPriorities.hpp` |
+| 28 | Card written by the device, **unreadable on macOS/Windows** after power loss | The device read its own FAT32/exFAT card fine, but pulling it to a Mac after an abrupt power-off showed catastrophic corruption (invalid root cluster, missing allocation bitmap, unmountable). Root cause traced by host-side fuzzing: stock **single-FAT exFAT is not power-fail-safe** — a torn metadata write during a cut can destroy the shared root/bitmap sector. Fix: replaced ESP-IDF FAT32 (`esp_vfs_fat`, broken exFAT on this SPI host) with **exFAT via vendored SdFat** (ESP-IDF `sdspi` inits the card → a `FsBlockDeviceInterface` feeds SdFat's ExFatLib), then added a **power-fail-safe dual-FAT** layer in the vendored SdFat: format writes two FATs + two allocation bitmaps, and `commit()` flushes the inactive copy then **atomically flips the `ActiveFat` bit in a single boot-sector write** (excluded from the boot checksum) before resyncing — so the volume always reflects the last committed state. Mount reseed copies only up to the high-water cluster. **Host power-loss fuzzing** (hundreds of trials, killed mid-write, cross-checked with macOS `fsck_exfat`) drove catastrophic corruption to **0** (residual is a benign fsck-repairable bitmap). Legacy single-FAT cards auto-migrate to dual-FAT on boot. **Hardware-verified end-to-end**: cut power mid-ECG → pull card → macOS auto-mounts `/Volumes/ARCANA` with the 58 MB `sensor.ats` (ATS2 magic) intact. Uses only standard exFAT spec fields (`NumberOfFats`/`ActiveFat`, opened by Microsoft in 2019), not the TFAT transaction method. `components/SdFat/` (ExFatFormatter/ExFatPartition), `ExFatFilePort`, `EspIdfBlockDev`, `AtsStorageServiceImpl.cpp` |
 
 ### Trade-offs
 
@@ -155,11 +164,12 @@
 |----------|-----------|-----------|
 | Bluedroid (not NimBLE) | ~400 KB Flash | Dual-role GATT Server+Client with mature API |
 | `std::function` callbacks | ~40 bytes per subscriber | Type erasure flexibility; StaticObservable available for zero-heap |
-| Manual HKDF | ~50 lines of code | `MBEDTLS_HKDF_C` not enabled in ESP-IDF default sdkconfig |
+| Manual HKDF + HMAC over raw SHA-256 | ~50 lines of code | `MBEDTLS_HKDF_C` not enabled in default sdkconfig; the `mbedtls_md` HMAC layer fails at runtime on IDF 6.0 (PSA dispatch without `psa_crypto_init`), so HMAC is built directly on the `mbedtls_sha256` primitive (see Resolved Issue 25) |
 | nanopb (not full protobuf) | Manual `.options` file | 10x smaller than protobuf-c, fits embedded constraints |
 | Singleton pattern | Global state | Natural fit for hardware peripherals (BLE, sensor); single instance enforced |
 | Custom Frame (not COBS/SLIP) | 9 bytes overhead | Includes version + flags + stream ID + magic for protocol detection; CRC covers entire frame |
 | 1 task per async Observable | 2-3 KB RAM per Observable | Clean decoupling; alternative would be shared thread pool with priority inversion risk |
+| Task-backed command-response queue (ESP32-S3 only) | ~4.3 KB queue + 4 KB task | Responses are delivered on a dedicated task (`cmdrsp`, depth 16) so a slow BLE/MQTT transmit never blocks command intake/execution — a new command can arrive and be answered while a prior response is still going out. The classic ESP32 keeps the synchronous send path to save the RAM (`#if CONFIG_IDF_TARGET_ESP32S3` in `CommandDispatcher`) |
 | TimerTypes in ObservableSensor | Foundation component grows | Avoids circular dependency between `main/` and component layer |
 | MQTT5 (not 3.1.1) | Slightly larger client | Supports user properties, reason codes, topic aliases for future use |
 | ESP-IDF 6.0 with `mbedtls/private/*` shim (not full PSA Crypto rewrite) | Future mbedtls 5.x may break the escape hatch (Cons #10) | Saves 1–3 days of focused crypto rewrite + host-test fault-injection rewrite. PSA migration is recoverable later if upstream ever forces it |
@@ -171,7 +181,8 @@
 | Transport | Status | Notes |
 |-----------|--------|-------|
 | **BLE GATT** | Supported | Write to 0xFF10, Notify on 0xFF11 |
-| **MQTT** | Supported | Binary payload on `arcana/cmd` / `arcana/rsp` |
+| **MQTT** | Supported | MQTTS (TLS) on `arcana.boo:8883`, LE-cert verified; binary payload on `arcana/cmd` / `arcana/rsp`. Telemetry published as JSON on `arcana/sensor` |
+| **HTTPS** | Supported | Registration `POST /api/register` + `.ats` upload `POST /upload/...` via nginx 443 (Bearer token, Content-Range resume) |
 | **UART** | Ready | Frame layer provides packet boundaries + CRC |
 | **TCP Raw Socket** | Ready | Frame layer provides length-delimited framing |
 
@@ -414,7 +425,7 @@ mBle->init_HAL()       // BleService::Init(), sets output Observable pointers
 mLed->init_HAL()       // RgbLed RMT channel setup
 mLcd->init_HAL()       // SSD1306 OLED I2C initialization
 mMqtt->init_HAL()      // reads Kconfig topic
-mStorage->init_HAL()   // SPI SD card mount (FAT32); on failure: mStorage = nullptr
+mStorage->init_HAL()   // SPI SD card mount (dual-FAT exFAT); on failure: mStorage = nullptr
 mIo->init_HAL()        // GPIO config for Button A (GPIO5) + Button B (GPIO36)
 ```
 
@@ -925,6 +936,21 @@ sequenceDiagram
 - Up to 3 simultaneous client connections with per-client CCCD tracking
 - Automatic re-advertising after client disconnect
 - Observable for connection events and command writes
+- Server advertises a preferred ATT MTU of 517 (`esp_ble_gatt_set_local_mtu`)
+
+**MTU note (verified on hardware):** a Response notify can only carry `ATT_MTU - 3`
+bytes. At the BLE default `ATT_MTU = 23` that is 20 bytes, so a response longer than
+20 bytes is silently truncated (`BT_GATT: attribute value too long, truncated to 20`).
+Example: the System::Ping response is 21 bytes (9 frame + 12 protobuf incl. the 8-byte
+µs timestamp) and loses its last byte at default MTU. Only the **central** can raise the
+MTU — after it requests an MTU exchange (e.g. nRF Connect's *Request MTU* → 247) the full
+21 bytes arrive intact. The device already supports up to 517, so no firmware change is
+needed; clients sending responses > 20 bytes should negotiate a larger MTU on connect.
+
+To verify BLE receive end-to-end without a custom client: connect, enable notify on
+0xFF11, and write the plaintext Ping frame `AC DA 01 01 00 04 00 08 00 10 01 F8 3F` to
+0xFF10 — the device logs `Command write … → Executing cluster=0x00 cmd=0x01 (source=0)`
+and notifies the Ping response on 0xFF11.
 
 ### GATT Client -- Remote Sensor Discovery
 

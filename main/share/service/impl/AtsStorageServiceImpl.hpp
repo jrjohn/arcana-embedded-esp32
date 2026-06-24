@@ -2,12 +2,14 @@
 
 #include "AtsStorageService.hpp"
 #include "ats/ArcanaTsDb.hpp"
-#include "VfsFilePort.hpp"
+#include "ExFatFilePort.hpp"   // SdFat ExFatLib (exFAT, 64-bit offsets) — replaces FatFsFilePort/FAT32
+#include "EspIdfBlockDev.hpp"  // SdFat block device over ESP-IDF sdmmc sector I/O
 #include "FreeRtosMutex.hpp"
 #include "Esp32AesCtrCipher.hpp"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
+#include "freertos/queue.h"
 
 namespace Arcana::Storage {
 
@@ -15,9 +17,9 @@ namespace Arcana::Storage {
  * ArcanaTS-based storage service for ESP32.
  *
  * - Single .ats file per day on SD card (FAT32, SPI mode)
- * - Multi-channel: DHT11 sensor data + error log
- * - Block I/O: 4KB writes, 508 records/block (DHT11 = 8 bytes/rec)
- * - ChaCha20 encryption, CRC-32 integrity
+ * - Multi-channel: ADS1298 8ch ECG + error log
+ * - Block I/O: 4KB blocks, ~140 records/block (ADS1298 = 28 bytes/rec, tagged multi-channel)
+ * - AES-256-CTR encryption (Esp32AesCtrCipher), CRC-32 integrity
  * - Daily midnight rotation
  * - Permanent device.ats for lifecycle/config/credentials
  */
@@ -60,6 +62,14 @@ public:
     bool loadCredentials(uint8_t* outBuf, uint16_t bufSize, uint16_t& outLen);
     bool saveCredentials(const uint8_t* data, uint16_t len);
 
+    /// Shared exFAT volume + SD mutex. exfatVolume() is for device-side helpers
+    /// (e.g. the SD benchmark). The upload path uses uploadReadPort() (an IFilePort
+    /// on the shared volume) so it depends on the IFilePort abstraction, not SdFat
+    /// directly — and must serialize SD access with the writer via sdMutex().
+    ExFatVolume* exfatVolume() { return &mExFatVol; }
+    arcana::ats::IMutex* sdMutex() { return &mMutex; }
+    arcana::ats::IFilePort* uploadReadPort() { return &mUploadFilePort; }
+
 private:
     AtsStorageServiceImpl();
     ~AtsStorageServiceImpl();
@@ -67,8 +77,10 @@ private:
     AtsStorageServiceImpl& operator=(const AtsStorageServiceImpl&) = delete;
 
     // Dedicated task
-    static void storageTask(void* param);
+    static void storageTask(void* param);   // consumer: drains ECG queue → SD
     void taskLoop();
+    static void sampleTask(void* param);     // producer: 1 kHz ECG → queue
+    void sampleLoop();
 
     // Daily rotation
     bool openDailyDb();
@@ -84,20 +96,39 @@ private:
     static const uint16_t RECORD_SIZE = 28;
     void serializeEcgRecord(uint32_t ts, uint16_t ecgPhase, uint8_t* buf);
 
+    // SD card + SdFat exFAT (replaces esp_vfs_fat FAT32). ESP-IDF sdspi inits the
+    // card; SdFat owns the exFAT filesystem over EspIdfBlockDev. Declared before
+    // the file ports so &mExFatVol is valid in their ctor.
+    arcana::ats::EspIdfBlockDev mBlockDev;
+    ExFatVolume mExFatVol;
+
     // ArcanaTS sensor DB (daily rotation)
     arcana::ats::ArcanaTsDb mDb;
-    arcana::ats::VfsFilePort mFilePort;
+    arcana::ats::ExFatFilePort mFilePort;
     arcana::ats::FreeRtosMutex mMutex;
     arcana::ats::Esp32AesCtrCipher mCipher;
 
     // ArcanaTS device DB (permanent)
     arcana::ats::ArcanaTsDb mDeviceDb;
-    arcana::ats::VfsFilePort mDeviceFilePort;
+    arcana::ats::ExFatFilePort mDeviceFilePort;
+
+    // Reusable read port for the upload service (one upload at a time, pause-guarded).
+    arcana::ats::ExFatFilePort mUploadFilePort;
+
+    // SD filesystem helpers (SdFat exFAT) used by rotation/cleanup/listing.
+    bool fsRename(const char* oldName, const char* newName);
+    bool fsRemove(const char* name);
+    // Enumerate "*.ats" entries on the volume root; cb(name) per file.
+    void fsListAts(void (*cb)(void* ctx, const char* name), void* ctx);
 
     // Buffers
     static uint8_t sSlowBuf[arcana::ats::BLOCK_SIZE];
     static uint8_t sReadCache[arcana::ats::BLOCK_SIZE];
     static uint8_t sDevSlowBuf[arcana::ats::BLOCK_SIZE];
+    // Dedicated double-buffer for the primary (ECG) channel: one fills while the
+    // other is flushed to SD, so write stalls are absorbed instead of dropping.
+    static uint8_t sPrimaryBufA[arcana::ats::BLOCK_SIZE];
+    static uint8_t sPrimaryBufB[arcana::ats::BLOCK_SIZE];
 
     // Per-device encryption key
     static uint8_t sKey[32];  ///< 256-bit AES key
@@ -113,6 +144,14 @@ private:
     // Pending write data
     Sensor::SensorData mPendingData;
     SemaphoreHandle_t mWriteSem = nullptr;
+
+    // ECG deep ring: decouples the 1 kHz sampler (producer) from the SD writer
+    // (consumer) so a write stall buffers in the queue instead of pausing
+    // sampling. The queue is the "deep ring" (Phase 2); mDb still runs in
+    // medical mode (Block + double-buffer) behind the consumer.
+    QueueHandle_t mEcgQueue = nullptr;
+    TaskHandle_t  mSampleTaskHandle = nullptr;
+    uint32_t      mEcgQueueDrops = 0;   // sampler couldn't enqueue (ring full > timeout)
 
     // Stats
     Observable<StorageStats> mStatsObs;

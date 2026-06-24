@@ -267,12 +267,16 @@ public:
         return s;
     }
 
-    /** @brief Encrypted credentials (236 bytes/record, 17 rec/block) */
+    /** @brief Credentials (268 bytes/record). data = packed creds blob:
+     *  [user:36][pass:36][broker:36][port:2][token:72][prefix:36]
+     *  [magic:2][hasCommKey:1][commKey:32] (+ pad). Enlarged from 232 to 264 to
+     *  persist the per-device ECDH command key; old 232-byte records fail the
+     *  magic check and trigger a clean re-registration. */
     static inline ArcanaTsSchema credentials() {
         ArcanaTsSchema s;
         s.setName("CREDS");
         s.addField("ts",   FieldType::U32);          // 4 bytes
-        s.addField("data", FieldType::BYTES, 232);    // [nonce:12][encrypted:220]
+        s.addField("data", FieldType::BYTES, 264);    // packed creds + commKey
         return s;
     }
 

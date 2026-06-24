@@ -81,6 +81,40 @@ def chacha20_derive_key(secret: bytes, uid: bytes) -> bytes:
     chacha20_crypt(secret, uid, 0, buf)
     return bytes(buf)
 
+# -- AES-256-CTR (cipherType=2, matches firmware Esp32AesCtrCipher) ----------
+# Firmware builds the 16-byte CTR IV as: nonce[0:12] || counter:4-LE (counter=0).
+# mbedtls_aes_crypt_ctr increments the full 128-bit IV big-endian per 16B block,
+# which is exactly what cryptography/pycryptodome's CTR(initial_value=iv) does.
+
+def aes256ctr_crypt(key: bytes, nonce: bytes, data: bytearray):
+    """Decrypt/encrypt in-place with AES-256-CTR. nonce = 12-byte block nonce."""
+    assert len(key) == 32 and len(nonce) == 12
+    iv = bytes(nonce) + b'\x00\x00\x00\x00'   # counter starts at 0 (LE tail)
+    try:
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+        out = Cipher(algorithms.AES(key), modes.CTR(iv)).decryptor().update(bytes(data))
+        data[:] = out
+        return
+    except ImportError:
+        pass
+    try:
+        from Crypto.Cipher import AES
+        from Crypto.Util import Counter
+        ctr = Counter.new(128, initial_value=int.from_bytes(iv, 'big'))
+        data[:] = AES.new(key, AES.MODE_CTR, counter=ctr).decrypt(bytes(data))
+        return
+    except ImportError:
+        raise SystemExit("AES-256-CTR (cipherType=2) needs 'cryptography' or 'pycryptodome': "
+                         "pip install cryptography")
+
+
+def crypt_payload(cipher_type: int, key: bytes, nonce: bytes, data: bytearray):
+    """Dispatch payload (de)cryption by cipherType: 1=ChaCha20, 2=AES-256-CTR."""
+    if cipher_type == 2:
+        aes256ctr_crypt(key, nonce, data)
+    else:  # 1 = ChaCha20 (RFC 7539)
+        chacha20_crypt(key, nonce, 0, data)
+
 # -- CRC-32 -----------------------------------------------------------------
 
 def crc32_ieee(data: bytes) -> int:
@@ -351,9 +385,10 @@ class AtsReader:
                 offset += BLOCK_SIZE
                 continue
 
-            # Decrypt
+            # Decrypt (dispatch by cipherType: 1=ChaCha20, 2=AES-256-CTR)
             if self.key and self.file_hdr['cipherType'] != 0:
-                chacha20_crypt(self.key, bytes(bhdr['nonce']), 0, payload)
+                crypt_payload(self.file_hdr['cipherType'], self.key,
+                              bytes(bhdr['nonce']), payload)
 
             if bhdr['channelId'] != MULTI_CHANNEL_ID:
                 # Single-channel block

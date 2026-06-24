@@ -25,6 +25,11 @@ public:
 
     esp_err_t Init(const uint8_t psk[CryptoEngine::kKeyLen]);
 
+    // Replace the PSK at runtime (switch the compile-time bootstrap key for the
+    // per-device key provisioned during registration). Clears all active and
+    // pending sessions — they were authenticated against the old PSK.
+    void SetPsk(const uint8_t psk[CryptoEngine::kKeyLen]);
+
     // ECDH: generate server keypair, derive session key, compute auth tag.
     // Result staged as "pending" (not installed until InstallPendingSession).
     bool PerformKeyExchange(CommandSource source, uint16_t connId,

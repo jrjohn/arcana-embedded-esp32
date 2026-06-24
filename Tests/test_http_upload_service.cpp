@@ -237,6 +237,49 @@ TEST_F(HttpUploadServiceTest, UploadFileResume404TreatedAsZeroOffset) {
     removeFile("new.ats");
 }
 
+// ── TLS write stall (w==0) recovers after a few retries ──────────────────────
+TEST_F(HttpUploadServiceTest, UploadFileWriteStallRecovers) {
+    if (!g_sdcardAvailable) GTEST_SKIP() << "/sdcard not available";
+    uint8_t data[200];
+    memset(data, 0x33, sizeof(data));
+    writeFile("stall.ats", data, sizeof(data));
+    const char* body = "not found";
+    http_test_set_response(reinterpret_cast<const uint8_t*>(body), (int)strlen(body), 404);
+    http_test_set_write_stalls(2);   // first 2 writes stall (return 0), then resume
+    auto& svc = HttpUploadServiceImpl::getInstance();
+    (void)svc.uploadFile("stall.ats", "DEV001", "tok|9999|sig");   // should recover + finish
+    removeFile("stall.ats");
+}
+
+// ── TLS write stalls past the 8× give-up threshold → upload aborts ───────────
+TEST_F(HttpUploadServiceTest, UploadFileWriteStallGivesUp) {
+    if (!g_sdcardAvailable) GTEST_SKIP() << "/sdcard not available";
+    uint8_t data[200];
+    memset(data, 0x77, sizeof(data));
+    writeFile("stall8.ats", data, sizeof(data));
+    const char* body = "not found";
+    http_test_set_response(reinterpret_cast<const uint8_t*>(body), (int)strlen(body), 404);
+    http_test_set_write_stalls(10);  // 8 consecutive stalls → uploader gives up
+    auto& svc = HttpUploadServiceImpl::getInstance();
+    EXPECT_FALSE(svc.uploadFile("stall8.ats", "DEV001", "tok|9999|sig"));
+    removeFile("stall8.ats");
+}
+
+// ── mid-stream SD read error aborts the upload ───────────────────────────────
+TEST_F(HttpUploadServiceTest, UploadFileReadErrorAborts) {
+    if (!g_sdcardAvailable) GTEST_SKIP() << "/sdcard not available";
+    uint8_t data[2048];
+    memset(data, 0x99, sizeof(data));
+    writeFile("uprderr.ats", data, sizeof(data));
+    const char* body = "not found";
+    http_test_set_response(reinterpret_cast<const uint8_t*>(body), (int)strlen(body), 404);
+    Arcana::Storage::HostReadPort::sFailReadAt = 1024;   // read fails after 1 KB
+    auto& svc = HttpUploadServiceImpl::getInstance();
+    EXPECT_FALSE(svc.uploadFile("uprderr.ats", "DEV001", "tok|9999|sig"));
+    Arcana::Storage::HostReadPort::sFailReadAt = -1;     // reset for other tests
+    removeFile("uprderr.ats");
+}
+
 TEST_F(HttpUploadServiceTest, UploadFileResume500TreatedAsZeroOffset) {
     if (!g_sdcardAvailable) GTEST_SKIP() << "/sdcard not available";
 

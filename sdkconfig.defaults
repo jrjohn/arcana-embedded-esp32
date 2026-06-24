@@ -1,6 +1,13 @@
 # MQTT5 Protocol
 CONFIG_MQTT_PROTOCOL_5=y
 
+# Command-channel encryption (AES-256-CCM + ECDH P-256 session keys).
+# Enables CryptoEngine + KeyExchangeManager for BLE and MQTT commands.
+# The 256-bit PSK is a per-deployment provisioning secret and is NOT committed:
+# override CONFIG_CMD_ENCRYPTION_PSK in the (git-ignored) sdkconfig before a
+# production build. The Kconfig default is an all-placeholder key — do NOT ship it.
+CONFIG_CMD_ENCRYPTION_ENABLED=y
+
 # Bluetooth (Bluedroid BLE Dual-Role)
 CONFIG_BT_ENABLED=y
 CONFIG_BT_BLE_42_FEATURES_SUPPORTED=y
@@ -47,6 +54,12 @@ CONFIG_ESP_TLS_SKIP_SERVER_CERT_VERIFY=y
 # FatFS for SD card
 CONFIG_FATFS_LFN_HEAP=y
 CONFIG_FATFS_MAX_LFN=64
+# exFAT (single file >4GB) was evaluated but NOT enabled: ESP-IDF v6.0.1 has no
+# exFAT Kconfig, and flipping FF_FS_EXFAT=1 in the bundled ffconf.h fails to build
+# (dangling CONFIG_FATFS_USE_LABEL — ESP-IDF's ffconf is incomplete for exFAT;
+# verified 2026-06-09). The raw-FatFs FatFsFilePort already lifts a FAT32 single
+# file from 2GB to 4GB, which covers ECG ~2.4GB/day. Revisit exFAT (needs ffconf
+# surgery + vendoring the fatfs component) only if a daily file must exceed 4GB.
 
 # TLS: reduce memory for HTTPS upload on heap-constrained ESP32.
 # MBEDTLS_DYNAMIC_BUFFER was removed in IDF 6.0; MBEDTLS_SSL_VARIABLE_BUFFER_LENGTH
@@ -56,9 +69,19 @@ CONFIG_MBEDTLS_SSL_VARIABLE_BUFFER_LENGTH=y
 CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN=4096
 CONFIG_MBEDTLS_SSL_OUT_CONTENT_LEN=4096
 
-# TCP: keep defaults (5760) — larger values eat too much heap on ESP32
-# CONFIG_LWIP_TCP_SND_BUF_DEFAULT=5760
-# CONFIG_LWIP_TCP_WND_DEFAULT=5760
+# TCP tuning for WAN uploads (2026-06-10).
+# MSS 1280 (packet = 1320B): lwIP has NO path-MTU blackhole detection — a hop
+# with MTU < 1480 (e.g. an ISP/tunnel uplink; we hit a gateway WAN at MTU 1359)
+# silently eats full-size 1440-MSS segments: handshake/headers pass, every bulk
+# data segment dies, uploads stall forever at ~0%. 1320 fits virtually all real
+# paths. (The site firewall now also clamps MSS, but devices roam — 4G hotspots,
+# other sites — so keep the device self-sufficient.)
+# SND_BUF/WND 46080 (= 36 × 1280): the old 5760 allowed only ~4 segments in
+# flight — at WAN RTTs that caps throughput to a crawl. Heap cost is fine on
+# both targets (upload runs with BLE deinited; S3 has PSRAM).
+CONFIG_LWIP_TCP_MSS=1280
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=46080
+CONFIG_LWIP_TCP_WND_DEFAULT=46080
 
 # CI: IRAM optimization (overflow fix). FREERTOS_PLACE_FUNCTIONS_INTO_FLASH
 # and RINGBUF_PLACE_FUNCTIONS_INTO_FLASH became the default in IDF 6.0 and

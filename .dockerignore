@@ -1,0 +1,13 @@
+# Host build artifacts must NOT enter the build context: a macOS/host CMake
+# cache in Tests/build would clash with the Linux container's configure, and the
+# ESP-IDF build/ is large and irrelevant to Dockerfile.test (it builds Tests/ only).
+build/
+Tests/build/
+.git/
+arch-qube-reports/
+.clangd
+coverage.info
+coverage.xml
+*.log
+sdkconfig
+sdkconfig.old

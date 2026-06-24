@@ -93,6 +93,52 @@ set(COMMON_INCS
 add_library(esp_stubs STATIC ${MOCKS_DIR}/esp_stubs.cpp)
 target_include_directories(esp_stubs PUBLIC ${MOCKS_DIR})
 
+# ── SdFat host library (real ExFatLib on host) ───────────────────────────────
+# Compiles the portable parts of vendored SdFat (ExFatLib + common) plus a host
+# Arduino shim, so ExFatFilePort can be exercised against a real exFAT volume on
+# the host. SdCard/FatLib/FsLib are NOT compiled — ExFatFilePort only uses
+# ExFatVolume/ExFatFile (block I/O is a test-side FsBlockDeviceInterface).
+set(SDFAT_DIR ${PROJECT_ROOT}/components/SdFat)
+file(GLOB SDFAT_HOST_SRCS
+    ${SDFAT_DIR}/src/ExFatLib/*.cpp
+    ${SDFAT_DIR}/src/common/*.cpp
+)
+add_library(sdfat_host STATIC ${SDFAT_HOST_SRCS} ${CMAKE_SOURCE_DIR}/support/arduino_compat_host.cpp)
+target_include_directories(sdfat_host PUBLIC
+    ${SDFAT_DIR}/src
+    ${SDFAT_DIR}/src/common
+    ${SDFAT_DIR}/src/ExFatLib
+    ${SDFAT_DIR}/src/FatLib
+    ${SDFAT_DIR}/src/FsLib
+    ${SDFAT_DIR}/src/SdCard
+    ${SDFAT_DIR}/src/SdCard/SdSpiCard
+    ${SDFAT_DIR}/src/SdCard/SdSpiCard/SpiDriver
+    ${SDFAT_DIR}/port
+)
+target_compile_definitions(sdfat_host PUBLIC
+    ENABLE_ARDUINO_FEATURES=0 ENABLE_ARDUINO_SERIAL=0 ENABLE_ARDUINO_STRING=0
+    SPI_DRIVER_SELECT=3 SDFAT_FILE_TYPE=3 USE_BLOCK_DEVICE_INTERFACE=1
+)
+target_compile_options(sdfat_host PUBLIC
+    "SHELL:-include ${SDFAT_DIR}/port/arduino_compat.h")
+target_compile_options(sdfat_host PRIVATE -w)   # vendored code; don't fail host build on its warnings
+
+# dual-FAT variant of the SdFat host lib (USE_EXFAT_DUAL_FAT=1) — for the power-fail
+# repro/fuzz tooling. Same sources, dual-FAT/dual-bitmap + ActiveFat commit.
+add_library(sdfat_host_dualfat STATIC ${SDFAT_HOST_SRCS} ${CMAKE_SOURCE_DIR}/support/arduino_compat_host.cpp)
+target_include_directories(sdfat_host_dualfat PUBLIC
+    ${SDFAT_DIR}/src ${SDFAT_DIR}/src/common ${SDFAT_DIR}/src/ExFatLib
+    ${SDFAT_DIR}/src/FatLib ${SDFAT_DIR}/src/FsLib ${SDFAT_DIR}/src/SdCard
+    ${SDFAT_DIR}/src/SdCard/SdSpiCard ${SDFAT_DIR}/src/SdCard/SdSpiCard/SpiDriver
+    ${SDFAT_DIR}/port)
+target_compile_definitions(sdfat_host_dualfat PUBLIC
+    ENABLE_ARDUINO_FEATURES=0 ENABLE_ARDUINO_SERIAL=0 ENABLE_ARDUINO_STRING=0
+    SPI_DRIVER_SELECT=3 SDFAT_FILE_TYPE=3 USE_BLOCK_DEVICE_INTERFACE=1
+    USE_EXFAT_DUAL_FAT=1)
+target_compile_options(sdfat_host_dualfat PUBLIC
+    "SHELL:-include ${SDFAT_DIR}/port/arduino_compat.h")
+target_compile_options(sdfat_host_dualfat PRIVATE -w)
+
 # Try to find system mbedtls early — needed by multiple test targets that
 # transitively include CryptoEngine.hpp via KeyExchangeCommand etc.
 find_library(MBEDCRYPTO_LIB NAMES mbedcrypto)
@@ -158,6 +204,38 @@ add_executable(test_vfs_file_port
 )
 target_include_directories(test_vfs_file_port PRIVATE ${COMMON_INCS})
 target_link_libraries(test_vfs_file_port PRIVATE GTest::gtest_main)
+
+# ── format_image (host repro tool: SdFat exFAT format+write → .img for fsck_exfat)
+add_executable(format_image
+    support/format_image.cpp
+    ${ATS_PORT}/ExFatFilePort.cpp
+)
+target_include_directories(format_image PRIVATE ${COMMON_INCS})
+target_link_libraries(format_image PRIVATE sdfat_host_dualfat esp_stubs)
+
+# ── format_fuzz (power-loss fuzz harness for the dual-FAT commit engine) ────────
+add_executable(format_fuzz
+    support/format_fuzz.cpp
+    ${ATS_PORT}/ExFatFilePort.cpp
+)
+target_include_directories(format_fuzz PRIVATE ${COMMON_INCS})
+target_link_libraries(format_fuzz PRIVATE sdfat_host_dualfat esp_stubs)
+
+# ── remount_fuzz (validates the mount-time reseed / recovery path) ────────────
+add_executable(remount_fuzz
+    support/remount_fuzz.cpp
+    ${ATS_PORT}/ExFatFilePort.cpp
+)
+target_include_directories(remount_fuzz PRIVATE ${COMMON_INCS})
+target_link_libraries(remount_fuzz PRIVATE sdfat_host_dualfat esp_stubs)
+
+# ── test_exfat_file_port (ExFatFilePort over real SdFat exFAT, sparse-file blkdev)
+add_executable(test_exfat_file_port
+    test_exfat_file_port.cpp
+    ${ATS_PORT}/ExFatFilePort.cpp
+)
+target_include_directories(test_exfat_file_port PRIVATE ${COMMON_INCS})
+target_link_libraries(test_exfat_file_port PRIVATE GTest::gtest_main sdfat_host esp_stubs)
 
 # ── test_log (Logger ring buffer + appenders, header-only) ───────────────────
 add_executable(test_log test_log.cpp)
@@ -478,6 +556,7 @@ add_test(NAME test_commands     COMMAND test_commands)
 add_test(NAME test_chacha20     COMMAND test_chacha20)
 add_test(NAME test_ats_schema     COMMAND test_ats_schema)
 add_test(NAME test_vfs_file_port  COMMAND test_vfs_file_port)
+add_test(NAME test_exfat_file_port COMMAND test_exfat_file_port)
 add_test(NAME test_log            COMMAND test_log)
 add_test(NAME test_arcana_ts_db   COMMAND test_arcana_ts_db)
 add_test(NAME test_lcd_viewmodel  COMMAND test_lcd_viewmodel)

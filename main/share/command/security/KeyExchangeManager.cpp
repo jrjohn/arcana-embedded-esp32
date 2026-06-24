@@ -11,7 +11,7 @@
 #endif
 #include "mbedtls/ecp.h"
 #include "mbedtls/private/ecdh.h"
-#include "mbedtls/md.h"
+#include "mbedtls/private/sha256.h"
 #include <cstring>
 
 static const char* TAG = "KeyExchangeMgr";
@@ -40,27 +40,77 @@ esp_err_t KeyExchangeManager::Init(const uint8_t psk[CryptoEngine::kKeyLen]) {
     return ESP_OK;
 }
 
+void KeyExchangeManager::SetPsk(const uint8_t psk[CryptoEngine::kKeyLen]) {
+    if (mMutex) xSemaphoreTake(mMutex, portMAX_DELAY);
+    memcpy(mPsk, psk, CryptoEngine::kKeyLen);
+    // Drop every session/pending — they were authenticated under the old PSK.
+    for (int i = 0; i < kMaxSessions; ++i) {
+        mSessions[i].Active = false;
+    }
+    mPending.Valid = false;
+    if (mMutex) xSemaphoreGive(mMutex);
+    ESP_LOGI(TAG, "PSK replaced (per-device key); sessions cleared");
+}
+
+// Manual HMAC-SHA256 (RFC 2104 ipad/opad) built directly on the mbedtls_sha256
+// streaming primitive.
+//
+// Why not mbedtls_md HMAC? On IDF 6.0 (mbedtls 4.0) the mbedtls_md HMAC layer
+// routes through PSA Crypto and returns an error when psa_crypto_init() has not
+// run — which is the case here — so the original implementation failed at
+// runtime ("HKDF failed", status 0xFF on every KeyExchange). The raw SHA-256
+// primitive is HW-accelerated and PSA-free; it is the exact primitive
+// CryptoEngine already uses for its nonce prefix and is what the host tests link
+// against (Debian mbedtls 2.28 via the mbedtls/private redirector).
+//
+// The sha256 calls are issued as bare statements (no return check) to stay
+// source-compatible across both toolchains: mbedtls 4.0 returns int, the
+// mbedtls 2.28 deprecated wrappers return void — exactly as CryptoEngine does.
+// These are in-memory operations on fixed-size buffers that do not fail.
 bool KeyExchangeManager::HmacSha256(const uint8_t* key, size_t keyLen,
                                      const uint8_t* data, size_t dataLen,
                                      uint8_t out[32]) {
-    const mbedtls_md_info_t* mdInfo = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
-    if (!mdInfo) return false;
+    constexpr size_t kBlock = 64; // SHA-256 input block size
 
-    mbedtls_md_context_t ctx;
-    mbedtls_md_init(&ctx);
-
-    int ret = mbedtls_md_setup(&ctx, mdInfo, 1); // 1 = HMAC
-    if (ret != 0) {
-        mbedtls_md_free(&ctx);
-        return false;
+    // K0: key shortened to H(key) if longer than the block, then zero-padded.
+    uint8_t k0[kBlock] = {};
+    if (keyLen > kBlock) {
+        mbedtls_sha256_context kc;
+        mbedtls_sha256_init(&kc);
+        mbedtls_sha256_starts(&kc, 0);
+        mbedtls_sha256_update(&kc, key, keyLen);
+        mbedtls_sha256_finish(&kc, k0);
+        mbedtls_sha256_free(&kc);
+    } else {
+        memcpy(k0, key, keyLen);
     }
 
-    ret = mbedtls_md_hmac_starts(&ctx, key, keyLen);
-    if (ret == 0) ret = mbedtls_md_hmac_update(&ctx, data, dataLen);
-    if (ret == 0) ret = mbedtls_md_hmac_finish(&ctx, out);
+    uint8_t ipad[kBlock], opad[kBlock];
+    for (size_t i = 0; i < kBlock; ++i) {
+        ipad[i] = static_cast<uint8_t>(k0[i] ^ 0x36);
+        opad[i] = static_cast<uint8_t>(k0[i] ^ 0x5C);
+    }
 
-    mbedtls_md_free(&ctx);
-    return ret == 0;
+    mbedtls_sha256_context ctx;
+    uint8_t inner[32];
+
+    // inner = H(ipad || data)
+    mbedtls_sha256_init(&ctx);
+    mbedtls_sha256_starts(&ctx, 0);
+    mbedtls_sha256_update(&ctx, ipad, kBlock);
+    mbedtls_sha256_update(&ctx, data, dataLen);
+    mbedtls_sha256_finish(&ctx, inner);
+    mbedtls_sha256_free(&ctx);
+
+    // out = H(opad || inner)
+    mbedtls_sha256_init(&ctx);
+    mbedtls_sha256_starts(&ctx, 0);
+    mbedtls_sha256_update(&ctx, opad, kBlock);
+    mbedtls_sha256_update(&ctx, inner, 32);
+    mbedtls_sha256_finish(&ctx, out);
+    mbedtls_sha256_free(&ctx);
+
+    return true;
 }
 
 bool KeyExchangeManager::HkdfSha256(const uint8_t* ikm, size_t ikmLen,
@@ -70,6 +120,7 @@ bool KeyExchangeManager::HkdfSha256(const uint8_t* ikm, size_t ikmLen,
     // Extract: PRK = HMAC-SHA256(salt, ikm)
     uint8_t prk[32];
     if (!HmacSha256(salt, saltLen, ikm, ikmLen, prk)) {
+        ESP_LOGE(TAG, "HKDF extract failed (salt=%u ikm=%u)", (unsigned)saltLen, (unsigned)ikmLen);
         return false;
     }
 
@@ -85,6 +136,7 @@ bool KeyExchangeManager::HkdfSha256(const uint8_t* ikm, size_t ikmLen,
     expandInput[infoLen] = 0x01;
 
     if (!HmacSha256(prk, 32, expandInput, infoLen + 1, t)) {
+        ESP_LOGE(TAG, "HKDF expand failed (info+1=%u)", (unsigned)(infoLen + 1));
         return false;
     }
 

@@ -7,10 +7,12 @@
  * Full pin map: docs/DNESP32S3-pinmap.md
  */
 
-// Buttons (active-LOW). No spare directly-wired key: KEY0-3 sit behind the
-// XL9555 expander and GPIO5 is the camera's D1 line (pull-up noise there
-// fired phantom events) — button A is disabled; BOOT (IO0) is button B.
+// Buttons (active-LOW). No directly-wired GPIO key for button A: GPIO5 is the
+// camera's D1 line (pull-up noise there fired phantom events), so the GPIO
+// path stays disabled. Button A (upload trigger) instead reads KEY2 on the
+// XL9555 expander (IO1_5, mask 0x2000, active-LOW); BOOT (IO0) is button B.
 #define BOARD_BUTTON_A_GPIO     -1
+#define BOARD_BUTTON_A_XL9555   0x2000   // XL9555 KEY2 → upload trigger (Xl9555::kKey2)
 #define BOARD_BUTTON_B_GPIO     0
 #define BOARD_BUTTON_B_PULLUP   1    // BOOT key needs the internal pull-up
 

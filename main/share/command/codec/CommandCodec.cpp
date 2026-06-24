@@ -36,6 +36,12 @@ esp_err_t CommandCodec::Init() {
     if (err != ESP_OK) {
         return err;
     }
+
+    mCryptoMutex = xSemaphoreCreateMutex();
+    if (!mCryptoMutex) {
+        ESP_LOGE(TAG, "Failed to create crypto mutex");
+        return ESP_ERR_NO_MEM;
+    }
 #else
     mEncryptionEnabled = false;
     ESP_LOGI(TAG, "Encryption disabled");
@@ -44,6 +50,24 @@ esp_err_t CommandCodec::Init() {
     ESP_LOGI(TAG, "Initialized (protobuf + %s)",
              mEncryptionEnabled ? "AES-256-CCM" : "plaintext");
     return ESP_OK;
+}
+
+void CommandCodec::SetKey(const uint8_t key[CryptoEngine::kKeyLen]) {
+    if (!mEncryptionEnabled) return;
+    // Re-key the PSK fallback engine (under the crypto lock — a command could be
+    // decrypting/encrypting concurrently on another task)...
+    if (mCryptoMutex) xSemaphoreTake(mCryptoMutex, portMAX_DELAY);
+    esp_err_t err = mCrypto.Init(key);
+    if (mCryptoMutex) xSemaphoreGive(mCryptoMutex);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "SetKey: crypto re-init failed");
+        return;
+    }
+    // ...and the ECDH manager (auth tag + HKDF salt use the same key).
+    if (mKeyExchangeMgr) {
+        mKeyExchangeMgr->SetPsk(key);
+    }
+    ESP_LOGI(TAG, "Command key replaced with per-device key");
 }
 
 bool CommandCodec::DecodeRequest(CommandSource source, uint16_t connId,
@@ -74,10 +98,13 @@ bool CommandCodec::DecodeRequest(CommandSource source, uint16_t connId,
                 plainBuf, sizeof(plainBuf), plainLen);
         }
 
-        // Fallback to PSK
+        // Fallback to PSK (mutex-guarded — shared mCtx, concurrent task)
         if (!decrypted) {
-            if (!mCrypto.Decrypt(framePayload, framePayloadLen,
-                                 plainBuf, sizeof(plainBuf), plainLen)) {
+            if (mCryptoMutex) xSemaphoreTake(mCryptoMutex, portMAX_DELAY);
+            bool ok = mCrypto.Decrypt(framePayload, framePayloadLen,
+                                      plainBuf, sizeof(plainBuf), plainLen);
+            if (mCryptoMutex) xSemaphoreGive(mCryptoMutex);
+            if (!ok) {
                 ESP_LOGW(TAG, "Decryption failed (session + PSK)");
                 return false;
             }
@@ -179,9 +206,12 @@ bool CommandCodec::EncodeResponse(const CommandResponse& rsp,
                 pbBuf, pbLen, innerBuf, sizeof(innerBuf), innerLen);
         }
 
-        // PSK fallback
+        // PSK fallback (mutex-guarded — shared mCtx, concurrent task)
         if (!encrypted) {
-            if (!mCrypto.Encrypt(pbBuf, pbLen, innerBuf, sizeof(innerBuf), innerLen)) {
+            if (mCryptoMutex) xSemaphoreTake(mCryptoMutex, portMAX_DELAY);
+            bool ok = mCrypto.Encrypt(pbBuf, pbLen, innerBuf, sizeof(innerBuf), innerLen);
+            if (mCryptoMutex) xSemaphoreGive(mCryptoMutex);
+            if (!ok) {
                 ESP_LOGW(TAG, "Encryption failed");
                 return false;
             }

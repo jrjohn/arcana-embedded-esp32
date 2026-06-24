@@ -1,21 +1,5 @@
 CompileFlags:
   CompilationDatabase: /Users/jrjohn/Documents/projects/esp32/arcana-embedded-esp32/build
   Remove: [-m*, -f*]
-
 Diagnostics:
-  # picolibc (the libc that became default in ESP-IDF 6.0) declares
-  #
-  #   void pthread_exit (void *__value_ptr) __noreturn;
-  #
-  # where __noreturn expands to [[noreturn]] in C++11 mode. By the strict
-  # C++11 standard, [[noreturn]] placed AFTER the parameter list applies
-  # to the function TYPE, not the declaration — and the standard says
-  # [[noreturn]] cannot be applied to types. GCC accepts this as a GNU
-  # extension (it knows you meant "apply to the function decl") so the
-  # firmware compiles fine; clangd's strict parser flags it.
-  #
-  # The diagnostic surfaces in EVERY translation unit that transitively
-  # includes <pthread.h> — essentially the whole project — so we suppress
-  # it once here instead of fighting it per file. GCC build is unaffected.
-  Suppress:
-    - attribute_not_type_attr
+  Suppress: [attribute_not_type_attr]

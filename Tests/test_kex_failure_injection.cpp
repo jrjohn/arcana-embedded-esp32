@@ -82,51 +82,23 @@ protected:
 };
 
 // ── HmacSha256 / HkdfSha256 failure paths ──────────────────────────────────
-
-TEST_F(KexFailInject, MdSetupFailureBreaksHmac) {
-    KeyExchangeManager kex;
-    uint8_t psk[CryptoEngine::kKeyLen];
-    makePsk(psk);
-    ASSERT_EQ(kex.Init(psk), ESP_OK);
-
-    uint8_t clientPub[64];
-    ASSERT_TRUE(generateClientKeypair(clientPub));
-
-    g_fail_md_setup = 1;  // every md_setup call fails
-    uint8_t serverPub[64], authTag[32];
-    EXPECT_FALSE(kex.PerformKeyExchange(CommandSource::BLE, 11,
-                                          clientPub, serverPub, authTag));
-}
-
-TEST_F(KexFailInject, MdHmacStartsFailureBreaksHmac) {
-    KeyExchangeManager kex;
-    uint8_t psk[CryptoEngine::kKeyLen];
-    makePsk(psk);
-    ASSERT_EQ(kex.Init(psk), ESP_OK);
-
-    uint8_t clientPub[64];
-    ASSERT_TRUE(generateClientKeypair(clientPub));
-
-    g_fail_md_hmac_starts = 1;
-    uint8_t serverPub[64], authTag[32];
-    EXPECT_FALSE(kex.PerformKeyExchange(CommandSource::BLE, 12,
-                                          clientPub, serverPub, authTag));
-}
-
-TEST_F(KexFailInject, MdHmacFinishFailurePropagates) {
-    KeyExchangeManager kex;
-    uint8_t psk[CryptoEngine::kKeyLen];
-    makePsk(psk);
-    ASSERT_EQ(kex.Init(psk), ESP_OK);
-
-    uint8_t clientPub[64];
-    ASSERT_TRUE(generateClientKeypair(clientPub));
-
-    g_fail_md_hmac_finish = 1;
-    uint8_t serverPub[64], authTag[32];
-    EXPECT_FALSE(kex.PerformKeyExchange(CommandSource::BLE, 13,
-                                          clientPub, serverPub, authTag));
-}
+//
+// NOTE (c6114a1): KeyExchangeManager::HmacSha256 was reimplemented over the raw
+// mbedtls_sha256_* primitive — the mbedtls_md HMAC layer routes through PSA
+// Crypto on IDF 6.0 / mbedtls 4.0 and errored without psa_crypto_init() (every
+// hardware KeyExchange failed). The raw SHA-256 HMAC is a PSA-free, in-memory
+// operation on fixed-size buffers and is infallible by construction, so it no
+// longer calls mbedtls_md_setup / md_hmac_starts / md_hmac_finish. The former
+// MdSetupFailureBreaksHmac / MdHmacStartsFailureBreaksHmac /
+// MdHmacFinishFailurePropagates / HkdfExpandHmacFailureCovered /
+// AuthTagHmacFailureCovered cases injected failures into those md_* symbols
+// (via --wrap) and asserted PerformKeyExchange aborts; with the md path removed
+// there is no failure mode left to inject, so they have been retired. Forcing a
+// failure would require checking the sha256 return codes, which the
+// implementation deliberately avoids to stay source-compatible across mbedtls
+// 4.0 (int-returning) and the 2.28 host wrappers (void-returning). The ECP /
+// MPI / ECDH / CCM / session / mutex failure paths below remain the real,
+// injectable abort cases for PerformKeyExchange.
 
 // ── ecp_group_load failure ─────────────────────────────────────────────────
 
@@ -254,50 +226,14 @@ TEST_F(KexFailInject, CryptoEngineDecryptFailsWhenCcmDecryptFails) {
     EXPECT_FALSE(eng.Decrypt(cipher, cipherLen, decoded, sizeof(decoded), decodedLen));
 }
 
-// ── Counter-based fail-after-N HMAC injection ──────────────────────────────
+// ── Counter-based fail-after-N HMAC injection (retired with c6114a1) ────────
 //
-// PerformKeyExchange's HKDF expand step calls HmacSha256 multiple times:
-// 1. HKDF extract (HMAC over salt+IKM)
-// 2. HKDF expand step 1 (the call that produces the session key block)
-// 3. Auth tag HMAC (HMAC over serverPub || clientPub)
-//
-// The existing g_fail_md_hmac_finish=1 makes the FIRST call fail at the
-// extract step, so we never reach the expand or auth tag paths. The new
-// counter lets us pick which call fails.
-
-TEST_F(KexFailInject, HkdfExpandHmacFailureCovered) {
-    KeyExchangeManager kex;
-    uint8_t psk[CryptoEngine::kKeyLen];
-    makePsk(psk);
-    ASSERT_EQ(kex.Init(psk), ESP_OK);
-
-    uint8_t clientPub[64];
-    ASSERT_TRUE(generateClientKeypair(clientPub));
-
-    // Succeed once (the HKDF extract HMAC), fail on the 2nd HMAC.
-    // This drives the HKDF expand failure return at L81.
-    g_fail_md_hmac_finish_after_n = 1;
-    uint8_t serverPub[64], authTag[32];
-    EXPECT_FALSE(kex.PerformKeyExchange(CommandSource::BLE, 30,
-                                          clientPub, serverPub, authTag));
-}
-
-TEST_F(KexFailInject, AuthTagHmacFailureCovered) {
-    KeyExchangeManager kex;
-    uint8_t psk[CryptoEngine::kKeyLen];
-    makePsk(psk);
-    ASSERT_EQ(kex.Init(psk), ESP_OK);
-
-    uint8_t clientPub[64];
-    ASSERT_TRUE(generateClientKeypair(clientPub));
-
-    // Succeed twice (HKDF extract + HKDF expand), fail on the 3rd HMAC
-    // (the auth tag at L208-211).
-    g_fail_md_hmac_finish_after_n = 2;
-    uint8_t serverPub[64], authTag[32];
-    EXPECT_FALSE(kex.PerformKeyExchange(CommandSource::BLE, 31,
-                                          clientPub, serverPub, authTag));
-}
+// HkdfExpandHmacFailureCovered / AuthTagHmacFailureCovered used
+// g_fail_md_hmac_finish_after_n to fail the 2nd / 3rd HMAC call (HKDF expand /
+// auth tag) of PerformKeyExchange. Those calls now go through the raw-SHA-256
+// HmacSha256 (see the note above), not mbedtls_md_hmac_finish, so the counter
+// no longer intercepts them and the HMAC steps cannot fail. Both cases have
+// been retired along with the md_* injection cases above.
 
 // L277-280: Session.Engine.Init failure inside InstallPendingSession.
 // CryptoEngine::Init calls mbedtls_ccm_setkey. The first ccm_setkey runs

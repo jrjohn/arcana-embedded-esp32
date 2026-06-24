@@ -4,6 +4,15 @@
 #include "driver/gpio.h"
 #include "esp_log.h"
 
+#if defined(BOARD_BUTTON_A_XL9555)
+#include "Xl9555.hpp"   // board with no GPIO button A reads it off the I2C expander
+#endif
+
+// Button A exists if the board binds it to either a direct GPIO or an XL9555 key.
+#if BOARD_BUTTON_A_GPIO >= 0 || defined(BOARD_BUTTON_A_XL9555)
+#define BOARD_HAS_BUTTON_A 1
+#endif
+
 static const char* TAG = "IoService";
 
 // Button wiring comes from the per-target BoardConfig.hpp (esp32/, esp32s3/)
@@ -102,7 +111,7 @@ struct ButtonState {
 };
 
 void IoServiceImpl::taskLoop() {
-#if BOARD_BUTTON_A_GPIO >= 0
+#ifdef BOARD_HAS_BUTTON_A
     ButtonState btnA;
 #endif
     ButtonState btnB;
@@ -110,9 +119,18 @@ void IoServiceImpl::taskLoop() {
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(POLL_MS));
 
-#if BOARD_BUTTON_A_GPIO >= 0
+#ifdef BOARD_HAS_BUTTON_A
         // --- Button A (active-LOW): debounced rising edge = release after press ---
+#if BOARD_BUTTON_A_GPIO >= 0
         bool aReading = (gpio_get_level((gpio_num_t)BOARD_BUTTON_A_GPIO) != 0);
+#else   // BOARD_BUTTON_A_XL9555: key sits on the I2C IO-expander (active-LOW).
+        // readInputs() also re-arms the expander's latched INT line each poll,
+        // which keeps SPI_MISO clean for the shared SD bus. On I2C error the
+        // value stays 0xFFFF (all released) so a bus glitch never self-triggers.
+        uint16_t xlIn = 0xFFFF;
+        Xl9555::getInstance().readInputs(xlIn);
+        bool aReading = (xlIn & BOARD_BUTTON_A_XL9555) != 0;
+#endif
         bool aChanged = btnA.update(aReading);
 
         if (aChanged && !btnA.isPressed()) {

@@ -106,6 +106,15 @@ void AppContainer::run() {
         ESP_LOGI(TAG, "Device registered: %s -> %s:%u",
                  mReg->deviceId(), mReg->credentials().mqttBroker,
                  mReg->credentials().mqttPort);
+        // Re-key the command channel with the per-device ECDH key from
+        // registration, replacing the compile-time bootstrap PSK. The server
+        // (and authorized operators) derive the identical key, so the static
+        // fleet-wide secret is no longer the operational key. No-op when command
+        // encryption is disabled or no commKey was provisioned.
+        if (mBridge && mReg->credentials().valid && mReg->credentials().hasCommKey) {
+            mBridge->SetCommandKey(mReg->credentials().commKey);
+            ESP_LOGI(TAG, "Command channel re-keyed with per-device key");
+        }
     } else {
         ESP_LOGW(TAG, "Registration failed — using hardcoded MQTT config");
     }

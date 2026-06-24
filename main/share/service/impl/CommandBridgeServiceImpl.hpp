@@ -13,6 +13,7 @@ public:
     esp_err_t init() override;
     esp_err_t start() override;
     void stop() override;
+    void SetCommandKey(const uint8_t key[32]) override { mCodec.SetKey(key); }
 
 private:
     CommandBridgeServiceImpl() = default;
