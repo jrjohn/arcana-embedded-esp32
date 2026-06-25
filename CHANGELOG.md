@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/jrjohn/arcana-embedded-esp32/compare/v1.1.0...v1.2.0) (2026-06-24)
+
+
+### Features
+
+* **storage:** FAT32 → power-fail-safe dual-FAT exFAT (+ AES-256-CCM commands, TLS transport, ECG/upload fixes) ([#11](https://github.com/jrjohn/arcana-embedded-esp32/issues/11)) ([6059b45](https://github.com/jrjohn/arcana-embedded-esp32/commit/6059b45a3b36456d8b57cc5cc9f2b1c2a7b7529e))
+
 ## [1.1.0](https://github.com/jrjohn/arcana-embedded-esp32/compare/v1.0.0...v1.1.0) (2026-06-11)
 
 
