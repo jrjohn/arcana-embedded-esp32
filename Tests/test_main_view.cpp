@@ -72,22 +72,25 @@ TEST(MainViewTest, RenderSensorDirtyDrawsTempAndHumi) {
 
 // ── render() with storage stats ─────────────────────────────────────────────
 
-TEST(MainViewTest, RenderStorageDirtyDrawsRecordsAndRate) {
+TEST(MainViewTest, RenderStorageDirtyDrawsTodayTotalAndRate) {
     MainView view;
     auto display = makeDisplay();
     LcdOutput output;
-    output.records = 12345;
-    output.rate = 100;
+    output.records  = 12345;   // today's count (sensor.ats day-file)
+    output.lifetime = 987654;  // grand total across all days (device.ats ch3)
+    output.rate     = 100;
     output.dirty = DIRTY_STORAGE;
 
     view.render(display, output);
 
-    bool foundRec = false, foundRate = false;
+    bool foundToday = false, foundTotal = false, foundRate = false;
     for (auto& s : g_ssdCounters.drawnStrings) {
-        if (s.second.find("Records") != std::string::npos) foundRec = true;
-        if (s.second.find("Rate")    != std::string::npos) foundRate = true;
+        if (s.second.find("Today") != std::string::npos) foundToday = true;
+        if (s.second.find("Total") != std::string::npos) foundTotal = true;
+        if (s.second.find("Rate")  != std::string::npos) foundRate  = true;
     }
-    EXPECT_TRUE(foundRec);
+    EXPECT_TRUE(foundToday);
+    EXPECT_TRUE(foundTotal);
     EXPECT_TRUE(foundRate);
 }
 
