@@ -129,6 +129,49 @@ bool ExFatPartition::bitmapModify(Cluster_t cluster, uint32_t count,
 fail:
   return false;
 }
+#if USE_EXFAT_DUAL_FAT
+//------------------------------------------------------------------------------
+// Idempotently mark [cluster, cluster+count) used in the WORKING bitmap. Mirrors
+// bitmapModify's sector/bit walk but ORs the bits (setting an already-set bit is
+// a no-op, not an error). Tx-records the touched sectors so the heal is carried
+// into the committed copy on the next commit. See ExFatVolume::reconcileBitmap.
+bool ExFatPartition::bitmapMarkUsed(Cluster_t cluster, uint32_t count) {
+  if (cluster < 2 || count == 0) {
+    return true;
+  }
+  Cluster_t start = cluster - 2;
+  if ((start + count) > m_clusterCount) {
+    DBG_FAIL_MACRO;
+    return false;
+  }
+  uint8_t mask = 1 << (start & 7);
+  Sector_t sector = m_bitmapStartSector + (start >> (m_bytesPerSectorShift + 3));
+  size_t i = (start >> 3) & m_sectorMask;
+  while (true) {
+    if (m_numberOfFats == 2) {
+      txRecord(m_txBmp, &m_txBmpCount, sector - m_bitmapStartSector);
+    }
+    uint8_t* cache = bitmapCachePrepare(sector++, FsCache::CACHE_FOR_WRITE);
+    if (!cache) {
+      DBG_FAIL_MACRO;
+      return false;
+    }
+    for (; i < m_bytesPerSector; i++) {
+      for (; mask; mask <<= 1) {
+        if (!(cache[i] & mask)) {  // was free but referenced — heal it
+          cache[i] |= mask;
+          m_healedClusters++;
+        }
+        if (--count == 0) {
+          return true;
+        }
+      }
+      mask = 1;
+    }
+    i = 0;
+  }
+}
+#endif  // USE_EXFAT_DUAL_FAT
 //------------------------------------------------------------------------------
 uint32_t ExFatPartition::chainSize(Cluster_t cluster) {
   uint32_t n = 0;

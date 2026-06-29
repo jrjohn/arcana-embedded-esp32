@@ -77,6 +77,11 @@ class ExFatPartition {
   uint8_t* cacheClear() { return m_dataCache.clear(); }
   /** \return the cluster count for the partition. */
   Cluster_t clusterCount() const { return m_clusterCount; }
+#if USE_EXFAT_DUAL_FAT
+  /** \return number of "free but referenced" clusters healed by the last
+   * reconcileBitmap() at mount (0 on a clean volume; >0 after a torn commit). */
+  uint32_t healedClusters() const { return m_healedClusters; }
+#endif  // USE_EXFAT_DUAL_FAT
   /** \return the cluster heap start sector. */
   Cluster_t clusterHeapStartSector() const { return m_clusterHeapStartSector; }
   /** End access to volume
@@ -146,8 +151,16 @@ class ExFatPartition {
  private:
   /** ExFatFile allowed access to private members. */
   friend class ExFatFile;
+  /** ExFatVolume (mount-time bitmap reconcile) allowed access to private members. */
+  friend class ExFatVolume;
   uint32_t bitmapFind(Cluster_t cluster, uint32_t count);
   bool bitmapModify(Cluster_t cluster, uint32_t count, bool value);
+#if USE_EXFAT_DUAL_FAT
+  // Idempotently mark [cluster, cluster+count) used in the working bitmap (set
+  // bits, never error on an already-set bit). Used by ExFatVolume::reconcileBitmap
+  // to heal "free but referenced" clusters after a torn dual-FAT commit.
+  bool bitmapMarkUsed(Cluster_t cluster, uint32_t count);
+#endif  // USE_EXFAT_DUAL_FAT
   //----------------------------------------------------------------------------
   // Cache functions.
   uint8_t* bitmapCachePrepare(Sector_t sector, uint8_t option) {
@@ -248,6 +261,7 @@ class ExFatPartition {
   uint16_t m_txFatCount = 0;
   uint16_t m_txBmpCount = 0;
   bool     m_txOverflow = false;
+  uint32_t m_healedClusters = 0;    // count of free-but-referenced clusters healed at last mount
   void txRecord(uint32_t* list, uint16_t* count, uint32_t off);
   bool reseedInactive();            // copy active FAT/bitmap -> inactive (up to high-water)
   uint32_t bitmapHighWater(Sector_t bmpStart, uint32_t bmpSectors);

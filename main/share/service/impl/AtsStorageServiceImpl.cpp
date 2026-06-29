@@ -180,6 +180,14 @@ esp_err_t AtsStorageServiceImpl::init_HAL() {
                                   * sCard.csd.sector_size / (1024 * 1024)),
              mExFatVol.numberOfFats());
 
+    // Power-fail recovery evidence: reconcileBitmap() ran inside begin() and
+    // healed any "free but referenced" cluster a torn dual-FAT commit left behind.
+    // 0 on a clean boot; >0 proves a real power-loss tear was caught at mount.
+    if (mExFatVol.healedClusters() > 0) {
+        ESP_LOGW(TAG, "dual-FAT reconcile healed %lu free-but-referenced cluster(s)",
+                 (unsigned long)mExFatVol.healedClusters());
+    }
+
     return ESP_OK;
 }
 

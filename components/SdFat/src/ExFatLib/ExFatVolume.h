@@ -73,8 +73,40 @@ class ExFatVolume : public ExFatPartition {
     if (setCwv || !m_cwv) {
       m_cwv = this;
     }
+#if USE_EXFAT_DUAL_FAT
+    // Heal any "free but referenced" cluster left by a torn dual-FAT commit
+    // (the ActiveFat flip does not cover shared-heap directory entries, so a
+    // file's size can advance in the committed copy without its last cluster's
+    // bitmap bit being active). Must run before any allocation.
+    if (!reconcileBitmap()) {
+      return false;
+    }
+#endif  // USE_EXFAT_DUAL_FAT
     return true;
   }
+#if USE_EXFAT_DUAL_FAT
+  //----------------------------------------------------------------------------
+  /** Walk the directory tree and mark every referenced cluster used in the
+   * working bitmap, then reset the allocation cursor. Idempotent (no-op on a
+   * clean volume). Only meaningful for a dual-FAT (numberOfFats==2) volume. */
+  bool reconcileBitmap() {
+    if (m_numberOfFats != 2) {
+      return true;
+    }
+    m_healedClusters = 0;
+    ExFatFile root;
+    if (!root.openRoot(this)) {
+      return false;
+    }
+    bool ok = reconcileDir(&root, 0);
+    root.close();
+    // init() set m_bitmapStart to the first "free" cluster, which may have been a
+    // referenced-but-unmarked one we just marked used; re-find the real first free.
+    m_bitmapStart = 0;
+    bitmapFind(0, 1);
+    return ok;
+  }
+#endif  // USE_EXFAT_DUAL_FAT
   //----------------------------------------------------------------------------
   /**
    * Set volume working directory to root.
@@ -357,6 +389,43 @@ class ExFatVolume : public ExFatPartition {
 
  private:
   friend ExFatFile;
+#if USE_EXFAT_DUAL_FAT
+  // Recurse one directory: mark each entry's referenced clusters used. Contiguous
+  // files/dirs span firstCluster..+ceil(len/clusterBytes); fragmented ones follow
+  // the FAT chain. depth-capped (the .ats workload is a flat root).
+  bool reconcileDir(ExFatFile* dir, uint8_t depth) {
+    if (depth > 4) {
+      return true;
+    }
+    ExFatFile f;
+    while (f.openNext(dir, O_RDONLY)) {
+      Cluster_t first = f.firstCluster();
+      uint64_t len = f.dataLength();
+      if (first >= 2 && len > 0) {
+        if (f.isContiguous()) {
+          uint32_t n = (uint32_t)((len + m_bytesPerCluster - 1) >> bytesPerClusterShift());
+          bitmapMarkUsed(first, n);
+        } else {
+          Cluster_t cl = first;
+          uint32_t guard = 0;
+          while (cl >= 2 && cl != 0xFFFFFFFF && guard++ < m_clusterCount) {
+            bitmapMarkUsed(cl, 1);
+            Cluster_t next;
+            if (fatGet(cl, &next) <= 0) {  // 0 = EOC, <0 = error
+              break;
+            }
+            cl = next;
+          }
+        }
+      }
+      if (f.isSubDir()) {
+        reconcileDir(&f, depth + 1);
+      }
+      f.close();
+    }
+    return true;
+  }
+#endif  // USE_EXFAT_DUAL_FAT
   static ExFatVolume* cwv() { return m_cwv; }
   ExFatFile* vwd() { return &m_vwd; }
   static ExFatVolume* m_cwv;
