@@ -2052,3 +2052,98 @@ TEST_F(ArcanaTsDbTest, GetReadCacheFallsBackToSlowBuffer) {
     db.queryByTime(0, g_fakeTime, g_fakeTime + 5000, recordCb, nullptr);
     SUCCEED();
 }
+
+// ── Lifetime record counter (device.ats ch3 RECSTAT) ─────────────────────────
+// Validates the storage layer behind AtsStorageServiceImpl's grand-total counter:
+// the recordStat schema persists a 64-bit lifetime + lastDay, round-trips via
+// queryLatest, survives a reopen, and can be live-added to an existing DB.
+
+TEST_F(ArcanaTsDbTest, RecordStatPersistsUint64AcrossReopen) {
+    AtsConfig cfg = makeConfig();
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::lifecycleEvent()));
+    ASSERT_TRUE(db.addChannel(3, ArcanaTsSchema::recordStat()));
+    ASSERT_TRUE(db.start());
+
+    // A lifetime value deliberately > 2^32 to prove 64-bit fidelity (uint32 would
+    // wrap ~50 days into deployment at 86.4M rec/day).
+    const uint64_t LIFE = 5'000'000'427ULL;
+    const uint32_t LAST_DAY = 20260628u;
+    uint8_t rec[16] = {};
+    uint32_t ts = 1700000000u;
+    memcpy(rec, &ts, 4);
+    memcpy(rec + 4, &LIFE, 8);
+    memcpy(rec + 12, &LAST_DAY, 4);
+    ASSERT_TRUE(db.append(3, rec));
+    ASSERT_TRUE(db.flush());
+
+    uint8_t out[16] = {};
+    ASSERT_EQ(db.queryLatest(3, out, 1), 1);
+    uint64_t gotLife = 0; uint32_t gotDay = 0;
+    memcpy(&gotLife, out + 4, 8);
+    memcpy(&gotDay, out + 12, 4);
+    EXPECT_EQ(gotLife, LIFE);
+    EXPECT_EQ(gotDay, LAST_DAY);
+
+    // Persist across a close/reopen (the boot-time loadLifetime path).
+    db.close();
+    AtsConfig cfg2 = makeConfig();
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg2));
+    EXPECT_EQ(db.getChannelCount(), 2);  // ch0 + ch3 recovered from the file header
+    uint8_t out2[16] = {};
+    ASSERT_EQ(db.queryLatest(3, out2, 1), 1);
+    uint64_t life2 = 0; uint32_t day2 = 0;
+    memcpy(&life2, out2 + 4, 8);
+    memcpy(&day2, out2 + 12, 4);
+    EXPECT_EQ(life2, LIFE);
+    EXPECT_EQ(day2, LAST_DAY);
+}
+
+TEST_F(ArcanaTsDbTest, RecordStatLatestWinsOnFold) {
+    AtsConfig cfg = makeConfig();
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+    ASSERT_TRUE(db.addChannel(3, ArcanaTsSchema::recordStat()));
+    ASSERT_TRUE(db.start());
+    auto put = [&](uint64_t life, uint32_t day) {
+        uint8_t r[16] = {}; uint32_t ts = 1700000000u + (uint32_t)day;
+        memcpy(r, &ts, 4); memcpy(r + 4, &life, 8); memcpy(r + 12, &day, 4);
+        ASSERT_TRUE(db.append(3, r));
+    };
+    put(399'500'334ULL, 20260628u);              // seed
+    put(399'500'334ULL + 86'400'000ULL, 20260629u);  // folded one day
+    db.flush();
+    uint8_t out[16] = {};
+    ASSERT_EQ(db.queryLatest(3, out, 1), 1);
+    uint64_t life = 0; uint32_t day = 0;
+    memcpy(&life, out + 4, 8); memcpy(&day, out + 12, 4);
+    EXPECT_EQ(life, 399'500'334ULL + 86'400'000ULL);  // latest fold wins
+    EXPECT_EQ(day, 20260629u);
+}
+
+TEST_F(ArcanaTsDbTest, RecordStatChannelLiveAddedToExistingDb) {
+    // Older device.ats (3 channels) — RECSTAT (ch3) is added live, like the
+    // openDeviceDbSafe upgrade path, then read back.
+    {
+        AtsConfig cfg = makeConfig();
+        ASSERT_TRUE(db.open(fileName.c_str(), cfg));
+        ASSERT_TRUE(db.addChannel(0, ArcanaTsSchema::lifecycleEvent()));
+        ASSERT_TRUE(db.addChannel(1, ArcanaTsSchema::config()));
+        ASSERT_TRUE(db.addChannel(2, ArcanaTsSchema::credentials()));
+        ASSERT_TRUE(db.start());
+        db.close();
+    }
+    AtsConfig cfg2 = makeConfig();
+    ASSERT_TRUE(db.open(fileName.c_str(), cfg2));
+    ASSERT_EQ(db.getChannelCount(), 3);
+    ASSERT_TRUE(db.addChannelLive(3, ArcanaTsSchema::recordStat()));
+    EXPECT_EQ(db.getChannelCount(), 4);
+    const uint64_t LIFE = 427'584'926ULL;
+    uint8_t r[16] = {}; uint32_t ts = 1700000000u;
+    memcpy(r, &ts, 4); memcpy(r + 4, &LIFE, 8);
+    ASSERT_TRUE(db.append(3, r));
+    db.flush();
+    uint8_t out[16] = {};
+    ASSERT_EQ(db.queryLatest(3, out, 1), 1);
+    uint64_t got = 0; memcpy(&got, out + 4, 8);
+    EXPECT_EQ(got, LIFE);
+}

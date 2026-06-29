@@ -292,7 +292,14 @@ void AtsStorageServiceImpl::storageTask(void* param) {
         ESP_LOGI(TAG, "ATS ready, %lu records recovered",
                  (unsigned long)self->mTotalRecords);
 
+        // Lifetime grand-total counter (device.ats ch3) — load/seed once, then
+        // fold forward at each rotation. Runs after both DBs are open.
+        if (!self->mLifetimeReady) {
+            self->initLifetimeCounter();
+        }
+
         self->mStatsModel.recordCount = self->mTotalRecords;
+        self->mStatsModel.lifetimeRecords = self->lifetimeRecordCount();
         self->mStatsModel.totalKB = (self->mDb.getStats().blocksWritten + 1) * 4;
         self->mStatsObs.Notify(self->mStatsModel);
 
@@ -366,6 +373,11 @@ void AtsStorageServiceImpl::storageTask(void* param) {
 
         ESP_LOGI(TAG, "Format complete — reopening databases");
         self->mTotalRecords = 0;
+        // Format wiped every .ats (incl. device.ats) — re-init the lifetime counter
+        // on reopen; with no day-files present it correctly restarts from 0.
+        self->mLifetimeReady   = false;
+        self->mLifetimeRecords = 0;
+        self->mLifetimeLastDay = 0;
 
         // Loop back → reopen fresh DBs
     }
@@ -427,16 +439,20 @@ void AtsStorageServiceImpl::taskLoop() {
         if ((now - lastReportTick) >= pdMS_TO_TICKS(1000)) {
             mDb.flush();
 
-            mStatsModel.recordCount = mTotalRecords;
+            uint32_t dayRecords = mDb.getStats().totalRecords;  // current sensor.ats (today)
+            mStatsModel.recordCount = dayRecords;
+            mStatsModel.lifetimeRecords = mLifetimeRecords + dayRecords;  // grand total
             mStatsModel.writesPerSec = (uint16_t)windowOk;
             mStatsModel.totalKB = (mDb.getStats().blocksWritten + 1) * 4;
             mStatsModel.kbPerSec = (uint16_t)(windowOk * RECORD_SIZE / 1024);
             mStatsObs.Notify(mStatsModel);
 
-            ESP_LOGI(TAG, "ECG 8ch: %u rec/s, %u KB/s, total=%lu, fail=%lu, qfull=%lu, qlen=%u",
+            ESP_LOGI(TAG, "ECG 8ch: %u rec/s, %u KB/s, day=%lu, lifetime=%llu, fail=%lu, qfull=%lu, qlen=%u",
                      (unsigned)windowOk,
                      (unsigned)(windowOk * RECORD_SIZE / 1024),
-                     (unsigned long)mTotalRecords, (unsigned long)windowFail,
+                     (unsigned long)dayRecords,
+                     (unsigned long long)(mLifetimeRecords + dayRecords),
+                     (unsigned long)windowFail,
                      (unsigned long)mEcgQueueDrops,
                      (unsigned)uxQueueMessagesWaiting(mEcgQueue));
 
@@ -585,6 +601,19 @@ bool AtsStorageServiceImpl::openDailyDb() {
 void AtsStorageServiceImpl::rotateDailyDb(uint32_t lastDay) {
     ESP_LOGI(TAG, "Rotating daily DB, day=%lu", (unsigned long)lastDay);
 
+    // Fold the completing day into the lifetime total and persist it BEFORE the
+    // rename. The `lastDay > mLifetimeLastDay` guard makes this idempotent; if a
+    // crash happens after this point but before the rename, the next boot detects
+    // the already-folded sensor.ats (day <= mLifetimeLastDay) and completes the
+    // rename rather than double-counting. (Fold before close: mDb stats valid.)
+    if (mLifetimeReady && lastDay > mLifetimeLastDay) {
+        mLifetimeRecords += mDb.getStats().totalRecords;
+        mLifetimeLastDay = lastDay;
+        saveLifetime();
+        ESP_LOGI(TAG, "lifetime folded day %lu -> %llu",
+                 (unsigned long)lastDay, (unsigned long long)mLifetimeRecords);
+    }
+
     mDb.close();
     mDbReady = false;
 
@@ -608,16 +637,24 @@ bool AtsStorageServiceImpl::initDeviceDbChannels() {
     mDeviceDb.addChannel(1, cfgSchema);
     arcana::ats::ArcanaTsSchema creds = arcana::ats::ArcanaTsSchema::credentials();
     mDeviceDb.addChannel(2, creds);
+    arcana::ats::ArcanaTsSchema recStat = arcana::ats::ArcanaTsSchema::recordStat();
+    mDeviceDb.addChannel(RECSTAT_CHANNEL, recStat);
     return mDeviceDb.start();
 }
 
 bool AtsStorageServiceImpl::openDeviceDbSafe(const arcana::ats::AtsConfig& cfg) {
     if (mDeviceDb.open("device.ats", cfg)) {
-        // Live upgrade: add missing channels
+        // Live upgrade: add missing channels to an older device.ats.
         if (mDeviceDb.getChannelCount() > 0 && mDeviceDb.getChannelCount() < 3) {
             arcana::ats::ArcanaTsSchema creds = arcana::ats::ArcanaTsSchema::credentials();
             if (mDeviceDb.addChannelLive(2, creds)) {
                 ESP_LOGI(TAG, "device.ats upgraded: added CREDS channel");
+            }
+        }
+        if (mDeviceDb.getChannelCount() > 0 && mDeviceDb.getChannelCount() <= RECSTAT_CHANNEL) {
+            arcana::ats::ArcanaTsSchema recStat = arcana::ats::ArcanaTsSchema::recordStat();
+            if (mDeviceDb.addChannelLive(RECSTAT_CHANNEL, recStat)) {
+                ESP_LOGI(TAG, "device.ats upgraded: added RECSTAT channel");
             }
         }
         return true;
@@ -686,6 +723,83 @@ void AtsStorageServiceImpl::writeLifecycleEvent(uint8_t eventType, uint32_t para
 
     mDeviceDb.append(0, rec);
     mDeviceDb.flush();
+}
+
+// ---------------------------------------------------------------------------
+// Lifetime ECG record counter (device.ats ch3)
+// ---------------------------------------------------------------------------
+uint32_t AtsStorageServiceImpl::epochToDay(uint32_t epoch) {
+    if (epoch <= 1577836800u) return 0;  // before 2020-01-01 = unset/invalid clock
+    time_t t = (time_t)epoch;
+    struct tm tm;
+    gmtime_r(&t, &tm);
+    return (uint32_t)((tm.tm_year + 1900) * 10000 + (tm.tm_mon + 1) * 100 + tm.tm_mday);
+}
+
+bool AtsStorageServiceImpl::loadLifetime(uint64_t& lifetime, uint32_t& lastDay) {
+    if (!mDeviceDbReady || mDeviceDb.getChannelCount() <= RECSTAT_CHANNEL) return false;
+    uint8_t buf[16] = {};
+    if (mDeviceDb.queryLatest(RECSTAT_CHANNEL, buf, 1) == 0) return false;  // no record yet
+    memcpy(&lifetime, buf + 4, 8);   // RECSTAT: ts(4), lifetime(8), lastDay(4)
+    memcpy(&lastDay,  buf + 12, 4);
+    return true;
+}
+
+bool AtsStorageServiceImpl::saveLifetime() {
+    if (!mDeviceDbReady || mDeviceDb.getChannelCount() <= RECSTAT_CHANNEL) return false;
+    uint8_t rec[16] = {};
+    uint32_t ts = atsGetTime();
+    memcpy(rec, &ts, 4);
+    memcpy(rec + 4, &mLifetimeRecords, 8);
+    memcpy(rec + 12, &mLifetimeLastDay, 4);
+    bool ok = mDeviceDb.append(RECSTAT_CHANNEL, rec);
+    mDeviceDb.flush();
+    return ok;
+}
+
+void AtsStorageServiceImpl::initLifetimeCounter() {
+    uint64_t lt = 0;
+    uint32_t ld = 0;
+    if (loadLifetime(lt, ld)) {
+        mLifetimeRecords = lt;
+        mLifetimeLastDay = ld;
+        ESP_LOGI(TAG, "lifetime counter loaded: %llu (thru day %lu)",
+                 (unsigned long long)mLifetimeRecords, (unsigned long)mLifetimeLastDay);
+    } else {
+        // First boot with this firmware. Seed from the off-device historical count
+        // ONLY if the original card's day-files are still present, so a formatted /
+        // blank card correctly starts at 0 instead of the stale historical seed.
+        char seedFile[24];
+        snprintf(seedFile, sizeof(seedFile), "/%08lu.ats", (unsigned long)LIFETIME_SEED_LAST_DAY);
+        bool histPresent = mExFatVol.exists(seedFile);
+        mLifetimeRecords = histPresent ? LIFETIME_SEED : 0;
+        mLifetimeLastDay = histPresent ? LIFETIME_SEED_LAST_DAY : 0;
+        saveLifetime();
+        ESP_LOGW(TAG, "lifetime SEEDED %s: %llu (thru day %lu)",
+                 histPresent ? "(historical card)" : "(blank card)",
+                 (unsigned long long)mLifetimeRecords, (unsigned long)mLifetimeLastDay);
+    }
+
+    // Complete an interrupted midnight rotation: if the open sensor.ats belongs to
+    // a day already folded into the lifetime total, the rename did not finish — do
+    // it now so those records are not double-counted (folded + current sensor.ats).
+    uint32_t sensorDay = epochToDay(mDb.getStats().lastTimestamp);
+    if (sensorDay != 0 && sensorDay <= mLifetimeLastDay) {
+        ESP_LOGW(TAG, "completing interrupted rotation: day %lu already folded",
+                 (unsigned long)sensorDay);
+        mDb.close();
+        mDbReady = false;
+        char nm[24];
+        snprintf(nm, sizeof(nm), "%08lu.ats", (unsigned long)sensorDay);
+        if (!fsRename("sensor.ats", nm)) {
+            ESP_LOGE(TAG, "rotation-complete rename failed");
+        }
+        openDailyDb();
+    }
+
+    mLifetimeReady = true;
+    ESP_LOGI(TAG, "lifetime ECG grand total: %llu",
+             (unsigned long long)lifetimeRecordCount());
 }
 
 // ---------------------------------------------------------------------------
