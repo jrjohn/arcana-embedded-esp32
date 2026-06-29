@@ -6,6 +6,7 @@
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_heap_caps.h"
+#include "esp_timer.h"
 #include "freertos/idf_additions.h"   // xQueueCreateWithCaps / vQueueDeleteWithCaps
 #include "sdmmc_cmd.h"
 #include "driver/sdspi_host.h"
@@ -180,13 +181,17 @@ esp_err_t AtsStorageServiceImpl::init_HAL() {
                                   * sCard.csd.sector_size / (1024 * 1024)),
              mExFatVol.numberOfFats());
 
-    // Power-fail recovery evidence: reconcileBitmap() ran inside begin() and
-    // healed any "free but referenced" cluster a torn dual-FAT commit left behind.
-    // 0 on a clean boot; >0 proves a real power-loss tear was caught at mount.
-    if (mExFatVol.healedClusters() > 0) {
-        ESP_LOGW(TAG, "dual-FAT reconcile healed %lu free-but-referenced cluster(s)",
-                 (unsigned long)mExFatVol.healedClusters());
-    }
+    // Heal any "free but referenced" tail a torn dual-FAT commit left behind, but
+    // ONLY on the files that can be open-for-write at a power loss: the active
+    // sensor + device DBs. Rotated day-files are cleanly closed at rotation, so
+    // scanning them is unnecessary (whole-volume reconcile was ~80 s on a card
+    // with months of day-files). Must run before any allocation.
+    int64_t _trec = esp_timer_get_time();
+    mExFatVol.reconcileFile("/sensor.ats");
+    mExFatVol.reconcileFile("/device.ats");
+    int64_t _trecMs = (esp_timer_get_time() - _trec) / 1000;
+    ESP_LOGI(TAG, "dual-FAT reconcile: %lldms (healed %lu cluster(s))",
+             (long long)_trecMs, (unsigned long)mExFatVol.healedClusters());
 
     return ESP_OK;
 }

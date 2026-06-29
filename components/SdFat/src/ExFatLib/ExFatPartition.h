@@ -79,7 +79,7 @@ class ExFatPartition {
   Cluster_t clusterCount() const { return m_clusterCount; }
 #if USE_EXFAT_DUAL_FAT
   /** \return number of "free but referenced" clusters healed by the last
-   * reconcileBitmap() at mount (0 on a clean volume; >0 after a torn commit). */
+   * reconcileFile() at mount (0 on a clean volume; >0 after a torn commit). */
   uint32_t healedClusters() const { return m_healedClusters; }
 #endif  // USE_EXFAT_DUAL_FAT
   /** \return the cluster heap start sector. */
@@ -157,7 +157,7 @@ class ExFatPartition {
   bool bitmapModify(Cluster_t cluster, uint32_t count, bool value);
 #if USE_EXFAT_DUAL_FAT
   // Idempotently mark [cluster, cluster+count) used in the working bitmap (set
-  // bits, never error on an already-set bit). Used by ExFatVolume::reconcileBitmap
+  // bits, never error on an already-set bit). Used by ExFatVolume::reconcileFile
   // to heal "free but referenced" clusters after a torn dual-FAT commit.
   bool bitmapMarkUsed(Cluster_t cluster, uint32_t count);
 #endif  // USE_EXFAT_DUAL_FAT

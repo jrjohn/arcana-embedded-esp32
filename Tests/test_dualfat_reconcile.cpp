@@ -125,6 +125,7 @@ TEST(DualFatReconcile, HealsFreeButReferenced) {
     // Remount → reconcileBitmap() must heal.
     {
         ExFatVolume vol2; ASSERT_TRUE(vol2.begin(&dev));
+        ASSERT_TRUE(vol2.reconcileFile("/test.ats"));
         EXPECT_GE(vol2.healedClusters(), 1u) << "reconcile must heal the torn cluster";
         // committed data intact
         ExFatFilePort fp(&vol2);
@@ -149,7 +150,8 @@ TEST(DualFatReconcile, HealsMultipleClusters) {
     { ExFatVolume vol; ASSERT_TRUE(vol.begin(&dev)); writeFile(vol, "big.ats", 512, fc, nclus); ASSERT_GE(nclus, 3u); }
     Geom g = parseGeom(dev);
     bitmapClear(dev, g, fc + nclus - 2, 2);             // clear last two referenced clusters
-    { ExFatVolume vol2; ASSERT_TRUE(vol2.begin(&dev)); EXPECT_EQ(vol2.healedClusters(), 2u); }
+    { ExFatVolume vol2; ASSERT_TRUE(vol2.begin(&dev)); ASSERT_TRUE(vol2.reconcileFile("/big.ats"));
+      EXPECT_EQ(vol2.healedClusters(), 2u); }
 }
 
 // Clean volume (no tear) → reconcile is a no-op.
@@ -159,7 +161,8 @@ TEST(DualFatReconcile, CleanVolumeHealsNothing) {
     { ExFatFormatter fmt; ASSERT_TRUE(fmt.format(&dev, secBuf, nullptr)); }
     uint32_t fc = 0, nclus = 0;
     { ExFatVolume vol; ASSERT_TRUE(vol.begin(&dev)); writeFile(vol, "clean.ats", 128, fc, nclus); }
-    { ExFatVolume vol2; ASSERT_TRUE(vol2.begin(&dev)); EXPECT_EQ(vol2.healedClusters(), 0u); }
+    { ExFatVolume vol2; ASSERT_TRUE(vol2.begin(&dev)); ASSERT_TRUE(vol2.reconcileFile("/clean.ats"));
+      EXPECT_EQ(vol2.healedClusters(), 0u); }
 }
 
 // A referenced cluster inside a SUBDIRECTORY's file is healed too (covers the
@@ -186,7 +189,8 @@ TEST(DualFatReconcile, HealsInsideSubdir) {
     }
     Geom g = parseGeom(dev);
     bitmapClear(dev, g, fc + nclus - 1, 1);
-    { ExFatVolume vol2; ASSERT_TRUE(vol2.begin(&dev)); EXPECT_GE(vol2.healedClusters(), 1u); }
+    { ExFatVolume vol2; ASSERT_TRUE(vol2.begin(&dev)); ASSERT_TRUE(vol2.reconcileFile("/sub/inner.ats"));
+      EXPECT_GE(vol2.healedClusters(), 1u); }
 }
 
 // A FRAGMENTED file (non-contiguous → has a real FAT chain) is healed via the
@@ -214,19 +218,21 @@ TEST(DualFatReconcile, HealsFragmentedFile) {
         f.close();
     }
     Geom g = parseGeom(dev);
-    // clear A's first cluster bit -> reconcile must walk A's FAT chain to re-mark it
+    // clear A's first cluster bit -> reconcileFile must walk A's FAT chain to re-mark it
+    // (a.ats is < 1 MB so the whole chain is within the tail margin)
     ASSERT_EQ(bitmapBit(dev, g, aFirst), 1);
     bitmapClear(dev, g, aFirst, 1);
-    { ExFatVolume vol2; ASSERT_TRUE(vol2.begin(&dev)); EXPECT_GE(vol2.healedClusters(), 1u); }
+    { ExFatVolume vol2; ASSERT_TRUE(vol2.begin(&dev)); ASSERT_TRUE(vol2.reconcileFile("/a.ats"));
+      EXPECT_GE(vol2.healedClusters(), 1u); }
 }
 
-// Directory nesting deeper than the recursion cap (depth>4) must terminate
-// gracefully (covers the depth-cap guard); mount still succeeds.
-TEST(DualFatReconcile, DeepNestingDepthCapTerminates) {
+// reconcileFile on an absent file is a safe no-op (e.g. a freshly-formatted card
+// before sensor.ats/device.ats exist).
+TEST(DualFatReconcile, ReconcileMissingFileIsNoOp) {
     FileBlockDevice dev;
     uint8_t secBuf[512];
     { ExFatFormatter fmt; ASSERT_TRUE(fmt.format(&dev, secBuf, nullptr)); }
-    { ExFatVolume vol; ASSERT_TRUE(vol.begin(&dev));
-      ASSERT_TRUE(vol.mkdir("a/b/c/d/e/f")) << "deep mkdir failed"; }  // 6 levels
-    { ExFatVolume vol2; ASSERT_TRUE(vol2.begin(&dev)); }               // reconcileDir hits depth>4
+    ExFatVolume vol; ASSERT_TRUE(vol.begin(&dev));
+    EXPECT_TRUE(vol.reconcileFile("/sensor.ats"));   // not present yet
+    EXPECT_EQ(vol.healedClusters(), 0u);
 }
