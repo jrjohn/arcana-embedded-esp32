@@ -8,7 +8,7 @@
   <img src="https://img.shields.io/badge/Crypto-AES--256--CCM_+_ECDH-8B5CF6?style=for-the-badge" alt="Crypto">
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
   <br>
-  <img src="https://img.shields.io/badge/Tests-24%2F24_passing-brightgreen?style=for-the-badge" alt="Tests">
+  <img src="https://img.shields.io/badge/Tests-25%2F25_passing-brightgreen?style=for-the-badge" alt="Tests">
   <img src="https://img.shields.io/badge/Coverage-96.2%25_lines-brightgreen?style=for-the-badge" alt="Coverage">
   <img src="https://img.shields.io/badge/Architecture%20Rating-⭐⭐⭐⭐⭐%209.1%2F10-blue.svg" alt="Architecture Rating">
 </p>
