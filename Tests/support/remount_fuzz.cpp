@@ -82,6 +82,10 @@ int main(int argc, char** argv) {
         FailDev dev(path, false);    // reopen existing image, writes allowed
         ExFatVolume vol;
         if (!vol.begin(&dev)) { fprintf(stderr, "recovery mount failed\n"); return 1; }
+        // App-side recovery step: heal the at-risk files' torn tails before writing
+        // (mirrors AtsStorageServiceImpl, which calls reconcileFile after mount).
+        vol.reconcileFile("/sensor.ats");
+        vol.reconcileFile("/baseline.ats");
         arcana::ats::ExFatFilePort sensor(&vol);
         if (sensor.open("sensor.ats", arcana::ats::ATS_MODE_RW)) {
             sensor.seek(sensor.size());           // append at end of committed data

@@ -238,6 +238,20 @@ public:
         return s;
     }
 
+    /** @brief Lifetime ECG record counter (device.ats ch3). Monotonic grand total
+     *  across ALL rotated day-files (the current sensor.ats is added at report
+     *  time). `lastDay` = highest YYYYMMDD already folded into `lifetime`, so a
+     *  boot can fold any day-file with day>lastDay (the midnight-rotation crash
+     *  window) idempotently without double-counting. */
+    static inline ArcanaTsSchema recordStat() {
+        ArcanaTsSchema s;
+        s.setName("RECSTAT");
+        s.addField("ts",       FieldType::U32);
+        s.addField("lifetime", FieldType::U64);
+        s.addField("lastDay",  FieldType::U32);
+        return s;
+    }
+
     /** @brief Accumulated device counters (20 bytes/record, 203 rec/block) */
     static inline ArcanaTsSchema deviceCounters() {
         ArcanaTsSchema s;

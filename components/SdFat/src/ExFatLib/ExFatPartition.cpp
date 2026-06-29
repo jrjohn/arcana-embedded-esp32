@@ -129,6 +129,49 @@ bool ExFatPartition::bitmapModify(Cluster_t cluster, uint32_t count,
 fail:
   return false;
 }
+#if USE_EXFAT_DUAL_FAT
+//------------------------------------------------------------------------------
+// Idempotently mark [cluster, cluster+count) used in the WORKING bitmap. Mirrors
+// bitmapModify's sector/bit walk but ORs the bits (setting an already-set bit is
+// a no-op, not an error). Tx-records the touched sectors so the heal is carried
+// into the committed copy on the next commit. See ExFatVolume::reconcileFile.
+bool ExFatPartition::bitmapMarkUsed(Cluster_t cluster, uint32_t count) {
+  if (cluster < 2 || count == 0) {
+    return true;  // LCOV_EXCL_LINE — defensive: callers (reconcileFile) pass cluster>=2, count>=1
+  }
+  Cluster_t start = cluster - 2;
+  if ((start + count) > m_clusterCount) {
+    DBG_FAIL_MACRO;        // LCOV_EXCL_LINE — defensive: referenced clusters are in range
+    return false;          // LCOV_EXCL_LINE
+  }
+  uint8_t mask = 1 << (start & 7);
+  Sector_t sector = m_bitmapStartSector + (start >> (m_bytesPerSectorShift + 3));
+  size_t i = (start >> 3) & m_sectorMask;
+  while (true) {
+    if (m_numberOfFats == 2) {
+      txRecord(m_txBmp, &m_txBmpCount, sector - m_bitmapStartSector);
+    }
+    uint8_t* cache = bitmapCachePrepare(sector++, FsCache::CACHE_FOR_WRITE);
+    if (!cache) {
+      DBG_FAIL_MACRO;        // LCOV_EXCL_LINE — defensive: bitmap sector read can't fail here
+      return false;          // LCOV_EXCL_LINE
+    }
+    for (; i < m_bytesPerSector; i++) {
+      for (; mask; mask <<= 1) {
+        if (!(cache[i] & mask)) {  // was free but referenced — heal it
+          cache[i] |= mask;
+          m_healedClusters++;
+        }
+        if (--count == 0) {
+          return true;
+        }
+      }
+      mask = 1;
+    }
+    i = 0;
+  }
+}
+#endif  // USE_EXFAT_DUAL_FAT
 //------------------------------------------------------------------------------
 uint32_t ExFatPartition::chainSize(Cluster_t cluster) {
   uint32_t n = 0;
@@ -289,7 +332,11 @@ bool ExFatPartition::reseedInactive() {
   // is copied: beyond the highest used cluster both copies are all-zero. The
   // high-water spans BOTH copies (working may hold uncommitted allocations the
   // reseed must discard), and a torn bitmap can only inflate it, so this is safe.
-  uint8_t buf[m_bytesPerSector];
+  // Bulk-copy in chunks to amortize per-sector SPI command overhead: a
+  // sector-at-a-time reseed is command-latency bound on a large, data-full card
+  // (observed ~88 s on a 28 GB card). 32-sector ops cut the transaction count ~32x.
+  static const uint32_t kChunkSectors = 32;
+  static uint8_t chunk[kChunkSectors * 512];  // 16 KB .bss (DMA-capable internal RAM)
   uint8_t working = 1 - m_activeFat;
   Sector_t spc = (Sector_t)1 << m_sectorsPerClusterShift;
   Sector_t bmpSrc = m_clusterHeapStartSector + (Sector_t)m_activeFat * spc;
@@ -307,20 +354,24 @@ bool ExFatPartition::reseedInactive() {
   if (fatSectors > m_fatLength) fatSectors = m_fatLength;
   Sector_t fatSrc = m_fatBaseSector + (Sector_t)m_activeFat * m_fatLength;
   Sector_t fatDst = m_fatBaseSector + (Sector_t)working * m_fatLength;
-  for (uint32_t i = 0; i < fatSectors; i++) {
-    if (!m_blockDev->readSector(fatSrc + i, buf) ||
-        !m_blockDev->writeSector(fatDst + i, buf)) {
+  for (uint32_t i = 0; i < fatSectors; ) {
+    uint32_t n = (fatSectors - i) < kChunkSectors ? (fatSectors - i) : kChunkSectors;
+    if (!m_blockDev->readSectors(fatSrc + i, chunk, n) ||
+        !m_blockDev->writeSectors(fatDst + i, chunk, n)) {
       return false;
     }
+    i += n;
   }
   // Bitmap bit for cluster C lives in bitmap sector (C-2) >> (bytesPerSectorShift+3).
   uint32_t bmpUsed = ((hw - 2) >> (m_bytesPerSectorShift + 3)) + 1;
   if (bmpUsed > bmpSectors) bmpUsed = bmpSectors;
-  for (uint32_t i = 0; i < bmpUsed; i++) {
-    if (!m_blockDev->readSector(bmpSrc + i, buf) ||
-        !m_blockDev->writeSector(bmpDst + i, buf)) {
+  for (uint32_t i = 0; i < bmpUsed; ) {
+    uint32_t n = (bmpUsed - i) < kChunkSectors ? (bmpUsed - i) : kChunkSectors;
+    if (!m_blockDev->readSectors(bmpSrc + i, chunk, n) ||
+        !m_blockDev->writeSectors(bmpDst + i, chunk, n)) {
       return false;
     }
+    i += n;
   }
   m_txFatCount = 0;
   m_txBmpCount = 0;

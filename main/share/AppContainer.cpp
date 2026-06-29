@@ -18,6 +18,7 @@
 #include "impl/HttpUploadServiceImpl.hpp"
 #include "impl/WifiServiceImpl.hpp"
 #include "impl/DriverServiceImpl.hpp"
+#include "view/BootSplash.hpp"
 #include "esp_log.h"
 #include "esp_ota_ops.h"
 
@@ -309,6 +310,10 @@ void AppContainer::initHAL() {
         // into the framebuffer; Ssd1306 skips I2C traffic when not ready.
         ESP_LOGW(TAG, "OLED unavailable — display output disabled");
     }
+    // LCD is up. The SD-card init below can stall for tens of seconds on a cold
+    // boot (busy-card retry) — animate a splash so the panel isn't black/hung
+    // looking. Handed off to MainView in startServices().
+    View::BootSplash::start(&mLcd->getDisplay());
     ESP_ERROR_CHECK(mMqtt->init_HAL());
     if (mStorage->init_HAL() != ESP_OK) {
         ESP_LOGW(TAG, "SD card unavailable — storage disabled");
@@ -378,6 +383,10 @@ void AppContainer::startServices() {
     ESP_ERROR_CHECK(mDiag->start());
     if (mStorage) ESP_ERROR_CHECK(mStorage->start());
     ESP_ERROR_CHECK(mIo->start());
+
+    // Stop the boot splash and wait for it to release the panel before MainView
+    // takes over (they share the one framebuffer).
+    View::BootSplash::stop();
 
     // Start MVVM: View render task first, then ViewModel subscribes + notifies
     sMainView.start();

@@ -24,7 +24,8 @@ enum DirtyFlag : uint8_t {
 struct LcdOutput {
     float temperature = 0.0f;
     float humidity = 0.0f;
-    uint32_t records = 0;
+    uint32_t records = 0;     ///< current day-file (sensor.ats), resets at midnight
+    uint64_t lifetime = 0;    ///< grand total across all days (device.ats ch3)
     uint16_t rate = 0;        ///< records/sec
     uint32_t uptimeSec = 0;
 
@@ -66,6 +67,7 @@ public:
         if (input.StorageStats) {
             input.StorageStats->Subscribe([this](const Storage::StorageStats& s) {
                 mOutput.records = s.recordCount;
+                mOutput.lifetime = s.lifetimeRecords;
                 mOutput.rate = s.writesPerSec;
                 mOutput.dirty |= DIRTY_STORAGE;
                 notifyRender();

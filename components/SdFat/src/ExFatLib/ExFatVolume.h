@@ -73,8 +73,69 @@ class ExFatVolume : public ExFatPartition {
     if (setCwv || !m_cwv) {
       m_cwv = this;
     }
+    // NOTE: dual-FAT "free but referenced" healing is NOT done here. A whole-
+    // volume scan is O(files) and was ~80 s on a card with months of day-files.
+    // Only files that were OPEN for writing at the power loss can be torn, so the
+    // caller reconciles just those (reconcileFile) after mount, before any write.
     return true;
   }
+#if USE_EXFAT_DUAL_FAT
+  //----------------------------------------------------------------------------
+  /** Heal one file's "free but referenced" tail in the working bitmap: a torn
+   * dual-FAT commit can leave the most-recently-allocated clusters of a file that
+   * was OPEN for writing referenced by its dir entry but free in the active
+   * bitmap (the ActiveFat flip doesn't cover the shared-heap dir entry). Only
+   * such open-at-power-loss files are at risk — cleanly-closed (rotated) files
+   * are already consistent — so the caller invokes this for just those files
+   * after mount, before any allocation. Earlier clusters were committed in prior
+   * syncs, so only a tail margin (far above the writer's sync granularity) is
+   * checked. Idempotent; no-op-safe if the file is absent. Returns true. */
+  bool reconcileFile(const char* path) {
+    if (m_numberOfFats != 2) {
+      return true;
+    }
+    ExFatFile f;
+    if (!f.open(this, path, O_RDONLY)) {
+      return true;  // not present — nothing to reconcile
+    }
+    Cluster_t first = f.firstCluster();
+    uint64_t  len   = f.dataLength();
+    bool      contig = f.isContiguous();
+    f.close();
+    if (first < 2 || len == 0) {
+      return true;
+    }
+    uint32_t n = (uint32_t)((len + m_bytesPerCluster - 1) >> bytesPerClusterShift());
+    uint32_t margin = (uint32_t)((1u << 20) >> bytesPerClusterShift()) + 1;  // ~1 MB tail
+    if (margin > n) margin = n;
+    if (contig) {
+      bitmapMarkUsed(first + n - margin, margin);
+    } else {
+      // Fragmented: walk the chain keeping the last `margin` clusters in a ring,
+      // then mark them. Bounded to this one at-risk file (not the whole volume).
+      static const uint32_t kRing = 272;       // >= max margin (1 MB / 4 KB cluster + 1)
+      static Cluster_t ring[kRing];
+      uint32_t ringN = margin < kRing ? margin : kRing;
+      Cluster_t cl = first;
+      uint32_t head = 0, walked = 0;
+      while (cl >= 2 && cl < 0x7FFFFFFF && walked < m_clusterCount) {
+        ring[head % ringN] = cl;
+        head++; walked++;
+        Cluster_t next;
+        if (fatGet(cl, &next) <= 0) break;
+        cl = next;
+      }
+      uint32_t have = head < ringN ? head : ringN;
+      for (uint32_t k = 0; k < have; k++) {
+        bitmapMarkUsed(ring[(head - have + k) % ringN], 1);
+      }
+    }
+    // A heal may have filled the cluster init() picked as "first free".
+    m_bitmapStart = 0;
+    bitmapFind(0, 1);
+    return true;
+  }
+#endif  // USE_EXFAT_DUAL_FAT
   //----------------------------------------------------------------------------
   /**
    * Set volume working directory to root.

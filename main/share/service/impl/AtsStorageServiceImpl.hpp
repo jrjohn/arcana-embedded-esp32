@@ -121,6 +121,28 @@ private:
     // Enumerate "*.ats" entries on the volume root; cb(name) per file.
     void fsListAts(void (*cb)(void* ctx, const char* name), void* ctx);
 
+    // --- Lifetime ECG record counter (device.ats ch3) -----------------------
+    // Monotonic grand total across all ROTATED day-files; the current sensor.ats
+    // is added at report time (lifetimeRecordCount()). Seeded once from the
+    // Mac-computed historical total, then folded forward at each daily rotation.
+    static const uint8_t  RECSTAT_CHANNEL = 3;
+    // Historical total of records in the rotated day-files on the deployed card,
+    // counted off-device (Σ 20260624..20260628.ats). Used only on first boot when
+    // device.ats has no ch3 record yet; persisted thereafter.
+    static const uint64_t LIFETIME_SEED          = 399500334ULL;
+    static const uint32_t LIFETIME_SEED_LAST_DAY = 20260628u;
+    bool     mLifetimeReady   = false;
+    uint64_t mLifetimeRecords = 0;   // Σ rotated day-files (folded + persisted)
+    uint32_t mLifetimeLastDay = 0;   // highest YYYYMMDD folded into mLifetimeRecords
+    void initLifetimeCounter();      // boot: load-or-seed + complete interrupted rotation
+    bool loadLifetime(uint64_t& lifetime, uint32_t& lastDay);
+    bool saveLifetime();
+    static uint32_t epochToDay(uint32_t epoch);  // UTC epoch -> YYYYMMDD (0 if invalid)
+public:
+    /** Grand total ECG records ever written = rotated days + current sensor.ats. */
+    uint64_t lifetimeRecordCount() const { return mLifetimeRecords + mDb.getStats().totalRecords; }
+private:
+
     // Buffers
     static uint8_t sSlowBuf[arcana::ats::BLOCK_SIZE];
     static uint8_t sReadCache[arcana::ats::BLOCK_SIZE];

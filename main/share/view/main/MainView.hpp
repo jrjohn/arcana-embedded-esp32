@@ -31,8 +31,9 @@ public:
         display.DrawStringAt(0, 2, "Temp:   --.- C");
         display.DrawStringAt(0, 3, "Humi:   --.- %");
         display.DrawStringAt(0, 4, "--------------------");
-        display.DrawStringAt(0, 5, "Records: 0");
-        display.DrawStringAt(0, 6, "Rate: 0 rec/s");
+        display.DrawStringAt(0, 5, "Today: 0");
+        display.DrawStringAt(0, 6, "Total: 0");
+        display.DrawStringAt(0, 7, "Rate: 0 rec/s");
         display.Display();
     }
 
@@ -73,11 +74,16 @@ public:
         }
 
         if (out.dirty & DIRTY_STORAGE) {
-            snprintf(line, sizeof(line), "Records: %-9lu", (unsigned long)out.records);
+            // Today = current day-file (sensor.ats, resets at midnight rotation);
+            // Total = lifetime grand total across all days (device.ats ch3).
+            snprintf(line, sizeof(line), "Today: %-9lu", (unsigned long)out.records);
             display.DrawStringAt(0, 5, line);
 
-            snprintf(line, sizeof(line), "Rate: %-5u rec/s", out.rate);
+            snprintf(line, sizeof(line), "Total: %-11llu", (unsigned long long)out.lifetime);
             display.DrawStringAt(0, 6, line);
+
+            snprintf(line, sizeof(line), "Rate: %-5u rec/s", out.rate);
+            display.DrawStringAt(0, 7, line);
         }
 
         out.dirty = 0;
