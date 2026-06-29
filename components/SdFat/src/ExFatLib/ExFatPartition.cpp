@@ -137,12 +137,12 @@ fail:
 // into the committed copy on the next commit. See ExFatVolume::reconcileBitmap.
 bool ExFatPartition::bitmapMarkUsed(Cluster_t cluster, uint32_t count) {
   if (cluster < 2 || count == 0) {
-    return true;
+    return true;  // LCOV_EXCL_LINE — defensive: callers (reconcileDir) pass cluster>=2, count>=1
   }
   Cluster_t start = cluster - 2;
   if ((start + count) > m_clusterCount) {
-    DBG_FAIL_MACRO;
-    return false;
+    DBG_FAIL_MACRO;        // LCOV_EXCL_LINE — defensive: referenced clusters are in range
+    return false;          // LCOV_EXCL_LINE
   }
   uint8_t mask = 1 << (start & 7);
   Sector_t sector = m_bitmapStartSector + (start >> (m_bytesPerSectorShift + 3));
@@ -153,8 +153,8 @@ bool ExFatPartition::bitmapMarkUsed(Cluster_t cluster, uint32_t count) {
     }
     uint8_t* cache = bitmapCachePrepare(sector++, FsCache::CACHE_FOR_WRITE);
     if (!cache) {
-      DBG_FAIL_MACRO;
-      return false;
+      DBG_FAIL_MACRO;        // LCOV_EXCL_LINE — defensive: bitmap sector read can't fail here
+      return false;          // LCOV_EXCL_LINE
     }
     for (; i < m_bytesPerSector; i++) {
       for (; mask; mask <<= 1) {

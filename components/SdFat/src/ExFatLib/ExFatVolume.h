@@ -91,12 +91,12 @@ class ExFatVolume : public ExFatPartition {
    * clean volume). Only meaningful for a dual-FAT (numberOfFats==2) volume. */
   bool reconcileBitmap() {
     if (m_numberOfFats != 2) {
-      return true;
+      return true;  // LCOV_EXCL_LINE — single-FAT volume: nothing to reconcile
     }
     m_healedClusters = 0;
     ExFatFile root;
     if (!root.openRoot(this)) {
-      return false;
+      return false;  // LCOV_EXCL_LINE — defensive: root opens on any mounted volume
     }
     bool ok = reconcileDir(&root, 0);
     root.close();

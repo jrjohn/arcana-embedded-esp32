@@ -237,6 +237,18 @@ add_executable(test_exfat_file_port
 target_include_directories(test_exfat_file_port PRIVATE ${COMMON_INCS})
 target_link_libraries(test_exfat_file_port PRIVATE GTest::gtest_main sdfat_host esp_stubs)
 
+# ── test_dualfat_reconcile (mount-time bitmap reconcile — power-fail safety) ──
+# Links the USE_EXFAT_DUAL_FAT variant so reconcileBitmap/bitmapMarkUsed/reconcileDir
+# are compiled in (sdfat_host_dualfat's PUBLIC defs + arduino_compat -include
+# propagate to this target and the ExFatFilePort.cpp it compiles).
+add_executable(test_dualfat_reconcile
+    test_dualfat_reconcile.cpp
+    ${ATS_PORT}/ExFatFilePort.cpp
+)
+target_include_directories(test_dualfat_reconcile PRIVATE ${COMMON_INCS})
+target_link_libraries(test_dualfat_reconcile PRIVATE GTest::gtest_main sdfat_host_dualfat esp_stubs)
+add_test(NAME test_dualfat_reconcile COMMAND test_dualfat_reconcile)
+
 # ── test_log (Logger ring buffer + appenders, header-only) ───────────────────
 add_executable(test_log test_log.cpp)
 target_include_directories(test_log PRIVATE
