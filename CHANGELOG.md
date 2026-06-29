@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.1](https://github.com/jrjohn/arcana-embedded-esp32/compare/v1.2.0...v1.2.1) (2026-06-29)
+
+
+### Bug Fixes
+
+* **sdfat:** heal "free but referenced" clusters at mount (dual-FAT power-fail) ([#16](https://github.com/jrjohn/arcana-embedded-esp32/issues/16)) ([764f423](https://github.com/jrjohn/arcana-embedded-esp32/commit/764f4237befbcc12a5bc507ef598b7caf3c93bf4))
+
 ## [1.2.0](https://github.com/jrjohn/arcana-embedded-esp32/compare/v1.1.0...v1.2.0) (2026-06-24)
 
 
