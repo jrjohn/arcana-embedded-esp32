@@ -82,11 +82,20 @@ pipeline {
                 // Jenkins is running inside a container; the host docker daemon
                 // sees a different path for our workspace. Translate container path
                 // to host path so the compose `volumes: .:/project` resolves correctly.
+                // jenkins_home is a host bind mount at /opt/arcana-state/jenkins-home
+                // (see `docker inspect jenkins` .Mounts), NOT the old devops_jenkins_home
+                // named-volume path -- that stale prefix silently bind-mounted an empty
+                // auto-created directory into /project, so idf.py saw no CMakeLists.txt.
                 sh '''
-                    HOST_WS=$(echo "$WORKSPACE" | sed 's|^/var/jenkins_home/workspace|/data/docker/volumes/devops_jenkins_home/_data/workspace|')
+                    HOST_WS=$(echo "$WORKSPACE" | sed 's|^/var/jenkins_home/workspace|/opt/arcana-state/jenkins-home/workspace|')
                     echo "Container WORKSPACE=$WORKSPACE"
                     echo "Host PROJECT_PATH=$HOST_WS"
                     PROJECT_PATH="$HOST_WS" docker compose -f docker-compose.ci.yml run --rm esp32-build
+                    # esp32-build runs as root, so build/ lands root-owned on the host
+                    # workspace. Jenkins' own (non-root) workspace clean then fails with
+                    # "Operation not permitted" on a later build's Checkout SCM. Reset
+                    # ownership back to the Jenkins user via a throwaway root container.
+                    docker run --rm -v "$HOST_WS":/project espressif/idf:v6.0.1 chown -R "$(id -u):$(id -g)" /project/build || true
                 '''
             }
         }
