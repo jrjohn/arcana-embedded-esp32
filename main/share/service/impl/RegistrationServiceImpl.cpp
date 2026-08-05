@@ -16,7 +16,7 @@
 #define MBEDTLS_DECLARE_PRIVATE_IDENTIFIERS
 #endif
 #include "mbedtls/ecp.h"
-#include "mbedtls/private/ecdh.h"
+#include "EcdhShared.hpp"
 #include "CryptoMac.hpp"
 #include <cstring>
 #include <cstdio>
@@ -428,10 +428,12 @@ bool RegistrationServiceImpl::httpRegister() {
         // Compute shared secret: shared = d * serverQ
         mbedtls_mpi shared;
         mbedtls_mpi_init(&shared);
-        int ret = mbedtls_ecdh_compute_shared(&kp.MBEDTLS_PRIVATE(grp),
-                                               &shared, &serverQ,
-                                               &kp.MBEDTLS_PRIVATE(d),
-                                               Crypto::EspRngCallback, nullptr);
+        // 不用 mbedtls_ecdh_compute_shared —— IDF 6.0.2 移除了
+        // mbedtls/private/ecdh.h,理由與替代做法見 EcdhShared.hpp。
+        int ret = Crypto::EcdhComputeShared(&kp.MBEDTLS_PRIVATE(grp),
+                                            &shared, &serverQ,
+                                            &kp.MBEDTLS_PRIVATE(d),
+                                            Crypto::EspRngCallback, nullptr);
         uint8_t sharedBuf[32];
         size_t sharedLen = mbedtls_mpi_size(&shared);
         if (ret == 0 && sharedLen <= 32) {

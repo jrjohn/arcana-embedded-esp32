@@ -10,7 +10,7 @@
 #define MBEDTLS_DECLARE_PRIVATE_IDENTIFIERS
 #endif
 #include "mbedtls/ecp.h"
-#include "mbedtls/private/ecdh.h"
+#include "EcdhShared.hpp"
 #include "mbedtls/private/sha256.h"
 #include <cstring>
 
@@ -218,11 +218,12 @@ bool KeyExchangeManager::PerformKeyExchange(CommandSource source, uint16_t connI
             break;
         }
 
-        // Compute shared secret
-        ret = mbedtls_ecdh_compute_shared(&grp, &z, &Qp, &d,
-                                           Crypto::EspRngCallback, nullptr);
+        // Compute shared secret. 不用 mbedtls_ecdh_compute_shared —— IDF 6.0.2
+        // 移除了 mbedtls/private/ecdh.h,理由與替代做法見 EcdhShared.hpp。
+        ret = Crypto::EcdhComputeShared(&grp, &z, &Qp, &d,
+                                        Crypto::EspRngCallback, nullptr);
         if (ret != 0) {
-            ESP_LOGE(TAG, "ecdh_compute_shared failed: -0x%04x", (unsigned)-ret);
+            ESP_LOGE(TAG, "ecdh shared-secret failed: -0x%04x", (unsigned)-ret);
             break;
         }
 

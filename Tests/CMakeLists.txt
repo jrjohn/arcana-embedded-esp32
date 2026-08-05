@@ -443,7 +443,7 @@ if(MBEDTLS_INCLUDE_DIR AND MBEDCRYPTO_LIB)
             -Wl,--wrap=mbedtls_ecp_group_load
             -Wl,--wrap=mbedtls_ecp_gen_keypair
             -Wl,--wrap=mbedtls_ecp_check_pubkey
-            -Wl,--wrap=mbedtls_ecdh_compute_shared
+            -Wl,--wrap=mbedtls_ecp_mul
             -Wl,--wrap=mbedtls_mpi_read_binary
             -Wl,--wrap=mbedtls_mpi_write_binary
             -Wl,--wrap=mbedtls_ccm_setkey

@@ -3,7 +3,7 @@
   <img src="https://img.shields.io/badge/MCU-ESP32_·_ESP32--S3-E7352C?style=for-the-badge&logo=espressif" alt="ESP32 / ESP32-S3">
   <img src="https://img.shields.io/badge/RTOS-FreeRTOS-00A86B?style=for-the-badge" alt="FreeRTOS">
   <img src="https://img.shields.io/badge/Language-C++17-00599C?style=for-the-badge&logo=cplusplus" alt="C++">
-  <img src="https://img.shields.io/badge/IDF-v6.0.1-blue?style=for-the-badge" alt="ESP-IDF">
+  <img src="https://img.shields.io/badge/IDF-v6.0.2-blue?style=for-the-badge" alt="ESP-IDF">
   <img src="https://img.shields.io/badge/BLE-Bluedroid_Dual--Role-0082FC?style=for-the-badge&logo=bluetooth" alt="BLE">
   <img src="https://img.shields.io/badge/Crypto-AES--256--CCM_+_ECDH-8B5CF6?style=for-the-badge" alt="Crypto">
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
@@ -63,7 +63,7 @@
 | **Resource Efficiency** | 7/10 | ~12 async Observable tasks; MVVM render via task notification (zero idle cost); ESP-IDF 6.0 picolibc shrinks libc footprint |
 | **Thread Safety** | 8/10 | Mutex-protected crypto sessions; std::string in queue (High issue) |
 | **Testing** | 10/10 | 21 host tests, all passing. **100.0% line coverage** (2798/2798 lines, 0 uncovered) verified by Sonar. mbedtls fault-injection via linker `--wrap`, FlakyFilePort precise call-count injection, IEC 62304 §5.5.3 LCOV_EXCL annotations on defensive paths |
-| **Toolchain** | 9/10 | ESP-IDF 6.0 / mbedtls 4.0 / picolibc / xtensa-esp-elf 15.2 — current stable LTS supported through Sep 2028; CI pinned to `espressif/idf:v6.0.1` |
+| **Toolchain** | 9/10 | ESP-IDF 6.0 / mbedtls 4.0 / picolibc / xtensa-esp-elf 15.2 — current stable LTS supported through Sep 2028; CI pinned to `espressif/idf:v6.0.2` |
 | **Documentation** | 9.5/10 | Comprehensive README with data flows, protocol spec, security analysis |
 | **Overall** | **9.1/10** | Mature IoT platform — strong security, MVVM, provisioning, persistent storage, **production-grade test coverage** and current toolchain. Limited only by minor polling/naming issues and a latent broker-side ACL bug |
 
@@ -1080,7 +1080,7 @@ notes: [`docs/DNESP32S3-pinmap.md`](docs/DNESP32S3-pinmap.md).
 
 ### Prerequisites
 
-- [ESP-IDF v6.0.1+](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/get-started/)
+- [ESP-IDF v6.0.2+](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/get-started/)
 - An ESP32 or ESP32-S3 development board (see [Supported Boards](#supported-boards))
 
 ### Build & Flash
@@ -1090,7 +1090,7 @@ git clone https://github.com/jrjohn/arcana-embedded-esp32.git
 cd arcana-embedded-esp32
 
 # Set up ESP-IDF environment
-source ~/.espressif/v6.0.1/esp-idf/export.sh
+source ~/.espressif/v6.0.2/esp-idf/export.sh
 
 # Configure credentials (required on first clone)
 cp sdkconfig.credentials.example sdkconfig.credentials
