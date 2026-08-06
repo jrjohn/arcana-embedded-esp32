@@ -7,7 +7,6 @@
 
 #include "mbedtls/md.h"
 #include "mbedtls/ecp.h"
-#include "mbedtls/ecdh.h"
 #include "mbedtls/entropy.h"
 #include "mbedtls/ctr_drbg.h"
 #include "mbedtls/bignum.h"
@@ -24,7 +23,7 @@ int g_fail_md_hmac_finish     = 0;
 int g_fail_ecp_group_load     = 0;
 int g_fail_ecp_gen_keypair    = 0;
 int g_fail_ecp_check_pubkey   = 0;
-int g_fail_ecdh_compute_shared = 0;
+int g_fail_ecp_mul            = 0;
 int g_fail_mpi_read_binary    = 0;
 int g_fail_mpi_write_binary   = 0;
 int g_fail_ccm_setkey         = 0;
@@ -45,7 +44,7 @@ void mbedtls_test_reset_failures() {
     g_fail_ecp_group_load     = 0;
     g_fail_ecp_gen_keypair    = 0;
     g_fail_ecp_check_pubkey   = 0;
-    g_fail_ecdh_compute_shared = 0;
+    g_fail_ecp_mul            = 0;
     g_fail_mpi_read_binary    = 0;
     g_fail_mpi_write_binary   = 0;
     g_fail_ccm_setkey         = 0;
@@ -65,9 +64,9 @@ int __real_mbedtls_ecp_group_load(mbedtls_ecp_group*, mbedtls_ecp_group_id);
 int __real_mbedtls_ecp_gen_keypair(mbedtls_ecp_group*, mbedtls_mpi*, mbedtls_ecp_point*,
                                     int (*)(void*, unsigned char*, size_t), void*);
 int __real_mbedtls_ecp_check_pubkey(const mbedtls_ecp_group*, const mbedtls_ecp_point*);
-int __real_mbedtls_ecdh_compute_shared(mbedtls_ecp_group*, mbedtls_mpi*,
-                                        const mbedtls_ecp_point*, const mbedtls_mpi*,
-                                        int (*)(void*, unsigned char*, size_t), void*);
+int __real_mbedtls_ecp_mul(mbedtls_ecp_group*, mbedtls_ecp_point*,
+                           const mbedtls_mpi*, const mbedtls_ecp_point*,
+                           int (*)(void*, unsigned char*, size_t), void*);
 int __real_mbedtls_mpi_read_binary(mbedtls_mpi*, const unsigned char*, size_t);
 int __real_mbedtls_mpi_write_binary(const mbedtls_mpi*, unsigned char*, size_t);
 int __real_mbedtls_ccm_setkey(mbedtls_ccm_context*, mbedtls_cipher_id_t,
@@ -125,11 +124,14 @@ int __wrap_mbedtls_ecp_check_pubkey(const mbedtls_ecp_group* grp, const mbedtls_
     return __real_mbedtls_ecp_check_pubkey(grp, pt);
 }
 
-int __wrap_mbedtls_ecdh_compute_shared(mbedtls_ecp_group* grp, mbedtls_mpi* z,
-                                        const mbedtls_ecp_point* Q, const mbedtls_mpi* d,
-                                        int (*f_rng)(void*, unsigned char*, size_t), void* p_rng) {
-    if (g_fail_ecdh_compute_shared) return -0x4F80;
-    return __real_mbedtls_ecdh_compute_shared(grp, z, Q, d, f_rng, p_rng);
+// 注入點從 mbedtls_ecdh_compute_shared 移到 mbedtls_ecp_mul:IDF 6.0.2 移除了
+// mbedtls/private/ecdh.h,產品碼改以 ecp_mul 自行組出共享秘密(見 EcdhShared.hpp)。
+// 沒有跟著移的話,這個旗標會設了卻攔不到任何東西 —— 故障注入測試等於沒在測。
+int __wrap_mbedtls_ecp_mul(mbedtls_ecp_group* grp, mbedtls_ecp_point* R,
+                           const mbedtls_mpi* m, const mbedtls_ecp_point* P,
+                           int (*f_rng)(void*, unsigned char*, size_t), void* p_rng) {
+    if (g_fail_ecp_mul) return -0x4F80;
+    return __real_mbedtls_ecp_mul(grp, R, m, P, f_rng, p_rng);
 }
 
 int __wrap_mbedtls_mpi_read_binary(mbedtls_mpi* X, const unsigned char* buf, size_t buflen) {

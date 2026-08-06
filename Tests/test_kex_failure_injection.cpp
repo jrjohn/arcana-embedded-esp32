@@ -22,7 +22,7 @@ extern int g_fail_md_hmac_finish;
 extern int g_fail_ecp_group_load;
 extern int g_fail_ecp_gen_keypair;
 extern int g_fail_ecp_check_pubkey;
-extern int g_fail_ecdh_compute_shared;
+extern int g_fail_ecp_mul;
 extern int g_fail_mpi_read_binary;
 extern int g_fail_mpi_write_binary;
 extern int g_fail_ccm_setkey;
@@ -134,9 +134,9 @@ TEST_F(KexFailInject, EcpGenKeypairFailureAborts) {
                                           clientPub, serverPub, authTag));
 }
 
-// ── ecdh_compute_shared failure ────────────────────────────────────────────
+// ── ecp_mul failure (共享秘密計算) ─────────────────────────────────────────
 
-TEST_F(KexFailInject, EcdhComputeSharedFailureAborts) {
+TEST_F(KexFailInject, EcdhSharedSecretFailureAborts) {
     KeyExchangeManager kex;
     uint8_t psk[CryptoEngine::kKeyLen];
     makePsk(psk);
@@ -145,7 +145,7 @@ TEST_F(KexFailInject, EcdhComputeSharedFailureAborts) {
     uint8_t clientPub[64];
     ASSERT_TRUE(generateClientKeypair(clientPub));
 
-    g_fail_ecdh_compute_shared = 1;
+    g_fail_ecp_mul = 1;
     uint8_t serverPub[64], authTag[32];
     EXPECT_FALSE(kex.PerformKeyExchange(CommandSource::BLE, 16,
                                           clientPub, serverPub, authTag));
