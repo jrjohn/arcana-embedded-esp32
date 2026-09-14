@@ -3,7 +3,7 @@
   <img src="https://img.shields.io/badge/MCU-ESP32_·_ESP32--S3-E7352C?style=for-the-badge&logo=espressif" alt="ESP32 / ESP32-S3">
   <img src="https://img.shields.io/badge/RTOS-FreeRTOS-00A86B?style=for-the-badge" alt="FreeRTOS">
   <img src="https://img.shields.io/badge/Language-C++17-00599C?style=for-the-badge&logo=cplusplus" alt="C++">
-  <img src="https://img.shields.io/badge/IDF-v6.0.2-blue?style=for-the-badge" alt="ESP-IDF">
+  <img src="https://img.shields.io/badge/IDF-v6.0.3-blue?style=for-the-badge" alt="ESP-IDF">
   <img src="https://img.shields.io/badge/BLE-Bluedroid_Dual--Role-0082FC?style=for-the-badge&logo=bluetooth" alt="BLE">
   <img src="https://img.shields.io/badge/Crypto-AES--256--CCM_+_ECDH-8B5CF6?style=for-the-badge" alt="Crypto">
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
@@ -63,7 +63,7 @@
 | **Resource Efficiency** | 7/10 | ~12 async Observable tasks; MVVM render via task notification (zero idle cost); ESP-IDF 6.0 picolibc shrinks libc footprint |
 | **Thread Safety** | 8/10 | Mutex-protected crypto sessions; std::string in queue (High issue) |
 | **Testing** | 10/10 | 21 host tests, all passing. **100.0% line coverage** (2798/2798 lines, 0 uncovered) verified by Sonar. mbedtls fault-injection via linker `--wrap`, FlakyFilePort precise call-count injection, IEC 62304 §5.5.3 LCOV_EXCL annotations on defensive paths |
-| **Toolchain** | 9/10 | ESP-IDF 6.0 / mbedtls 4.0 / picolibc / xtensa-esp-elf 15.2 — current stable LTS supported through Sep 2028; CI pinned to `espressif/idf:v6.0.2` |
+| **Toolchain** | 9/10 | ESP-IDF 6.0 / mbedtls 4.0 / picolibc / xtensa-esp-elf 15.2 — current stable LTS supported through Sep 2028; CI pinned to `espressif/idf:v6.0.3` |
 | **Documentation** | 9.5/10 | Comprehensive README with data flows, protocol spec, security analysis |
 | **Overall** | **9.1/10** | Mature IoT platform — strong security, MVVM, provisioning, persistent storage, **production-grade test coverage** and current toolchain. Limited only by minor polling/naming issues and a latent broker-side ACL bug |
 
@@ -105,7 +105,7 @@
 | 28 | **SensorData fan-out expands to 4 subscribers** | `output.DataEvents` now feeds `BleTransportService` (GATT notify), `LcdViewModel` (MVVM display), `MqttTransportService` (JSON publish), and `AtsStorageService` (time-series write to SD). Adding a new subscriber is one `input.SensorDataEvents` wire in `wireServices()` |
 | 29 | **Upload-then-reconnect flow** | HTTP file upload temporarily disconnects MQTT (`mqtt->stop()`), uploads all pending `.ats` files via `HttpUploadService`, then reconnects MQTT (`mqtt->start()`). Progress updates flow through `ViewModel::showToast()` via lambda callback — upload logic in AppContainer stays transport-agnostic |
 | 30 | **Atomic Android-style layered restructure** | All 15 ESP-IDF components were collapsed into one big `main/` component organised by layer: `main/{service,transport,db,command,view,driver,core}/`. Discovery via `git log` is by feature, not by component name. Cross-layer encapsulation is enforced by code review (ESP-IDF used to enforce it via `REQUIRES`); single-component build is faster and the layout mirrors the Arcana Android app one-for-one |
-| 31 | **100% line coverage with fault injection** | 21 host-side tests (`Tests/test_*.cpp`) build under Debian gcc:12 + libmbedtls-dev. Sonar reports **100.0% line coverage (2798/2798 lines, 0 uncovered)**. Fault injection via two mechanisms: (a) `Tests/mocks/mbedtls_wrap.cpp` `__wrap_*` symbols on 13 mbedtls APIs driven by `g_fail_*` flags + counter-based `_after_n` injection; (b) `FlakyFilePort` test cipher driver with precise call-count failure points. Defensive RTOS-failure paths (queue full, mutex create, etc.) annotated with `LCOV_EXCL` per IEC 62304 §5.5.3 |
+| 31 | **100% line coverage with fault injection** | 21 host-side tests (`Tests/test_*.cpp`) build under Debian gcc:16 + libmbedtls-dev. Sonar reports **100.0% line coverage (2798/2798 lines, 0 uncovered)**. Fault injection via two mechanisms: (a) `Tests/mocks/mbedtls_wrap.cpp` `__wrap_*` symbols on 13 mbedtls APIs driven by `g_fail_*` flags + counter-based `_after_n` injection; (b) `FlakyFilePort` test cipher driver with precise call-count failure points. Defensive RTOS-failure paths (queue full, mutex create, etc.) annotated with `LCOV_EXCL` per IEC 62304 §5.5.3 |
 | 32 | **ESP-IDF 6.0 / mbedtls 4.0 compatibility shim** | Production crypto code (`CryptoEngine`, `KeyExchangeManager`, `Esp32AesCtrCipher`, `RegistrationServiceImpl`) uses `mbedtls/private/{aes,ccm,sha256,ecdh}.h` headers behind `#define MBEDTLS_DECLARE_PRIVATE_IDENTIFIERS`. Avoids the multi-day PSA Crypto API rewrite that mbedtls 4.0 nominally requires while staying officially supported via the documented escape hatch. Host tests link Debian system mbedtls 2.28 via `Tests/mocks/mbedtls/private/*.h` redirector stubs that map back to legacy public headers — same source compiles in both environments |
 | 33 | **EspRng wrapper bypasses PSA Crypto migration** | mbedtls 4.0 deleted the entire `mbedtls_entropy_*` and `mbedtls_ctr_drbg_*` API (PSA Crypto owns randomness now). `main/command/security/EspRng.hpp` provides a 10-line wrapper exposing `esp_fill_random()` (ESP32 hardware TRNG) under the legacy `int (*)(void*, unsigned char*, size_t)` f_rng callback signature. `mbedtls_ecp_gen_keypair` / `mbedtls_ecdh_compute_shared` continue to work unchanged, no PSA key handles, no `psa_crypto_init()` ceremony |
 | 34 | **Editor-side clangd config** | `.clangd` at project root pins compile flags (`CompilationDatabase: ./build`, `Remove: [-m*, -f*]`) and suppresses the `attribute_not_type_attr` false positive that picolibc's `pthread.h` triggers in clangd's strict C++11 parser. GCC build is unaffected — pure LSP-side analyzer config. Same file is consumed by Eclipse (Espressif IDF plugin), VS Code, Neovim and any other clangd-backed editor |
@@ -1080,7 +1080,7 @@ notes: [`docs/DNESP32S3-pinmap.md`](docs/DNESP32S3-pinmap.md).
 
 ### Prerequisites
 
-- [ESP-IDF v6.0.2+](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/get-started/)
+- [ESP-IDF v6.0.3+](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/get-started/)
 - An ESP32 or ESP32-S3 development board (see [Supported Boards](#supported-boards))
 
 ### Build & Flash
@@ -1090,7 +1090,7 @@ git clone https://github.com/jrjohn/arcana-embedded-esp32.git
 cd arcana-embedded-esp32
 
 # Set up ESP-IDF environment
-source ~/.espressif/v6.0.2/esp-idf/export.sh
+source ~/.espressif/v6.0.3/esp-idf/export.sh
 
 # Configure credentials (required on first clone)
 cp sdkconfig.credentials.example sdkconfig.credentials
