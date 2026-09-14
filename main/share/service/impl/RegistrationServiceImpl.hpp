@@ -24,7 +24,7 @@ private:
     bool parseResponse(const uint8_t* payload, uint16_t len);
 
     Credentials mCreds;
-    char mDeviceId[13];     ///< MAC hex "A4E57CDA592E\0"
+    char mDeviceId[13];     ///< MAC hex "AABBCCDDEEFF\0"
     uint8_t mDeviceKey[32]; ///< Derived from MAC
 
     // Server ECDH response (temporary, used between parseResponse and ECDH)

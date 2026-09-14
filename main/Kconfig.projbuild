@@ -39,7 +39,7 @@ menu "Arcana OTA Configuration"
 
     config EXAMPLE_FIRMWARE_UPG_URL
         string "Firmware Upgrade URL"
-        default "https://192.168.2.106:8070/hello-world.bin"
+        default "https://192.0.2.10:8070/hello-world.bin"
         help
             URL of server which hosts the firmware image.
 

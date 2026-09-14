@@ -49,11 +49,11 @@ uint16_t buildOtaPayload(uint8_t* out, const char* host, const char* path,
 
 TEST(OtaCommandsTest, ParseValidPayload) {
     uint8_t buf[128];
-    uint16_t len = buildOtaPayload(buf, "192.168.11.5", "/fw.bin", 8070, 123456, 0xDEADBEEF);
+    uint16_t len = buildOtaPayload(buf, "192.0.2.5", "/fw.bin", 8070, 123456, 0xDEADBEEF);
 
     OtaUpdateCommand::Params p;
     ASSERT_TRUE(OtaUpdateCommand::ParsePayload(buf, len, p));
-    EXPECT_STREQ(p.host, "192.168.11.5");
+    EXPECT_STREQ(p.host, "192.0.2.5");
     EXPECT_STREQ(p.path, "/fw.bin");
     EXPECT_EQ(p.port, 8070);
     EXPECT_EQ(p.expectedSize, 123456u);
@@ -102,7 +102,7 @@ TEST(OtaCommandsTest, StartRejectsWhenBusyOrUnwired) {
 
 TEST(OtaCommandsTest, StartAcceptsValidPayload) {
     uint8_t buf[128];
-    uint16_t len = buildOtaPayload(buf, "192.168.11.44", "/mqtt5.bin",
+    uint16_t len = buildOtaPayload(buf, "192.0.2.44", "/mqtt5.bin",
                                    8070, 1688064, 0xf204eea8);
     CommandRequest req;
     req.ClusterId = Cluster::Ota;
