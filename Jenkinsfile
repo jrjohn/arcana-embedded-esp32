@@ -70,11 +70,23 @@ pipeline {
         }
 
         stage("Pull Build Image") {
-            // Pre-warm the EXACT image docker-compose.ci.yml builds from (v6.0.2).
-            // Pulling the older v6.0 tag here was both wrong (compose uses v6.0.2) and a
-            // hang risk: v6.0 is uncached, so build #12 stalled ~45 min on a fresh multi-GB
-            // pull and timed out. The pinned tag is cached by prior builds -> fast cache hit.
-            steps { sh "docker pull espressif/idf:v6.0.2" }
+            // Pre-warm the EXACT image docker-compose.ci.yml builds from. Pulling a different
+            // tag here was a hang risk (build #12 stalled ~45 min on an uncached multi-GB
+            // pull) and a disk sink: after Renovate bumped the compose file to v6.0.3 (#22),
+            // this line still pulled v6.0.2, so every build kept a second, unused 15 GB IDF
+            // image on the CI host. The tag is now read from the compose file, so a Renovate
+            // bump there can no longer leave this stage behind (it drifted twice).
+            steps {
+                sh '''
+                    IMG=$(grep -oE 'image:[[:space:]]*espressif/idf:[^[:space:]"]+' docker-compose.ci.yml | head -1 | sed -E 's/image:[[:space:]]*//')
+                    if [ -z "$IMG" ]; then
+                        echo "no espressif/idf image found in docker-compose.ci.yml" >&2
+                        exit 1
+                    fi
+                    echo "pre-warming $IMG (from docker-compose.ci.yml)"
+                    docker pull "$IMG"
+                '''
+            }
         }
 
         stage("Build Firmware") {
