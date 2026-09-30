@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.2](https://github.com/jrjohn/arcana-embedded-esp32/compare/v1.2.1...v1.2.2) (2026-09-30)
+
+
+### Bug Fixes
+
+* ship firmware built on ESP-IDF v6.0.3 (ECDH via mbedtls ecp after ecdh.h removal) ([#24](https://github.com/jrjohn/arcana-embedded-esp32/issues/24)) ([1fdb60f](https://github.com/jrjohn/arcana-embedded-esp32/commit/1fdb60f6aebd2e2b9cef1116436ce6afb3995590))
+
 ## [1.2.1](https://github.com/jrjohn/arcana-embedded-esp32/compare/v1.2.0...v1.2.1) (2026-06-29)
 
 
