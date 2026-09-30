@@ -120,15 +120,18 @@ pipeline {
                     # Unit tests run inside `docker compose build` (Dockerfile.test runs ctest
                     # WITHOUT `|| true`), so a failing test aborts the image build and fails
                     # this stage — the unit-test gate is now real (it was swallowed before).
-                    docker rm -f esp32-test-runner 2>/dev/null || true
+                    # Branch in the name: BUILD_NUMBER restarts at 1 on every branch, so concurrent builds of
+                    # two branches shared this name and one's `docker rm -f` removed the other's container.
+                    TEST_CTR="esp32-test-runner-$(printf '%s' "${BRANCH_NAME}-${BUILD_NUMBER}" | tr -c 'A-Za-z0-9_.-' '-')"
+                    docker rm -f "$TEST_CTR" 2>/dev/null || true
                     docker compose -f docker-compose.test.yml build
                     # `run test` is a no-op echo; its only purpose is to spawn a container we
                     # can docker cp coverage out of (DinD-safe — no host bind mount).
-                    docker compose -f docker-compose.test.yml run --name esp32-test-runner test
+                    docker compose -f docker-compose.test.yml run --name "$TEST_CTR" test
                     rm -rf ./coverage.xml ./coverage.info
-                    docker cp esp32-test-runner:/workspace/coverage.xml ./coverage.xml
-                    docker cp esp32-test-runner:/workspace/coverage.info ./coverage.info
-                    docker rm -f esp32-test-runner 2>/dev/null || true
+                    docker cp "$TEST_CTR":/workspace/coverage.xml ./coverage.xml
+                    docker cp "$TEST_CTR":/workspace/coverage.info ./coverage.info
+                    docker rm -f "$TEST_CTR" 2>/dev/null || true
                     ls -lh coverage.xml coverage.info
                 '''
             }
@@ -184,19 +187,23 @@ pipeline {
                 // create the container with anonymous volumes and stream the source in via
                 // `tar | docker cp`, then copy the report out. `--ci` exits non-zero if < 90.
                 sh '''
-                    docker rm -f arcana-arch-qube-esp32 2>/dev/null || true
-                    docker create --name arcana-arch-qube-esp32 --network devops_default \
+                    # Branch in the name: BUILD_NUMBER restarts at 1 on every branch, so two branches building
+                    # at once used the same name and one's `docker rm -f` deleted the other's container
+                    # (arcana-ios PR-14/PR-15, 2026-09-30: "destination ...:/src must be a directory").
+                    AQ="arcana-arch-qube-esp32-$(printf '%s' "${BRANCH_NAME}-${BUILD_NUMBER}" | tr -c 'A-Za-z0-9_.-' '-')"
+                    docker rm -f "$AQ" 2>/dev/null || true
+                    docker create --name "$AQ" --network devops_default \
                         -v /src -v /output \
                         arcana.boo/arcana/arch-qube:latest \
                         scan /src --framework esp32 --no-ai --ci \
                         --format json,markdown -o /output --threshold 90 || exit 1
                     tar --exclude=./.git --exclude=./arch-qube-reports -C . -cf - . \
-                        | docker cp - arcana-arch-qube-esp32:/src || exit 1
-                    docker start -a arcana-arch-qube-esp32
+                        | docker cp - "$AQ":/src || exit 1
+                    docker start -a "$AQ"
                     AQ_RC=$?
                     mkdir -p arch-qube-reports
-                    docker cp arcana-arch-qube-esp32:/output/. arch-qube-reports/ 2>/dev/null || true
-                    docker rm -f arcana-arch-qube-esp32 2>/dev/null || true
+                    docker cp "$AQ":/output/. arch-qube-reports/ 2>/dev/null || true
+                    docker rm -f "$AQ" 2>/dev/null || true
                     exit $AQ_RC
                 '''
             }
