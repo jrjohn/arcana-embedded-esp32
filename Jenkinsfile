@@ -108,6 +108,12 @@ pipeline {
                     HOST_WS="$JHOME_HOST/${WORKSPACE#/var/jenkins_home/}"
                     echo "Container WORKSPACE=$WORKSPACE"
                     echo "Host PROJECT_PATH=$HOST_WS"
+                    # The IDF container runs as root and writes managed_components/ and build/ into the
+                    # bind-mounted workspace. Root-owned files there make the NEXT build's checkout fail
+                    # with "Failed to delete workspace" (main red 5x in a row, 2026-11-14). Hand every
+                    # file back to the Jenkins user on the way out, whether the build passed or not.
+                    JUID=$(id -u); JGID=$(id -g)
+                    trap 'PROJECT_PATH="$HOST_WS" docker compose -f docker-compose.ci.yml run --rm --no-deps --entrypoint chown esp32-build -R "$JUID:$JGID" /project || true' EXIT
                     PROJECT_PATH="$HOST_WS" docker compose -f docker-compose.ci.yml run --rm esp32-build
                 '''
             }
