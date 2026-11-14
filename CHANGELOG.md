@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.3](https://github.com/jrjohn/arcana-embedded-esp32/compare/v1.2.2...v1.2.3) (2026-11-14)
+
+
+### Bug Fixes
+
+* **deps:** update espressif/idf docker tag to v6.1.1 ([#27](https://github.com/jrjohn/arcana-embedded-esp32/issues/27)) ([10d20d3](https://github.com/jrjohn/arcana-embedded-esp32/commit/10d20d3edc94936e7cd09c12f3f9e4bbf33f435d))
+
 ## [1.2.2](https://github.com/jrjohn/arcana-embedded-esp32/compare/v1.2.1...v1.2.2) (2026-09-30)
 
 
