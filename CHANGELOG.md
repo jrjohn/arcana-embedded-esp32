@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.4](https://github.com/jrjohn/arcana-embedded-esp32/compare/v1.2.3...v1.2.4) (2026-11-14)
+
+
+### Bug Fixes
+
+* **ci:** 建置後把工作目錄擁有者改回 Jenkins ([#29](https://github.com/jrjohn/arcana-embedded-esp32/issues/29)) ([0110829](https://github.com/jrjohn/arcana-embedded-esp32/commit/011082984b17929a1a9a962862ce286ac06cd0f9))
+* **ci:** 建置後把工作目錄擁有者改回 Jenkins,避免下次 checkout 失敗 ([0110829](https://github.com/jrjohn/arcana-embedded-esp32/commit/011082984b17929a1a9a962862ce286ac06cd0f9))
+
 ## [1.2.3](https://github.com/jrjohn/arcana-embedded-esp32/compare/v1.2.2...v1.2.3) (2026-11-14)
 
 
