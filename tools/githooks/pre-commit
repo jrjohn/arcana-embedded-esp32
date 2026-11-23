@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Block commits that add flat source next to App.cpp or include an *Impl header outside the
+# DI container (fast, no docker). The full scan is tools/arch-check.sh and CI.
+set -euo pipefail
+
+fail=0
+staged="$(git diff --cached --name-only --diff-filter=AR)"
+
+# R6 / layer rule: no new source files directly in main/ (except the entry point).
+# Regex, not `case` globs: in a case pattern `*` also matches `/`, so `main/*.c` would
+# reject every correctly layered file under main/share/ too.
+while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    if [[ "$f" =~ ^main/[^/]+\.(c|cpp|h|hpp)$ ]] && [ "$f" != "main/App.cpp" ]; then
+        echo "pre-commit: $f — new source directly in main/. Put it in a layer (AGENTS.md §2) or use tools/new-service.sh" >&2
+        fail=1
+    elif [[ "$f" =~ ^main/share/.+\.c$ ]] && [[ ! "$f" =~ \.pb\.c$ ]]; then
+        echo "pre-commit: $f — new .c under main/share. Use C++ (AGENTS.md R6)" >&2
+        fail=1
+    fi
+done <<< "$staged"
+
+# R2: only AppContainer.cpp may include *Impl.hpp (an impl may include its own header).
+while IFS= read -r f; do
+    case "$f" in
+        main/share/AppContainer.cpp|*Impl.cpp|*Impl.hpp|Tests/*) continue ;;
+        *.c|*.cpp|*.h|*.hpp) ;;
+        *) continue ;;
+    esac
+    [ -f "$f" ] || continue
+    if git show ":$f" | grep -nE '#include[[:space:]]+"[^"]*Impl\.hpp"' >/dev/null; then
+        echo "pre-commit: $f includes an *Impl.hpp — only AppContainer.cpp may (AGENTS.md R2)" >&2
+        fail=1
+    fi
+done <<< "$(git diff --cached --name-only --diff-filter=ACMR)"
+
+if [ "$fail" -ne 0 ]; then
+    echo "pre-commit: blocked. Full check: tools/arch-check.sh" >&2
+    exit 1
+fi
