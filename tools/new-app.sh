@@ -42,8 +42,11 @@ EOF
 git init -q
 tools/install-hooks.sh >/dev/null
 git add -A
+# --no-verify only for this import commit: every file counts as "added" here, including the
+# template's own legacy files (core/log/log_dummy.c). The template itself passes arch-check;
+# every later commit in the new product goes through the hook.
 git -c user.name="${GIT_AUTHOR_NAME:-new-app}" -c user.email="${GIT_AUTHOR_EMAIL:-new-app@localhost}" \
-    commit -q -m "chore: start ${APP} from arcana-embedded-esp32 ${SRC_SHA}"
+    commit -q --no-verify -m "chore: start ${APP} from arcana-embedded-esp32 ${SRC_SHA}"
 
 echo "created $DEST (${APP}) from arcana-embedded-esp32 ${SRC_SHA}"
 echo "next: cd $DEST && tools/new-service.sh <Name>   # add capabilities as services"
