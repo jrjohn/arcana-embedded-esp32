@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/jrjohn/arcana-embedded-esp32/compare/v1.2.4...v1.3.0) (2026-11-23)
+
+
+### Features
+
+* AI 分層規範 AGENTS.md + 新產品/新服務腳手架 + 本機架構檢查 ([#31](https://github.com/jrjohn/arcana-embedded-esp32/issues/31)) ([3034220](https://github.com/jrjohn/arcana-embedded-esp32/commit/303422049b22ebe399822798b846d9702b85dbd1))
+
 ## [1.2.4](https://github.com/jrjohn/arcana-embedded-esp32/compare/v1.2.3...v1.2.4) (2026-11-14)
 
 
