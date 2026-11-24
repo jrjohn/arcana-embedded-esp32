@@ -1,5 +1,4 @@
 #include "impl/RegistrationServiceImpl.hpp"
-#include "impl/AtsStorageServiceImpl.hpp"
 #include "FrameCodec.hpp"
 #include "Esp32AesCtrCipher.hpp"   // ESP32 HW AES-256-CTR for the registration response
 #include "esp_log.h"
@@ -175,9 +174,8 @@ RegistrationServiceImpl& RegistrationServiceImpl::getInstance() {
 // ---------------------------------------------------------------------------
 
 bool RegistrationServiceImpl::loadCredentials() {
-    auto& storage = static_cast<Storage::AtsStorageServiceImpl&>(
-        Storage::AtsStorageServiceImpl::getInstance());
-    if (!storage.isReady()) return false;
+    if (!input.Storage || !input.Storage->isReady()) return false;
+    auto& storage = *input.Storage;
 
     uint8_t data[CRED_PLAIN_SIZE];
     memset(data, 0, sizeof(data));
@@ -204,9 +202,8 @@ bool RegistrationServiceImpl::loadCredentials() {
 }
 
 bool RegistrationServiceImpl::saveCredentials() {
-    auto& storage = static_cast<Storage::AtsStorageServiceImpl&>(
-        Storage::AtsStorageServiceImpl::getInstance());
-    if (!storage.isReady()) return false;
+    if (!input.Storage || !input.Storage->isReady()) return false;
+    auto& storage = *input.Storage;
 
     uint8_t data[CRED_PLAIN_SIZE];
     packCreds(data, mCreds);

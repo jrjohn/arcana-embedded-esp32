@@ -1,11 +1,12 @@
 #include "BoardConfig.hpp"
-#include "St7789Lcd.hpp"
-#include "TsensSensor.hpp"
+#include "St7789Lcd.hpp"  // demo
+#include "TsensSensor.hpp"  // demo
 #include "sdkconfig.h"
 
 namespace Arcana {
 namespace Board {
 
+// demo:begin
 Lcd::Ssd1306& createDisplay() {
     static Lcd::St7789Lcd display;
     return display;
@@ -20,5 +21,6 @@ Sensor::ObservableSensor& createSensor() {
     return sensor;
 }
 
+// demo:end
 } // namespace Board
 } // namespace Arcana

@@ -14,6 +14,7 @@ public:
     esp_err_t init() override;
     esp_err_t start() override;
     void stop() override;
+    void logBootMemory() override;
 
 private:
     DiagnosticServiceImpl() = default;

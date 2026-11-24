@@ -36,39 +36,32 @@ public:
                          Sensor::SensorData* out,
                          uint16_t maxCount) override;
 
-    /// Upload support
-    struct PendingFile {
-        char name[16];      ///< "YYYYMMDD.ats"
-        uint32_t size;
-        uint32_t date;      ///< YYYYMMDD
-    };
-    static const uint8_t MAX_PENDING = 8;
+    /// Upload support (PendingFile / MAX_PENDING live in AtsStorageService)
+    uint8_t listPendingUploads(PendingFile* out, uint8_t maxCount) override;
+    bool isDateUploaded(uint32_t dateYYYYMMDD) override;
+    void markUploaded(uint32_t dateYYYYMMDD) override;
 
-    uint8_t listPendingUploads(PendingFile* out, uint8_t maxCount);
-    bool isDateUploaded(uint32_t dateYYYYMMDD);
-    void markUploaded(uint32_t dateYYYYMMDD);
-
-    bool isReady() const { return mDbReady; }
+    bool isReady() const override { return mDbReady; }
 
     /// Cooperative pause/resume for upload
-    void pauseRecording()  { mUploadPause = true; }
-    void resumeRecording() { mUploadPause = false; }
+    void pauseRecording() override  { mUploadPause = true; }
+    void resumeRecording() override { mUploadPause = false; }
 
     /// Timezone config (device.ats CONFIG channel)
     bool loadTzConfig(int16_t& offsetMin, uint8_t& autoCheck);
     bool saveTzConfig(int16_t offsetMin, uint8_t autoCheck);
 
     /// Credentials (device.ats CREDS channel, encrypted)
-    bool loadCredentials(uint8_t* outBuf, uint16_t bufSize, uint16_t& outLen);
-    bool saveCredentials(const uint8_t* data, uint16_t len);
+    bool loadCredentials(uint8_t* outBuf, uint16_t bufSize, uint16_t& outLen) override;
+    bool saveCredentials(const uint8_t* data, uint16_t len) override;
 
     /// Shared exFAT volume + SD mutex. exfatVolume() is for device-side helpers
     /// (e.g. the SD benchmark). The upload path uses uploadReadPort() (an IFilePort
     /// on the shared volume) so it depends on the IFilePort abstraction, not SdFat
     /// directly — and must serialize SD access with the writer via sdMutex().
-    ExFatVolume* exfatVolume() { return &mExFatVol; }
-    arcana::ats::IMutex* sdMutex() { return &mMutex; }
-    arcana::ats::IFilePort* uploadReadPort() { return &mUploadFilePort; }
+    ExFatVolume* exfatVolume() override { return &mExFatVol; }
+    arcana::ats::IMutex* sdMutex() override { return &mMutex; }
+    arcana::ats::IFilePort* uploadReadPort() override { return &mUploadFilePort; }
 
 private:
     AtsStorageServiceImpl();

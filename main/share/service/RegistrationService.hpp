@@ -1,5 +1,6 @@
 #pragma once
 
+#include "AtsStorageService.hpp"
 #include "esp_err.h"
 #include <cstdint>
 
@@ -23,6 +24,11 @@ public:
         bool hasCommKey      = false;
         bool valid           = false;
     };
+
+    struct Input {
+        Storage::AtsStorageService* Storage = nullptr;   // credential persistence
+    };
+    Input input;
 
     virtual ~RegistrationService() = default;
 

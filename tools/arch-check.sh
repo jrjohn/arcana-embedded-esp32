@@ -5,12 +5,15 @@
 #   tools/arch-check.sh            # scan the repo root
 #   ARCH_QUBE_IMAGE=... tools/arch-check.sh
 #
+# Version: tools/arch-qube.version (resolved to an image by tools/arch-qube-image.sh, which
+# the Jenkinsfile uses too). No Docker? See AGENTS.md "Architecture check (arch-qube)".
+#
 # Streams the source in with tar | docker cp (a bind mount is empty under Docker-in-Docker),
 # and writes the report to arch-qube-reports/.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-IMAGE="${ARCH_QUBE_IMAGE:-arcana.boo/arcana/arch-qube:latest}"
+IMAGE="${ARCH_QUBE_IMAGE:-$("$ROOT/tools/arch-qube-image.sh")}"
 THRESHOLD="${ARCH_QUBE_THRESHOLD:-90}"   # keep equal to the Jenkinsfile value
 NAME="arch-check-$$"
 
@@ -18,6 +21,7 @@ command -v docker >/dev/null || { echo "arch-check: docker not found — cannot 
 
 cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
+echo "arch-check: image $IMAGE (pinned version $(tr -d '[:space:]' < "$ROOT/tools/arch-qube.version"))"
 
 docker create --name "$NAME" -v /src -v /output "$IMAGE" \
     scan /src --framework esp32 --no-ai --ci \

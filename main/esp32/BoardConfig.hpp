@@ -12,15 +12,15 @@
 #define BOARD_BUTTON_B_PULLUP   0    // GPIO36 has no internal pull-up hardware
 
 namespace Arcana {
-namespace Lcd { class Ssd1306; }
-namespace Sensor { class ObservableSensor; }
+namespace Lcd { class Ssd1306; }  // demo
+namespace Sensor { class ObservableSensor; }  // demo
 namespace Board {
 
-/// Returns the board's display (SSD1306 OLED on I2C, 128x64).
-Lcd::Ssd1306& createDisplay();
+/// Returns the board's display (SSD1306 OLED on I2C, 128x64).  // demo
+Lcd::Ssd1306& createDisplay();  // demo
 
-/// Returns the board's environment sensor.
-Sensor::ObservableSensor& createSensor();
+/// Returns the board's environment sensor.  // demo
+Sensor::ObservableSensor& createSensor();  // demo
 
 } // namespace Board
 } // namespace Arcana

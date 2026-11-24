@@ -12,7 +12,7 @@ namespace Mqtt {
 class MqttTransportService {
 public:
     struct Input {
-        Observable<Sensor::SensorData>* SensorDataEvents = nullptr;
+        Observable<Sensor::SensorData>* SensorDataEvents = nullptr;  // demo
     };
 
     struct Output {

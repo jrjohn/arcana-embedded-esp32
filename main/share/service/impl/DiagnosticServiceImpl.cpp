@@ -5,6 +5,13 @@
 #include "esp_ota_ops.h"
 #include "esp_flash.h"
 #include "freertos/task.h"
+#include "MemoryBudget.hpp"
+#include "sdkconfig.h"
+#include <cstdio>
+
+#ifndef CONFIG_ARCANA_INTERNAL_RAM_WARN_BYTES
+#define CONFIG_ARCANA_INTERNAL_RAM_WARN_BYTES 40960
+#endif
 
 static const char* TAG = "DiagnosticSvc";
 
@@ -69,6 +76,26 @@ esp_err_t DiagnosticServiceImpl::start() {
 void DiagnosticServiceImpl::stop() {
     mRunning.store(false);
     ESP_LOGI(TAG, "Stopped");
+}
+
+void DiagnosticServiceImpl::logBootMemory() {
+    constexpr uint32_t kInt = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+    Memory::InternalRamSnapshot snap;
+    snap.freeBytes = static_cast<uint32_t>(heap_caps_get_free_size(kInt));
+    snap.largestBlock = static_cast<uint32_t>(heap_caps_get_largest_free_block(kInt));
+    snap.psramFree = static_cast<uint32_t>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+
+    char line[96];
+    if (Memory::formatMemLine(snap, line, sizeof line) > 0) {
+        printf("%s\n", line);   // plain line, parsed by tools/flash-safe.py
+    }
+    if (Memory::judgeInternalRam(snap, CONFIG_ARCANA_INTERNAL_RAM_WARN_BYTES) ==
+        Memory::RamVerdict::Low) {
+        ESP_LOGW(TAG, "LOW_INTERNAL_RAM free=%lu largest=%lu threshold=%d — BLE/Wi-Fi/TLS "
+                      "allocations may fail; move CPU-only buffers to PSRAM (AGENTS.md §6)",
+                 (unsigned long)snap.freeBytes, (unsigned long)snap.largestBlock,
+                 CONFIG_ARCANA_INTERNAL_RAM_WARN_BYTES);
+    }
 }
 
 } // namespace Diagnostic

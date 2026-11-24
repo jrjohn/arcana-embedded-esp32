@@ -37,6 +37,7 @@ set(CORE_DIR      ${MAIN_DIR}/share/core)
 set(CORE_EVENT    ${MAIN_DIR}/share/core/event)
 set(CORE_LOG      ${MAIN_DIR}/share/core/log)
 set(CORE_MODEL    ${MAIN_DIR}/share/core/model)
+set(CORE_MEMORY   ${MAIN_DIR}/share/core/memory)
 
 # db/ — ArcanaTs
 set(ATS_INC       ${MAIN_DIR}/share/db/arcanats)          # exposes ats/ subfolder for "ats/ICipher.hpp" includes
@@ -78,6 +79,7 @@ set(COMMON_INCS
     ${CORE_EVENT}
     ${CORE_LOG}
     ${CORE_MODEL}
+    ${CORE_MEMORY}
     ${ATS_INC}
     ${ATS_ATS}
     ${ATS_SECURITY}
@@ -150,11 +152,13 @@ find_path(MBEDTLS_INCLUDE_DIR mbedtls/ccm.h)
 # lacks the macro. Force-include a compat shim before mbedtls headers.
 set(MBEDTLS_COMPAT_FLAGS "-include${MOCKS_DIR}/mbedtls_compat.h")
 
+# demo:begin
 # ── test_frame_codec ──────────────────────────────────────────────────────────
 add_executable(test_frame_codec test_frame_codec.cpp)
 target_include_directories(test_frame_codec PRIVATE ${COMMON_INCS})
 target_link_libraries(test_frame_codec PRIVATE GTest::gtest_main esp_stubs)
 
+# demo:end
 # ── test_observable ───────────────────────────────────────────────────────────
 add_executable(test_observable test_observable.cpp)
 target_include_directories(test_observable PRIVATE ${COMMON_INCS})
@@ -173,6 +177,7 @@ add_executable(test_xl9555
 target_include_directories(test_xl9555 PRIVATE ${COMMON_INCS} ${MAIN_DIR}/esp32s3)
 target_link_libraries(test_xl9555 PRIVATE GTest::gtest_main esp_stubs)
 
+# demo:begin
 # ── test_tsens_sensor (S3 internal temperature sensor backend) ───────────────
 add_executable(test_tsens_sensor
     test_tsens_sensor.cpp
@@ -187,6 +192,7 @@ add_executable(test_commands test_commands.cpp)
 target_include_directories(test_commands PRIVATE ${COMMON_INCS})
 target_link_libraries(test_commands PRIVATE GTest::gtest_main esp_stubs)
 
+# demo:end
 # ── test_chacha20 (pure C++ stream cipher, no mbedtls) ───────────────────────
 add_executable(test_chacha20 test_chacha20.cpp)
 target_include_directories(test_chacha20 PRIVATE ${COMMON_INCS})
@@ -267,6 +273,7 @@ target_include_directories(test_arcana_ts_db PRIVATE
 )
 target_link_libraries(test_arcana_ts_db PRIVATE GTest::gtest_main esp_stubs)
 
+# demo:begin
 # ── test_lcd_viewmodel (header-only MVVM ViewModel) ──────────────────────────
 add_executable(test_lcd_viewmodel test_lcd_viewmodel.cpp)
 target_include_directories(test_lcd_viewmodel PRIVATE
@@ -557,19 +564,60 @@ else()
     message(WARNING "mbedtls not found — skipping test_crypto_engine (install libmbedtls-dev)")
 endif()
 
+# demo:end
+# ── test_memory_placement (core/memory: PSRAM-first policy + boot RAM verdict) ──
+add_executable(test_memory_placement test_memory_placement.cpp)
+target_include_directories(test_memory_placement PRIVATE ${COMMON_INCS})
+target_link_libraries(test_memory_placement PRIVATE GTest::gtest_main)
+add_test(NAME test_memory_placement COMMAND test_memory_placement)
+
+# ── test_freeze_guard_service (task-watchdog guard, stubbed esp_task_wdt) ─────
+add_executable(test_freeze_guard_service
+    test_freeze_guard_service.cpp
+    ${SVC_IMPL_DIR}/FreezeGuardServiceImpl.cpp
+)
+target_include_directories(test_freeze_guard_service PRIVATE ${COMMON_INCS})
+target_compile_definitions(test_freeze_guard_service PRIVATE
+    CONFIG_ESP_TASK_WDT_TIMEOUT_S=10 CONFIG_ESP_TASK_WDT_PANIC=1)
+target_link_libraries(test_freeze_guard_service PRIVATE GTest::gtest_main esp_stubs)
+add_test(NAME test_freeze_guard_service COMMAND test_freeze_guard_service)
+
+# ── SdFat scratch in PSRAM (Kconfig SDFAT_SCRATCH_IN_PSRAM): same dual-FAT reconcile
+#    tests against the heap-allocated scratch path (host: plain malloc).
+add_library(sdfat_host_dualfat_scratch STATIC ${SDFAT_HOST_SRCS} ${CMAKE_SOURCE_DIR}/support/arduino_compat_host.cpp)
+target_include_directories(sdfat_host_dualfat_scratch PUBLIC
+    ${SDFAT_DIR}/src ${SDFAT_DIR}/src/common ${SDFAT_DIR}/src/ExFatLib
+    ${SDFAT_DIR}/src/FatLib ${SDFAT_DIR}/src/FsLib ${SDFAT_DIR}/src/SdCard
+    ${SDFAT_DIR}/src/SdCard/SdSpiCard ${SDFAT_DIR}/src/SdCard/SdSpiCard/SpiDriver
+    ${SDFAT_DIR}/port)
+target_compile_definitions(sdfat_host_dualfat_scratch PUBLIC
+    ENABLE_ARDUINO_FEATURES=0 ENABLE_ARDUINO_SERIAL=0 ENABLE_ARDUINO_STRING=0
+    SPI_DRIVER_SELECT=3 SDFAT_FILE_TYPE=3 USE_BLOCK_DEVICE_INTERFACE=1
+    USE_EXFAT_DUAL_FAT=1 SDFAT_SCRATCH_IN_PSRAM=1)
+target_compile_options(sdfat_host_dualfat_scratch PUBLIC
+    "SHELL:-include ${SDFAT_DIR}/port/arduino_compat.h")
+target_compile_options(sdfat_host_dualfat_scratch PRIVATE -w)
+add_executable(test_dualfat_reconcile_scratch
+    test_dualfat_reconcile.cpp
+    ${ATS_PORT}/ExFatFilePort.cpp
+)
+target_include_directories(test_dualfat_reconcile_scratch PRIVATE ${COMMON_INCS})
+target_link_libraries(test_dualfat_reconcile_scratch PRIVATE GTest::gtest_main sdfat_host_dualfat_scratch esp_stubs)
+add_test(NAME test_dualfat_reconcile_scratch COMMAND test_dualfat_reconcile_scratch)
+
 # ── CTest registration ────────────────────────────────────────────────────────
 enable_testing()
-add_test(NAME test_frame_codec  COMMAND test_frame_codec)
+add_test(NAME test_frame_codec  COMMAND test_frame_codec)  # demo
 add_test(NAME test_observable   COMMAND test_observable)
 add_test(NAME test_sensor_types COMMAND test_sensor_types)
 add_test(NAME test_xl9555       COMMAND test_xl9555)
-add_test(NAME test_tsens_sensor COMMAND test_tsens_sensor)
-add_test(NAME test_commands     COMMAND test_commands)
+add_test(NAME test_tsens_sensor COMMAND test_tsens_sensor)  # demo
+add_test(NAME test_commands     COMMAND test_commands)  # demo
 add_test(NAME test_chacha20     COMMAND test_chacha20)
 add_test(NAME test_ats_schema     COMMAND test_ats_schema)
 add_test(NAME test_vfs_file_port  COMMAND test_vfs_file_port)
 add_test(NAME test_exfat_file_port COMMAND test_exfat_file_port)
 add_test(NAME test_log            COMMAND test_log)
 add_test(NAME test_arcana_ts_db   COMMAND test_arcana_ts_db)
-add_test(NAME test_lcd_viewmodel  COMMAND test_lcd_viewmodel)
-add_test(NAME test_main_view      COMMAND test_main_view)
+add_test(NAME test_lcd_viewmodel  COMMAND test_lcd_viewmodel)  # demo
+add_test(NAME test_main_view      COMMAND test_main_view)  # demo

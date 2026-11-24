@@ -17,15 +17,15 @@
 #define BOARD_BUTTON_B_PULLUP   1    // BOOT key needs the internal pull-up
 
 namespace Arcana {
-namespace Lcd { class Ssd1306; }
-namespace Sensor { class ObservableSensor; }
+namespace Lcd { class Ssd1306; }  // demo
+namespace Sensor { class ObservableSensor; }  // demo
 namespace Board {
-
+  // demo
 /// Returns the board's display (ST7789 SPI LCD, 320x240, SPILCD socket).
-Lcd::Ssd1306& createDisplay();
-
+Lcd::Ssd1306& createDisplay();  // demo
+  // demo
 /// Returns the board's environment sensor.
-Sensor::ObservableSensor& createSensor();
+Sensor::ObservableSensor& createSensor();  // demo
 
 } // namespace Board
 } // namespace Arcana

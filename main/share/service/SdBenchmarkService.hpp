@@ -1,5 +1,6 @@
 #pragma once
 
+#include "AtsStorageService.hpp"
 #include "esp_err.h"
 #include <cstdint>
 
@@ -15,6 +16,11 @@ struct SdBenchmarkResult {
 
 class SdBenchmarkService {
 public:
+    struct Input {
+        Storage::AtsStorageService* Storage = nullptr;
+    };
+    Input input;
+
     virtual ~SdBenchmarkService() = default;
 
     /// Run sequential write benchmark. Returns result.

@@ -1,7 +1,4 @@
 #include "impl/HttpUploadServiceImpl.hpp"
-#include "impl/AtsStorageServiceImpl.hpp"
-#include "impl/RegistrationServiceImpl.hpp"
-#include "impl/IoServiceImpl.hpp"
 #include "esp_log.h"
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
@@ -11,6 +8,7 @@
 #include <cstring>
 #include "ats/ArcanaTsTypes.hpp"   // ATS_MODE_READ
 #include "ats/IMutex.hpp"
+#include "ats/IFilePort.hpp"
 
 static const char* TAG = "HttpUpload";
 
@@ -64,15 +62,18 @@ HttpUploadServiceImpl& HttpUploadServiceImpl::getInstance() {
 // ---------------------------------------------------------------------------
 
 uint8_t HttpUploadServiceImpl::uploadPendingFiles() {
-    auto& storage = static_cast<Storage::AtsStorageServiceImpl&>(
-        Storage::AtsStorageServiceImpl::getInstance());
+    if (!input.Storage || !input.Registration) {
+        ESP_LOGE(TAG, "input.Storage / input.Registration not wired");
+        return 0;
+    }
+    auto& storage = *input.Storage;
 
     if (!storage.isReady()) {
         ESP_LOGW(TAG, "Storage not ready");
         return 0;
     }
 
-    auto& regSvc = Registration::RegistrationServiceImpl::getInstance();
+    auto& regSvc = *input.Registration;
     const char* deviceId = regSvc.deviceId();
     const char* token = regSvc.isRegistered()
                         ? regSvc.credentials().uploadToken : "";
@@ -98,8 +99,8 @@ uint8_t HttpUploadServiceImpl::uploadPendingFiles() {
     storage.pauseRecording();
     vTaskDelay(pdMS_TO_TICKS(500));
 
-    Storage::AtsStorageServiceImpl::PendingFile pending[Storage::AtsStorageServiceImpl::MAX_PENDING];
-    uint8_t count = storage.listPendingUploads(pending, Storage::AtsStorageServiceImpl::MAX_PENDING);
+    Storage::AtsStorageService::PendingFile pending[Storage::AtsStorageService::MAX_PENDING];
+    uint8_t count = storage.listPendingUploads(pending, Storage::AtsStorageService::MAX_PENDING);
 
     uint8_t totalFiles = count + 2;
     ESP_LOGI(TAG, "%u pending + sensor.ats + device.ats = %u files", count, totalFiles);
@@ -122,8 +123,8 @@ uint8_t HttpUploadServiceImpl::uploadPendingFiles() {
             storage.markUploaded(pending[i].date);
             uploaded++;
         } else {
-            if (Io::IoServiceImpl::getInstance().isCancelRequested()) {
-                Io::IoServiceImpl::getInstance().disarmCancel();
+            if (input.Io && input.Io->isCancelRequested()) {
+                input.Io->disarmCancel();
                 goto done;
             }
             break;
@@ -159,8 +160,8 @@ bool HttpUploadServiceImpl::uploadFile(const char* filename, const char* deviceI
     // offsets) — depends on the IFilePort abstraction, not SdFat directly. The
     // ECG writer shares this volume, so each SD op is serialized by the storage
     // SD mutex (SdLock) — but never held across the network write.
-    auto& storage = static_cast<Storage::AtsStorageServiceImpl&>(
-        Storage::AtsStorageServiceImpl::getInstance());
+    if (!input.Storage) return false;
+    auto& storage = *input.Storage;
     arcana::ats::IMutex* sdmtx = storage.sdMutex();
     arcana::ats::IFilePort* fp = storage.uploadReadPort();
 
@@ -305,7 +306,7 @@ bool HttpUploadServiceImpl::uploadFile(const char* filename, const char* deviceI
         notifyProgress();
 
         // Cancel check (don't clear — let uploadPendingFiles see it too)
-        if (Io::IoServiceImpl::getInstance().isCancelRequested()) {
+        if (input.Io && input.Io->isCancelRequested()) {
             ESP_LOGI(TAG, "Cancelled at %luKB/%luKB",
                      (unsigned long)((resumeOffset + sent) / 1024),
                      (unsigned long)(fileSize / 1024));
@@ -341,9 +342,9 @@ bool HttpUploadServiceImpl::uploadFile(const char* filename, const char* deviceI
 
 uint32_t HttpUploadServiceImpl::queryServerOffset(const char* filename,
                                                     const char* deviceId) {
-    auto& regSvc = Registration::RegistrationServiceImpl::getInstance();
-    const char* token = regSvc.isRegistered()
-                        ? regSvc.credentials().uploadToken : "";
+    const auto* regSvc = input.Registration;
+    const char* token = (regSvc && regSvc->isRegistered())
+                        ? regSvc->credentials().uploadToken : "";
 
     char url[128];
     snprintf(url, sizeof(url), "https://%s:%d/upload/%s/%s/status",

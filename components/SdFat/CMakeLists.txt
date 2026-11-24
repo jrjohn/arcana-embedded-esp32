@@ -34,3 +34,9 @@ target_compile_options(${COMPONENT_LIB} PRIVATE
     "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/port/arduino_compat.h"
     -Wno-error=unused-parameter -Wno-error=unused-variable -Wno-error=sign-compare
     -Wno-error=class-memaccess -Wno-error=maybe-uninitialized)
+
+# Arcana: Kconfig SDFAT_SCRATCH_IN_PSRAM. PUBLIC because ExFatVolume.h (inline code with a
+# static local) is compiled into main's translation units too — every TU must agree.
+if(CONFIG_SDFAT_SCRATCH_IN_PSRAM)
+    target_compile_definitions(${COMPONENT_LIB} PUBLIC SDFAT_SCRATCH_IN_PSRAM=1)
+endif()

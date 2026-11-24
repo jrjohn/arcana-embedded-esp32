@@ -1338,6 +1338,27 @@ case Cluster::Sensor:
 9. **Session Cleanup**: Disconnect BLE, verify session removed, next command falls back to PSK
 10. **No task leaks**: `grep -r xTaskCreate components/RgbLed/` returns nothing
 
+### RAM budget and safe flashing
+
+Host tests and arch-check cannot see memory. After every firmware build:
+
+```bash
+tools/ram-budget.sh build        # .data+.bss vs tools/ram-budget.conf; also checks TWDT panic is on
+```
+
+Flash a board only through the safe flasher (full-flash backup, DTR/RTS held low, boot check):
+
+```bash
+tools/flash-safe.py -p /dev/ttyUSB0 --dry-run          # print the plan
+tools/flash-safe.py -p /dev/ttyUSB0                    # backup -> write -> verify boot
+tools/flash-safe.py --check-log boot.log               # judge a captured boot log
+```
+
+It passes only when the boot log shows `All services running` and
+`MEM internal_free=<n>` with `<n>` ≥ 40960 (`--min-internal-free`), and always prints the
+rollback command (`esptool write-flash 0x0 flash-backups/<chip>-<size>-<UTC>.bin`).
+See AGENTS.md §6.
+
 ---
 
 ## Roadmap

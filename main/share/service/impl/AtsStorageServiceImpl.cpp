@@ -1,5 +1,4 @@
 #include "impl/AtsStorageServiceImpl.hpp"
-#include "impl/IoServiceImpl.hpp"
 #include "TaskPriorities.hpp"
 #include "ats/ArcanaTsSchema.hpp"
 #include "ats/ArcanaTsTypes.hpp"
@@ -197,6 +196,10 @@ esp_err_t AtsStorageServiceImpl::init_HAL() {
 }
 
 esp_err_t AtsStorageServiceImpl::init() {
+    if (!input.Io) {
+        ESP_LOGE(TAG, "input.Io not wired");
+        return ESP_ERR_INVALID_STATE;
+    }
     mWriteSem = xSemaphoreCreateBinary();
     if (!mWriteSem) return ESP_ERR_NO_MEM;
 
@@ -340,7 +343,7 @@ void AtsStorageServiceImpl::storageTask(void* param) {
             sdspi_host_deinit();
 
             // Wait for Button A press to remount
-            auto& ioSvc = Io::IoServiceImpl::getInstance();
+            auto& ioSvc = *self->input.Io;   // checked non-null in init()
             ioSvc.clearUploadRequest();
             bool btnSeen = false;
             for (;;) {
@@ -483,7 +486,7 @@ void AtsStorageServiceImpl::taskLoop() {
             // Button B long press → format SD
             // (Button A upload is handled by AppContainer upload_mon task)
             {
-                auto& ioSvc = Io::IoServiceImpl::getInstance();
+                auto& ioSvc = *input.Io;   // checked non-null in init()
                 if (ioSvc.isFormatRequested()) {
                     ioSvc.clearFormatRequest();
                     ESP_LOGW(TAG, "Format requested — stopping recording");

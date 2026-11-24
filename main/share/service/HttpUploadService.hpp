@@ -1,5 +1,8 @@
 #pragma once
 
+#include "AtsStorageService.hpp"
+#include "IoService.hpp"
+#include "RegistrationService.hpp"
 #include <cstdint>
 
 namespace Arcana::Upload {
@@ -21,6 +24,13 @@ using UploadProgressCallback = void (*)(uint8_t, uint8_t, uint32_t, uint32_t, vo
 
 class HttpUploadService {
 public:
+    struct Input {
+        Storage::AtsStorageService* Storage = nullptr;
+        Registration::RegistrationService* Registration = nullptr;
+        Io::IoService* Io = nullptr;   // cancel button
+    };
+    Input input;
+
     virtual ~HttpUploadService() = default;
 
     /// Set progress callback (called from upload write loop)

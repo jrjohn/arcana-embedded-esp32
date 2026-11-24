@@ -32,6 +32,14 @@ protected:
         Arcana::Storage::AtsStorageServiceImpl::getInstance().test_reset();
         Arcana::Io::IoServiceImpl::getInstance().test_reset();
 
+        // Dependencies are injected the way AppContainer::wireServices() does it.
+        RegistrationServiceImpl::getInstance().input.Storage =
+            &Arcana::Storage::AtsStorageServiceImpl::getInstance();
+        auto& up = HttpUploadServiceImpl::getInstance();
+        up.input.Storage = &Arcana::Storage::AtsStorageServiceImpl::getInstance();
+        up.input.Registration = &RegistrationServiceImpl::getInstance();
+        up.input.Io = &Arcana::Io::IoServiceImpl::getInstance();
+
         // Force-invalidate registration creds
         http_test_set_perform_result(ESP_FAIL);
         RegistrationServiceImpl::getInstance().refreshToken();
@@ -486,4 +494,14 @@ TEST_F(HttpUploadServiceTest, TokenWithFutureExpiryIsValid) {
     // proceeds with the loaded creds and the actual files (or empty).
     (void)svc.uploadPendingFiles();
     SUCCEED();
+}
+
+TEST_F(HttpUploadServiceTest, UnwiredDependenciesFailSafely) {
+    auto& svc = HttpUploadServiceImpl::getInstance();
+    svc.input.Storage = nullptr;
+    EXPECT_EQ(svc.uploadPendingFiles(), 0);
+    EXPECT_FALSE(svc.uploadFile("x.ats", "dev", "tok"));
+    svc.input.Storage = &Arcana::Storage::AtsStorageServiceImpl::getInstance();
+    svc.input.Registration = nullptr;
+    EXPECT_EQ(svc.uploadPendingFiles(), 0);
 }

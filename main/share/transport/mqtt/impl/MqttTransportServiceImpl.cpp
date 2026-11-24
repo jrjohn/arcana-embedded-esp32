@@ -56,6 +56,7 @@ esp_err_t MqttTransportServiceImpl::init_HAL() {
 }
 
 esp_err_t MqttTransportServiceImpl::init() {
+    // demo:begin
     if (input.SensorDataEvents) {
         input.SensorDataEvents->Subscribe([this](const Sensor::SensorData& data) {
             char json[128];
@@ -67,6 +68,7 @@ esp_err_t MqttTransportServiceImpl::init() {
         });
     }
 
+    // demo:end
     ESP_LOGI(TAG, "Initialized");
     return ESP_OK;
 }

@@ -31,6 +31,7 @@
 #include "../common/FsCache.h"
 #include "../common/FsStructs.h"
 #include "../common/SysCall.h"
+#include "sdfat_scratch.h"  // Arcana: Kconfig SDFAT_SCRATCH_IN_PSRAM
 /** Set EXFAT_READ_ONLY non-zero for read only */
 #ifndef EXFAT_READ_ONLY
 #define EXFAT_READ_ONLY 0

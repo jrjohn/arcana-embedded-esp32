@@ -19,6 +19,9 @@ RUN cmake --build Tests/build -- -j$(nproc)
 # PR #11 / arcana-cloud-go hardening). Coverage below is only generated when tests pass.
 RUN cd Tests/build && ctest --output-on-failure --timeout 30
 
+# tools/flash-safe.py: argument handling, dry run, boot-log verdicts (no board needed).
+RUN python3 -m unittest discover -s tools/tests -v
+
 # Generate lcov → filter → convert to Cobertura XML
 RUN lcov --capture \
       --directory Tests/build \

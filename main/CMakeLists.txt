@@ -1,7 +1,8 @@
 # Per-target board directory: exactly one BoardConfig.hpp + Board.cpp
 if(CONFIG_IDF_TARGET_ESP32S3)
     set(BOARD_DIR "esp32s3")
-    set(BOARD_SRCS "esp32s3/Board.cpp" "esp32s3/St7789Lcd.cpp" "esp32s3/Xl9555.cpp" "esp32s3/TsensSensor.cpp")
+    set(BOARD_SRCS "esp32s3/Board.cpp" "esp32s3/Xl9555.cpp")
+    list(APPEND BOARD_SRCS "esp32s3/St7789Lcd.cpp" "esp32s3/TsensSensor.cpp")  # demo
 else()
     set(BOARD_DIR "esp32")
     set(BOARD_SRCS "esp32/Board.cpp")
@@ -15,33 +16,36 @@ idf_component_register(
         "share/AppContainer.cpp"
 
         # service/impl/
-        "share/service/impl/AtsStorageServiceImpl.cpp"
-        "share/service/impl/CommandBridgeServiceImpl.cpp"
-        "share/service/impl/CommandServiceImpl.cpp"
+        "share/service/impl/AtsStorageServiceImpl.cpp"  # demo
+        "share/service/impl/CommandBridgeServiceImpl.cpp"  # demo
+        "share/service/impl/CommandServiceImpl.cpp"  # demo
         "share/service/impl/DiagnosticServiceImpl.cpp"
         "share/service/impl/DriverServiceImpl.cpp"
-        "share/service/impl/HttpUploadServiceImpl.cpp"
-        "share/service/impl/IoServiceImpl.cpp"
-        "share/service/impl/LcdServiceImpl.cpp"
-        "share/service/impl/LedServiceImpl.cpp"
+        "share/service/impl/FreezeGuardServiceImpl.cpp"
+        "share/service/impl/HttpUploadServiceImpl.cpp"  # demo
+        "share/service/impl/IoServiceImpl.cpp"  # demo
+        "share/service/impl/LcdServiceImpl.cpp"  # demo
+        "share/service/impl/LedServiceImpl.cpp"  # demo
         "share/service/impl/OtaServiceImpl.cpp"
-        "share/service/impl/RegistrationServiceImpl.cpp"
-        "share/service/impl/SdBenchmarkServiceImpl.cpp"
-        "share/service/impl/SensorServiceImpl.cpp"
+        "share/service/impl/RegistrationServiceImpl.cpp"  # demo
+        "share/service/impl/SdBenchmarkServiceImpl.cpp"  # demo
+        "share/service/impl/SensorServiceImpl.cpp"  # demo
         "share/service/impl/TimerServiceImpl.cpp"
 
+        # demo:begin
         # transport/ble/
         "share/transport/ble/BleService.cpp"
         "share/transport/ble/BleGap.cpp"
         "share/transport/ble/BleGattServer.cpp"
         "share/transport/ble/BleGattClient.cpp"
-        "share/transport/ble/BleTransportServiceImpl.cpp"
+        "share/transport/ble/impl/BleTransportServiceImpl.cpp"
 
+        # demo:end
         # transport/mqtt/
-        "share/transport/mqtt/MqttTransportServiceImpl.cpp"
+        "share/transport/mqtt/impl/MqttTransportServiceImpl.cpp"
 
         # transport/wifi/
-        "share/transport/wifi/WifiServiceImpl.cpp"
+        "share/transport/wifi/impl/WifiServiceImpl.cpp"
 
         # db/arcanats/
         "share/db/arcanats/ats/ArcanaTsDb.cpp"
@@ -49,6 +53,7 @@ idf_component_register(
         "share/db/arcanats/port/VfsFilePort.cpp"     # kept for host tests/fallback
         "share/db/arcanats/port/FatFsFilePort.cpp"   # legacy raw-FatFs port (no longer wired; kept for reference)
 
+        # demo:begin
         # command/
         "share/command/CommandFactory.cpp"
         "share/command/CommandDispatcher.cpp"
@@ -57,10 +62,11 @@ idf_component_register(
         "share/command/security/CryptoEngine.cpp"
         "share/command/security/KeyExchangeManager.cpp"
 
+        # demo:end
         # driver/
-        "share/driver/Ssd1306.cpp"
-        "share/driver/RgbLed.cpp"
-        "share/driver/DhtSensor.cpp"
+        "share/driver/Ssd1306.cpp"  # demo
+        "share/driver/RgbLed.cpp"  # demo
+        "share/driver/DhtSensor.cpp"  # demo
 
         # core/
         "share/core/event/ObservableSensor.cpp"
@@ -72,8 +78,8 @@ idf_component_register(
         "share"
         "share/service"
         "share/service/impl"
-        "share/transport/ble"
-        "share/transport/ble/impl"
+        "share/transport/ble"  # demo
+        "share/transport/ble/impl"  # demo
         "share/transport/mqtt"
         "share/transport/mqtt/impl"
         "share/transport/wifi"
@@ -82,16 +88,17 @@ idf_component_register(
         "share/db/arcanats/ats"
         "share/db/arcanats/security"
         "share/db/arcanats/port"
-        "share/command"
-        "share/command/commands"
-        "share/command/codec"
-        "share/command/security"
-        "share/view"
-        "share/view/main"
+        "share/command"  # demo
+        "share/command/commands"  # demo
+        "share/command/codec"  # demo
+        "share/command/security"  # demo
+        "share/view"  # demo
+        "share/view/main"  # demo
         "share/driver"
         "share/core"
         "share/core/event"
         "share/core/log"
+        "share/core/memory"
         "share/core/model"
 
     PRIV_REQUIRES
