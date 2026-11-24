@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.0](https://github.com/jrjohn/arcana-embedded-esp32/compare/v1.3.0...v1.4.0) (2026-11-24)
+
+
+### Features
+
+* template hardening — RAM budget, PSRAM placement, task watchdog, safe flashing, arch-qube pin ([#33](https://github.com/jrjohn/arcana-embedded-esp32/issues/33)) ([55ed5c3](https://github.com/jrjohn/arcana-embedded-esp32/commit/55ed5c30330a2cab5bdc38b7c3006ab4a6f7357b))
+
 ## [1.3.0](https://github.com/jrjohn/arcana-embedded-esp32/compare/v1.2.4...v1.3.0) (2026-11-23)
 
 
