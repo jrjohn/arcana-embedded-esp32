@@ -1,0 +1,13 @@
+menu "SdFat (vendored)"
+
+config SDFAT_SCRATCH_IN_PSRAM
+    bool "Allocate SdFat scratch buffers in PSRAM"
+    default n
+    help
+        Moves the exFAT dual-FAT reseed chunk (16 KB) and the tail-cluster ring (~1 KB)
+        out of internal .bss into a one-time heap allocation, PSRAM first (internal RAM if
+        there is no PSRAM). Off = static arrays, identical to the vendored behaviour.
+        Safe for the sdspi path: SdFat never hands these buffers to DMA; sdmmc copies
+        through its own temporary DMA buffer. See port/sdfat_scratch.h.
+
+endmenu

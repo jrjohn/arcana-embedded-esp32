@@ -494,3 +494,19 @@ menu "Command Service Configuration"
             256-bit AES key as hex string (64 characters).
 
 endmenu
+
+menu "Arcana Memory Budget"
+
+config ARCANA_INTERNAL_RAM_WARN_BYTES
+    int "Warn at boot when free internal RAM is below (bytes)"
+    default 40960
+    range 4096 262144
+    help
+        After every service is up, DiagnosticService prints
+        "MEM internal_free=<n> largest=<n> psram_free=<n>" and logs LOW_INTERNAL_RAM when
+        free internal RAM (MALLOC_CAP_INTERNAL|8BIT) is below this value, or the largest
+        free block is below a quarter of it. 40 KB covers one TLS handshake (~30 KB) plus
+        Wi-Fi TX bursts; a product that booted at 6.9 KB lost BLE and Wi-Fi.
+        tools/flash-safe.py uses the same number as its default --min-internal-free.
+
+endmenu

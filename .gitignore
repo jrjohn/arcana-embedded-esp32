@@ -32,3 +32,6 @@ __pycache__/
 *.log
 arch-qube-reports/
 .clangd
+
+# tools/flash-safe.py full-flash backups (may contain Wi-Fi credentials from NVS)
+flash-backups/

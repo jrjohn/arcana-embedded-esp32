@@ -1,24 +1,25 @@
 #include "AppContainer.hpp"
 #include "esp_wifi.h"
-#include "esp_bt.h"
-#include "esp_bt_main.h"
-#include "impl/SensorServiceImpl.hpp"
-#include "impl/BleTransportServiceImpl.hpp"
+#include "esp_bt.h"  // demo
+#include "esp_bt_main.h"  // demo
+#include "impl/SensorServiceImpl.hpp"  // demo
+#include "impl/BleTransportServiceImpl.hpp"  // demo
 #include "impl/MqttTransportServiceImpl.hpp"
-#include "impl/LedServiceImpl.hpp"
-#include "impl/LcdServiceImpl.hpp"
+#include "impl/LedServiceImpl.hpp"  // demo
+#include "impl/LcdServiceImpl.hpp"  // demo
 #include "impl/TimerServiceImpl.hpp"
 #include "impl/DiagnosticServiceImpl.hpp"
-#include "impl/CommandBridgeServiceImpl.hpp"
-#include "impl/AtsStorageServiceImpl.hpp"
-#include "impl/SdBenchmarkServiceImpl.hpp"
-#include "impl/IoServiceImpl.hpp"
+#include "impl/CommandBridgeServiceImpl.hpp"  // demo
+#include "impl/AtsStorageServiceImpl.hpp"  // demo
+#include "impl/SdBenchmarkServiceImpl.hpp"  // demo
+#include "impl/IoServiceImpl.hpp"  // demo
 #include "impl/OtaServiceImpl.hpp"
-#include "impl/RegistrationServiceImpl.hpp"
-#include "impl/HttpUploadServiceImpl.hpp"
+#include "impl/RegistrationServiceImpl.hpp"  // demo
+#include "impl/HttpUploadServiceImpl.hpp"  // demo
 #include "impl/WifiServiceImpl.hpp"
 #include "impl/DriverServiceImpl.hpp"
-#include "view/BootSplash.hpp"
+#include "impl/FreezeGuardServiceImpl.hpp"
+#include "view/BootSplash.hpp"  // demo
 #include "esp_log.h"
 #include "esp_ota_ops.h"
 
@@ -26,10 +27,12 @@ static const char* TAG = "AppContainer";
 
 namespace Arcana {
 
+// demo:begin
 // Static MVVM instances (same lifetime as AppContainer)
 static Lcd::MainViewModel sViewModel;
 static Lcd::MainView sMainView;
 
+// demo:end
 AppContainer& AppContainer::getInstance() {
     static AppContainer sInstance;
     return sInstance;
@@ -50,9 +53,10 @@ void AppContainer::run() {
 
     wireServices();
     initHAL();
-    wireViews();   // after initHAL — display hardware must exist before wiring
+    wireViews();   // after initHAL — display hardware must exist before wiring  // demo
     initServices();
 
+// demo:begin
 #if CONFIG_ATS_SD_BENCHMARK_ON_BOOT
     // Diagnostics: one-shot sequential-write benchmark. Runs here — card
     // mounted (initHAL) but the ATS writer task not yet started — so the
@@ -76,6 +80,7 @@ void AppContainer::run() {
         ESP_LOGW(TAG, "SD benchmark skipped — storage unavailable");
     }
 #endif
+// demo:end
 
     // Wi-Fi connect with retry (don't crash on temporary AP failure)
     for (int attempt = 1; attempt <= 5; attempt++) {
@@ -94,6 +99,7 @@ void AppContainer::run() {
 
     startServices();
 
+    // demo:begin
     // Wait for AtsStorage to be ready (device.ats needed for credential persistence)
     if (mStorage) {
         auto& storageImpl = static_cast<Storage::AtsStorageServiceImpl&>(*mStorage);
@@ -120,7 +126,9 @@ void AppContainer::run() {
         ESP_LOGW(TAG, "Registration failed — using hardcoded MQTT config");
     }
 
+    // demo:end
     ESP_LOGI(TAG, "All services running");
+    mDiag->logBootMemory();   // "MEM internal_free=..." — flash-safe.py gates on it
 
     // OTA rollback gate: if this image is on probation (first boot after an
     // update), everything above succeeding is the self-test — accept it.
@@ -140,19 +148,26 @@ void AppContainer::run() {
 
     // Upload monitor + WiFi watchdog — reuse main task
     {
-        auto* io = mIo;
-        auto* upload = mUpload;
-        auto* mqtt = mMqtt;
+        auto* io = mIo;  // demo
+        auto* upload = mUpload;  // demo
+        auto* mqtt = mMqtt;  // demo
         uint32_t lastWifiCheck = xTaskGetTickCount();
         static const uint32_t WIFI_CHECK_INTERVAL = pdMS_TO_TICKS(5 * 60 * 1000); // 5 min
 
+        // This loop is on the task watchdog (10 s, panic -> reboot, AGENTS.md R11). Every
+        // pass feeds it; the two known-slow paths below pause it explicitly.
+        mFreeze->watchCurrentTask();
         for (;;) {
+            mFreeze->feed(Freeze::Stage::LoopWait);
             vTaskDelay(pdMS_TO_TICKS(500));
+            mFreeze->feed(Freeze::Stage::LoopWork);
 
             // WiFi watchdog: check every 5 minutes, reconnect if needed
             if ((xTaskGetTickCount() - lastWifiCheck) >= WIFI_CHECK_INTERVAL) {
                 lastWifiCheck = xTaskGetTickCount();
                 if (mWifi && !mWifi->isConnected()) {
+                    // example_connect() + 10 s SNTP wait, 5 tries: bounded but > 10 s.
+                    mFreeze->pause("wifi reconnect");
                     ESP_LOGW(TAG, "WiFi disconnected — reconnecting...");
                     for (int i = 1; i <= 5; i++) {
                         if (mWifi->connect() == ESP_OK) {
@@ -163,11 +178,15 @@ void AppContainer::run() {
                         ESP_LOGW(TAG, "WiFi reconnect retry %d/5...", i);
                         vTaskDelay(pdMS_TO_TICKS(3000));
                     }
+                    mFreeze->resume();
                 }
             }
+// demo:begin
 
             if (io && io->isUploadRequested()) {
                 io->clearUploadRequest();
+                // The upload runs for minutes and always ends in esp_restart() below.
+                mFreeze->pause("upload, ends in reboot");
 
                 // 1. Pause ECG immediately (stop SD writes + free CPU)
                 if (mStorage) {
@@ -235,6 +254,7 @@ void AppContainer::run() {
                 vTaskDelay(pdMS_TO_TICKS(2000));
                 esp_restart();
             }
+// demo:end
         }
     }
 }
@@ -243,30 +263,34 @@ void AppContainer::wireServices() {
     // Get service singletons
     mDriver  = &Driver::DriverServiceImpl::getInstance();
     mTimer   = &Timer::TimerServiceImpl::getInstance();
-    mSensor  = &Sensor::SensorServiceImpl::getInstance();
-    mBle     = &Ble::BleTransportServiceImpl::getInstance();
+    mSensor  = &Sensor::SensorServiceImpl::getInstance();  // demo
+    mBle     = &Ble::BleTransportServiceImpl::getInstance();  // demo
     mMqtt    = &Mqtt::MqttTransportServiceImpl::getInstance();
-    mLed     = &Led::LedServiceImpl::getInstance();
-    mLcd     = &Lcd::LcdServiceImpl::getInstance();
-    mBridge  = &CommandBridgeServiceImpl::getInstance();
-    mCommand = &Command::CommandService::Instance();
+    mLed     = &Led::LedServiceImpl::getInstance();  // demo
+    mLcd     = &Lcd::LcdServiceImpl::getInstance();  // demo
+    mBridge  = &CommandBridgeServiceImpl::getInstance();  // demo
+    mCommand = &Command::CommandService::Instance();  // demo
     mDiag    = &Diagnostic::DiagnosticServiceImpl::getInstance();
-    mStorage = &Storage::AtsStorageServiceImpl::getInstance();
-    mIo      = &Io::IoServiceImpl::getInstance();
+    mStorage = &Storage::AtsStorageServiceImpl::getInstance();  // demo
+    mIo      = &Io::IoServiceImpl::getInstance();  // demo
     mOta     = &OtaServiceImpl::getInstance();
-    mReg     = &Registration::RegistrationServiceImpl::getInstance();
-    mUpload  = &Upload::HttpUploadServiceImpl::getInstance();
+    mReg     = &Registration::RegistrationServiceImpl::getInstance();  // demo
+    mUpload  = &Upload::HttpUploadServiceImpl::getInstance();  // demo
     mWifi    = &Wifi::WifiServiceImpl::getInstance();
+    mFreeze  = &Freeze::FreezeGuardServiceImpl::getInstance();
 
+    // demo:begin
     // Wire Storage <- Sensor (record sensor data to SD)
     mStorage->input.SensorDataEvents = mSensor->output.DataEvents;
 
     // Wire LED <- Timer (base tick for 1-second cycling)
     mLed->input.TimerEvents = mTimer->output.BaseTimer;
 
+    // demo:end
     // Wire Diagnostic <- Timer (base tick for 10-second interval)
     mDiag->input.TimerEvents = mTimer->output.BaseTimer;
 
+    // demo:begin
     // Wire BLE <- Sensor
     mBle->input.SensorDataEvents = mSensor->output.DataEvents;
 
@@ -279,9 +303,11 @@ void AppContainer::wireServices() {
     // Wire Command <- OTA (Ota::StartUpdate / GetProgress)
     mCommand->input.Ota = mOta;
 
+    // demo:end
     ESP_LOGI(TAG, "Services wired");
 }
 
+// demo:begin
 void AppContainer::wireViews() {
     // ViewModel subscribes to Service outputs (not the View!)
     sViewModel.input.SensorData = mSensor->output.DataEvents;
@@ -295,16 +321,21 @@ void AppContainer::wireViews() {
     ESP_LOGI(TAG, "Views wired");
 }
 
+// demo:end
 void AppContainer::initHAL() {
     // Phase 1: Hardware initialization (order matters).
+    // Reset reason first, so a watchdog reboot is reported before anything else can fail.
+    ESP_ERROR_CHECK(mFreeze->init_HAL());
+
     // Board-level resources first: the XL9555 expander must be up (and its
     // latched INT released) before the LCD and SD card touch SPI2.
     ESP_ERROR_CHECK(mDriver->init_HAL());
 
     ESP_ERROR_CHECK(mTimer->init_HAL());
-    ESP_ERROR_CHECK(mSensor->init_HAL());
-    ESP_ERROR_CHECK(mBle->init_HAL());
-    ESP_ERROR_CHECK(mLed->init_HAL());
+    ESP_ERROR_CHECK(mSensor->init_HAL());  // demo
+    ESP_ERROR_CHECK(mBle->init_HAL());  // demo
+    ESP_ERROR_CHECK(mLed->init_HAL());  // demo
+    // demo:begin
     if (mLcd->init_HAL() != ESP_OK) {
         // Boards without an SSD1306 (e.g. DNESP32S3) — views keep rendering
         // into the framebuffer; Ssd1306 skips I2C traffic when not ready.
@@ -314,12 +345,15 @@ void AppContainer::initHAL() {
     // boot (busy-card retry) — animate a splash so the panel isn't black/hung
     // looking. Handed off to MainView in startServices().
     View::BootSplash::start(&mLcd->getDisplay());
+    // demo:end
     ESP_ERROR_CHECK(mMqtt->init_HAL());
+    // demo:begin
     if (mStorage->init_HAL() != ESP_OK) {
         ESP_LOGW(TAG, "SD card unavailable — storage disabled");
         mStorage = nullptr;
     }
     ESP_ERROR_CHECK(mIo->init_HAL());
+    // demo:end
 
     ESP_LOGI(TAG, "HAL initialized");
 }
@@ -328,6 +362,7 @@ void AppContainer::initServices() {
     // Phase 2: Logic + subscriptions
     ESP_ERROR_CHECK(mTimer->init());
 
+    // demo:begin
     // Sensor first (others may depend on its output)
     ESP_ERROR_CHECK(mSensor->init());
 
@@ -357,33 +392,37 @@ void AppContainer::initServices() {
     // LCD init (hardware only, no subscriptions)
     ESP_ERROR_CHECK(mLcd->init());
 
+    // demo:end
     // MQTT init (subscribes to sensor data)
     ESP_ERROR_CHECK(mMqtt->init());
 
     // Diagnostic init (subscribes to timer for periodic logging)
     ESP_ERROR_CHECK(mDiag->init());
 
+    // demo:begin
     // Storage init (semaphore + mutex)
     if (mStorage) ESP_ERROR_CHECK(mStorage->init());
 
     // IO init
     ESP_ERROR_CHECK(mIo->init());
+    // demo:end
 
     ESP_LOGI(TAG, "Services initialized");
 }
 
 void AppContainer::startServices() {
     ESP_ERROR_CHECK(mTimer->start());
-    ESP_ERROR_CHECK(mSensor->start());
-    ESP_ERROR_CHECK(mBle->start());
-    ESP_ERROR_CHECK(mCommand->Start());
-    ESP_ERROR_CHECK(mLed->start());
-    ESP_ERROR_CHECK(mLcd->start());
+    ESP_ERROR_CHECK(mSensor->start());  // demo
+    ESP_ERROR_CHECK(mBle->start());  // demo
+    ESP_ERROR_CHECK(mCommand->Start());  // demo
+    ESP_ERROR_CHECK(mLed->start());  // demo
+    ESP_ERROR_CHECK(mLcd->start());  // demo
     ESP_ERROR_CHECK(mMqtt->start());
     ESP_ERROR_CHECK(mDiag->start());
-    if (mStorage) ESP_ERROR_CHECK(mStorage->start());
-    ESP_ERROR_CHECK(mIo->start());
+    if (mStorage) ESP_ERROR_CHECK(mStorage->start());  // demo
+    ESP_ERROR_CHECK(mIo->start());  // demo
 
+    // demo:begin
     // Stop the boot splash and wait for it to release the panel before MainView
     // takes over (they share the one framebuffer).
     View::BootSplash::stop();
@@ -391,6 +430,7 @@ void AppContainer::startServices() {
     // Start MVVM: View render task first, then ViewModel subscribes + notifies
     sMainView.start();
     sViewModel.init(sMainView.taskHandle());
+    // demo:end
 
     ESP_LOGI(TAG, "Services started");
 }

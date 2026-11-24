@@ -1,23 +1,24 @@
 #pragma once
 
 #include "DriverService.hpp"
-#include "SensorService.hpp"
-#include "BleTransportService.hpp"
+#include "SensorService.hpp"  // demo
+#include "BleTransportService.hpp"  // demo
 #include "MqttTransportService.hpp"
-#include "LedService.hpp"
-#include "CommandBridgeService.hpp"
-#include "CommandService.hpp"
+#include "LedService.hpp"  // demo
+#include "CommandBridgeService.hpp"  // demo
+#include "CommandService.hpp"  // demo
 #include "TimerService.hpp"
-#include "LcdService.hpp"
-#include "MainViewModel.hpp"
-#include "MainView.hpp"
+#include "LcdService.hpp"  // demo
+#include "MainViewModel.hpp"  // demo
+#include "MainView.hpp"  // demo
 #include "DiagnosticService.hpp"
-#include "AtsStorageService.hpp"
-#include "IoService.hpp"
+#include "AtsStorageService.hpp"  // demo
+#include "IoService.hpp"  // demo
 #include "OtaService.hpp"
-#include "RegistrationService.hpp"
-#include "HttpUploadService.hpp"
+#include "RegistrationService.hpp"  // demo
+#include "HttpUploadService.hpp"  // demo
 #include "WifiService.hpp"
+#include "FreezeGuardService.hpp"
 
 namespace Arcana {
 
@@ -34,27 +35,28 @@ private:
     AppContainer& operator=(const AppContainer&) = delete;
 
     void wireServices();
-    void wireViews();
+    void wireViews();  // demo
     void initHAL();
     void initServices();
     void startServices();
 
     Driver::DriverService* mDriver = nullptr;
     Timer::TimerService* mTimer = nullptr;
-    Sensor::SensorService* mSensor = nullptr;
-    Ble::BleTransportService* mBle = nullptr;
+    Sensor::SensorService* mSensor = nullptr;  // demo
+    Ble::BleTransportService* mBle = nullptr;  // demo
     Mqtt::MqttTransportService* mMqtt = nullptr;
-    Led::LedService* mLed = nullptr;
-    CommandBridgeService* mBridge = nullptr;
-    Lcd::LcdService* mLcd = nullptr;
-    Command::CommandService* mCommand = nullptr;
+    Led::LedService* mLed = nullptr;  // demo
+    CommandBridgeService* mBridge = nullptr;  // demo
+    Lcd::LcdService* mLcd = nullptr;  // demo
+    Command::CommandService* mCommand = nullptr;  // demo
     Diagnostic::DiagnosticService* mDiag = nullptr;
-    Storage::AtsStorageService* mStorage = nullptr;
-    Io::IoService* mIo = nullptr;
+    Storage::AtsStorageService* mStorage = nullptr;  // demo
+    Io::IoService* mIo = nullptr;  // demo
     OtaService* mOta = nullptr;
-    Registration::RegistrationService* mReg = nullptr;
-    Upload::HttpUploadService* mUpload = nullptr;
+    Registration::RegistrationService* mReg = nullptr;  // demo
+    Upload::HttpUploadService* mUpload = nullptr;  // demo
     Wifi::WifiService* mWifi = nullptr;
+    Freeze::FreezeGuardService* mFreeze = nullptr;
 };
 
 } // namespace Arcana

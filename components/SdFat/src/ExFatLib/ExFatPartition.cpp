@@ -336,7 +336,17 @@ bool ExFatPartition::reseedInactive() {
   // sector-at-a-time reseed is command-latency bound on a large, data-full card
   // (observed ~88 s on a 28 GB card). 32-sector ops cut the transaction count ~32x.
   static const uint32_t kChunkSectors = 32;
+#if SDFAT_SCRATCH_IN_PSRAM
+  // Arcana: Kconfig SDFAT_SCRATCH_IN_PSRAM — one-time allocation, PSRAM first.
+  static uint8_t* const chunk =
+      static_cast<uint8_t*>(sdfatScratchAlloc(kChunkSectors * 512));
+  if (!chunk) {
+    DBG_FAIL_MACRO;
+    return false;
+  }
+#else
   static uint8_t chunk[kChunkSectors * 512];  // 16 KB .bss (DMA-capable internal RAM)
+#endif
   uint8_t working = 1 - m_activeFat;
   Sector_t spc = (Sector_t)1 << m_sectorsPerClusterShift;
   Sector_t bmpSrc = m_clusterHeapStartSector + (Sector_t)m_activeFat * spc;

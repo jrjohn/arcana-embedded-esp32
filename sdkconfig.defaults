@@ -94,3 +94,16 @@ CONFIG_MQTT_CUSTOM_OUTBOX=n
 # HAL_DEFAULT_ASSERTION_LEVEL is auto-derived; pick the right HAL_ASSERTION_*
 # bool to drive it. _DISABLE → level 0.
 CONFIG_HAL_ASSERTION_DISABLE=y
+
+# Task watchdog with PANIC (both targets; the S3 overlay does not override it).
+# A loop subscribed via FreezeGuardService that does not feed within 10 s panics and
+# reboots instead of hanging; the next boot prints "LC_FREEZE reset=task_wdt stage=<n>".
+# The IDLE tasks stay watched too: a task hogging a core for 10 s without yielding now
+# reboots (it used to only print a warning). See AGENTS.md R11.
+# ⛔ Defaults apply only when no sdkconfig exists yet. A stale sdkconfig keeps
+#    "# CONFIG_ESP_TASK_WDT_PANIC is not set" — tools/ram-budget.sh checks the built
+#    sdkconfig and fails when the panic is off.
+CONFIG_ESP_TASK_WDT_EN=y
+CONFIG_ESP_TASK_WDT_INIT=y
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
+CONFIG_ESP_TASK_WDT_PANIC=y

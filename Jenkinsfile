@@ -119,6 +119,21 @@ pipeline {
             }
         }
 
+        stage("RAM Budget") {
+            // Static internal RAM (.data+.bss) per target vs tools/ram-budget.conf, plus the
+            // task-watchdog panic switch in the built sdkconfig (AGENTS.md R10/R11). Runs in the
+            // same IDF image as the build (needs esp_idf_size); reads build/ from the workspace.
+            steps {
+                sh '''
+                    JHOME_HOST=$(docker inspect "$(hostname)" --format '{{ range .Mounts }}{{ if eq .Destination "/var/jenkins_home" }}{{ .Source }}{{ end }}{{ end }}')
+                    [ -n "$JHOME_HOST" ] || { echo "Could not resolve host path for /var/jenkins_home"; exit 1; }
+                    HOST_WS="$JHOME_HOST/${WORKSPACE#/var/jenkins_home/}"
+                    PROJECT_PATH="$HOST_WS" docker compose -f docker-compose.ci.yml run --rm --no-deps \
+                        --entrypoint bash esp32-build -c '. $IDF_PATH/export.sh >/dev/null && tools/ram-budget.sh build'
+                '''
+            }
+        }
+
         stage("Test Coverage") {
             steps {
                 sh '''
@@ -198,9 +213,12 @@ pipeline {
                     # (arcana-ios PR-14/PR-15, 2026-09-30: "destination ...:/src must be a directory").
                     AQ="arcana-arch-qube-esp32-$(printf '%s' "${BRANCH_NAME}-${BUILD_NUMBER}" | tr -c 'A-Za-z0-9_.-' '-')"
                     docker rm -f "$AQ" 2>/dev/null || true
+                    # Same pinned image as tools/arch-check.sh (tools/arch-qube.version).
+                    AQ_IMAGE=$(bash tools/arch-qube-image.sh)
+                    echo "arch-qube image: $AQ_IMAGE"
                     docker create --name "$AQ" --network devops_default \
                         -v /src -v /output \
-                        arcana.boo/arcana/arch-qube:latest \
+                        "$AQ_IMAGE" \
                         scan /src --framework esp32 --no-ai --ci \
                         --format json,markdown -o /output --threshold 90 || exit 1
                     tar --exclude=./.git --exclude=./arch-qube-reports -C . -cf - . \

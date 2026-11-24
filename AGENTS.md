@@ -20,14 +20,17 @@ is written. `tools/new-app.sh` runs it for you.
 
 | Situation | Do this | Never do this |
 |---|---|---|
-| New firmware product (gateway, logger, bridge…) | `tools/new-app.sh <name> <dest-dir>` — copies the full layered skeleton **plus this file and the checks** | Copy only `components/SdFat` or `main/share/db/arcanats` into a fresh `main/` |
+| New firmware product (gateway, logger, bridge…) | `tools/new-app.sh <name> <dest-dir>` — copies the full layered skeleton **plus this file and the checks**, with the template demos removed (`--with-demo` keeps them) | Copy only `components/SdFat` or `main/share/db/arcanats` into a fresh `main/`; keep demo services "unwired" |
 | New capability inside a product | `tools/new-service.sh <Name> [namespace]` — creates interface, impl, test and wires CMake | Write a new `foo.c` next to `App.cpp` |
 | New peripheral chip | Add a class under `main/share/driver/` (or `main/<board>/` if board-specific) | Call `i2c_master_*` / `spi_device_*` from a service or view |
 
 Cost of copying parts instead of the skeleton: the product loses this file, the hook and the
 CI gate, and nothing tells the next agent the rules exist (iNAPLink v0.10.1, 2026-11-23:
 5,900 lines of flat C, two shared structs written by the BLE task and read by three others
-with no lock — found only at review).
+with no lock — found only at review). Keeping the demos unwired costs drift: they still
+compile, still take RAM and nobody knows which are load-bearing. Demo code in this template
+is fenced with `// demo:begin` / `// demo:end` (or a trailing `// demo`) and listed in
+`tools/demo-files.txt`; a new demo feature must be fenced and listed, or `new-app.sh` breaks.
 
 ## 2. Layers — where a file goes
 
@@ -62,6 +65,9 @@ includes a higher one.
 | R7 | Functions stay under cognitive complexity 15; split a big `switch` into a table or one handler per case. | Sonar `cxx:FunctionCognitiveComplexity` |
 | R8 | No credentials, PSKs or broker passwords in source. Use `sdkconfig.credentials` (git-ignored) or NVS. | Sonar secrets |
 | R9 | A new `.cpp` under `main/` is added to `SRCS` in `main/CMakeLists.txt` in the section of its layer. `tools/new-service.sh` does this for you. | the build |
+| R10 | Static internal RAM (`.data`+`.bss`) stays under the target's budget in `tools/ram-budget.conf`. Large CPU-only buffers and task stacks go to PSRAM via `core/memory/MemoryPlacement.hpp`; DMA buffers, atomics/`portMUX`, and stacks of tasks that write flash stay internal. Raising a budget needs a board boot log in the commit. | `tools/ram-budget.sh` (Jenkins "RAM Budget"); boot line `MEM internal_free=` + `LOW_INTERNAL_RAM` warning |
+| R11 | Every long-running loop either subscribes to the task watchdog (`FreezeGuardService::watchCurrentTask()` + `feed()`, 10 s, panic) or is listed as exempt in §6 with its reason. Wrap a known-slow bounded call in `pause()`/`resume()`; never `esp_task_wdt_delete()` a loop for good. | `CONFIG_ESP_TASK_WDT_PANIC=y` (checked in the built sdkconfig by `tools/ram-budget.sh`); review against §6 |
+| R12 | A board is flashed only with `tools/flash-safe.py`: full-flash backup first, DTR/RTS held low, and the flash counts only when the boot log shows the ready marker and `internal_free` ≥ threshold. | the script exits non-zero and prints the rollback command |
 
 ## 4. Before you say "done"
 
@@ -71,7 +77,10 @@ Run these, in this order, and paste the last line of each into your summary:
 tools/arch-check.sh                      # arch-qube, same image and threshold as CI; must exit 0
 docker compose -f docker-compose.test.yml build test     # host GoogleTests + coverage run inside the image build
 idf.py build                             # firmware still builds
+tools/ram-budget.sh build                # static internal RAM within budget + TWDT panic on; must print PASS
 ```
+
+On a board, also: `tools/flash-safe.py -p <port>` must print `flash-safe: PASS`.
 
 `arch-check.sh` printing `FAIL`, or a rule showing `NOT EVALUATED` for a layer you touched,
 means not done. Do not lower `--threshold`, add exclusions, or move code into `components/`
@@ -82,5 +91,57 @@ to get a pass — fix the structure.
 - Detailed patterns and examples: `arcana-esp32-developer-skill`
   (https://github.com/jrjohn/arcana-skills/tree/main/arcana-esp32-developer-skill).
   Optional — everything you must follow is in this file.
-- Worked example of every layer: `LedService` → `LedServiceImpl` → `RgbLed` driver,
-  wired in `AppContainer::wireServices()`.
+- Worked example of a service: `DiagnosticService` → `DiagnosticServiceImpl`, fed by
+  `TimerService` through `Observable<T>` in `AppContainer::wireServices()`.
+
+## 6. Internal RAM, watchdog, flashing
+
+Host tests and arch-check cannot see memory or timing. iNAPLink 0.3.0 (2026-11-24) passed
+both at 100, then booted with 6.9 KB internal RAM and BLE + Wi-Fi failed to allocate; moving
+big buffers and task stacks to PSRAM (static DIRAM 116,681 → 67,913 B) fixed it.
+
+| Concern | Tool | Fails when |
+|---|---|---|
+| Static internal RAM | `tools/ram-budget.sh [build-dir]` (needs the IDF env; budgets in `tools/ram-budget.conf`) | `.data+.bss` > budget, or built sdkconfig lacks `CONFIG_ESP_TASK_WDT_PANIC=y` |
+| Runtime internal RAM | `DiagnosticService::logBootMemory()` prints `MEM internal_free=… largest=… psram_free=…` | free < `CONFIG_ARCANA_INTERNAL_RAM_WARN_BYTES` (40 KB) logs `LOW_INTERNAL_RAM` |
+| PSRAM placement | `Memory::allocLarge()`, `Memory::createTaskPsramStack()`; SdFat scratch via Kconfig `SDFAT_SCRATCH_IN_PSRAM` (on for S3) | — (falls back to internal RAM without PSRAM) |
+| Frozen loop | `FreezeGuardService`; next boot prints `LC_FREEZE reset=… stage=…` | a subscribed loop does not feed within 10 s → panic, reboot |
+| Flashing | `tools/flash-safe.py -p <port> [--dry-run] [--check-log FILE]`; backups in `flash-backups/` | no ready marker, `internal_free` below `--min-internal-free`, or a panic line |
+
+Tasks and their watchdog status (R11). Add a row for every new long-running task:
+
+| Task | Status | Why |
+|---|---|---|
+| `main` loop (`AppContainer::run`) | subscribed, feeds every 500 ms | Wi-Fi reconnect (+10 s SNTP) and the upload (ends in reboot) are wrapped in `pause()` |
+| Observable async dispatch, `LcdView`, `bootsplash`, `rgb_cycle` | exempt | wait on a queue/notify/delay with no upper bound by design; a CPU hog still trips the IDLE watch |
+| `IoService` button poll | exempt (template demo) | short `vTaskDelay` poll loop; a product that keeps it should subscribe it |
+| `AtsStore`, `EcgSample` | exempt | SD writes can stall for seconds on a busy card; a reset there would lose data. Product code replacing them should subscribe with a measured bound |
+
+The IDLE tasks stay on the watchdog too: a task that hogs a core for 10 s without yielding
+now reboots instead of printing a warning.
+
+## 7. Architecture check (arch-qube)
+
+arch-qube (https://github.com/jrjohn/arcana-arch-qube; usage skill:
+https://github.com/jrjohn/arcana-skills/tree/main/arch-qube-skill) scans the source for the
+layer rules in §2–§3 and scores them. The version is pinned in `tools/arch-qube.version`;
+`tools/arch-qube-image.sh` turns it into `arcana.boo/arcana/arch-qube:<version>` (and warns,
+then uses `:latest`, if that tag is not in the registry). The Jenkinsfile uses the same script.
+
+| Situation | Run |
+|---|---|
+| Docker available | `tools/arch-check.sh` → report in `arch-qube-reports/arch-qube.{md,json}` |
+| No Docker | `pipx run --spec git+https://github.com/jrjohn/arcana-arch-qube@v$(cat tools/arch-qube.version) arch-qube scan . --framework esp32 --no-ai --ci --format json,markdown -o arch-qube-reports --threshold 90` |
+| No pipx | `python3 -m venv .aq && .aq/bin/pip install git+https://github.com/jrjohn/arcana-arch-qube@v$(cat tools/arch-qube.version)`, then `.aq/bin/arch-qube scan …` with the same arguments |
+
+Reading the report — the score alone is not a pass:
+
+- A rule under "Not evaluated" (`"evaluated": false` in the JSON) was not checked. If it
+  covers a layer you touched, that is not done.
+- Check `files_checked` per rule. A rule that checked 0 files, or far fewer than you have,
+  passed by looking at nothing.
+- An unlayered (flat) project scores 0 on Layer Direction Enforcement; a 100 on a project you
+  know is flat means the scan did not see your files.
+
+On a false positive: open an issue on arcana-arch-qube with the report JSON and the file.
+Never lower `--threshold`, add exclusions, or move code into `components/` to dodge a rule.

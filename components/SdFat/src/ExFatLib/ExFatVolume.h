@@ -114,7 +114,16 @@ class ExFatVolume : public ExFatPartition {
       // Fragmented: walk the chain keeping the last `margin` clusters in a ring,
       // then mark them. Bounded to this one at-risk file (not the whole volume).
       static const uint32_t kRing = 272;       // >= max margin (1 MB / 4 KB cluster + 1)
+#if SDFAT_SCRATCH_IN_PSRAM
+      // Arcana: Kconfig SDFAT_SCRATCH_IN_PSRAM — one-time allocation, PSRAM first.
+      static Cluster_t* const ring =
+          static_cast<Cluster_t*>(sdfatScratchAlloc(kRing * sizeof(Cluster_t)));
+      if (!ring) {
+        return false;
+      }
+#else
       static Cluster_t ring[kRing];
+#endif
       uint32_t ringN = margin < kRing ? margin : kRing;
       Cluster_t cl = first;
       uint32_t head = 0, walked = 0;

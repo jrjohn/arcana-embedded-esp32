@@ -1,11 +1,12 @@
 #include "BoardConfig.hpp"
-#include "Ssd1306.hpp"
-#include "DhtSensor.hpp"
+#include "Ssd1306.hpp"  // demo
+#include "DhtSensor.hpp"  // demo
 #include "sdkconfig.h"
 
 namespace Arcana {
 namespace Board {
 
+// demo:begin
 Lcd::Ssd1306& createDisplay() {
     static Lcd::Ssd1306 display(
         static_cast<gpio_num_t>(CONFIG_OLED_SCL_GPIO),
@@ -28,5 +29,6 @@ Sensor::ObservableSensor& createSensor() {
     return sensor;
 }
 
+// demo:end
 } // namespace Board
 } // namespace Arcana
