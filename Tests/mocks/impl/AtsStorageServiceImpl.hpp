@@ -73,14 +73,7 @@ public:
         return 0;
     }
 
-    struct PendingFile {
-        char name[16];
-        uint32_t size;
-        uint32_t date;
-    };
-    static const uint8_t MAX_PENDING = 8;
-
-    uint8_t listPendingUploads(PendingFile* out, uint8_t maxCount) {
+    uint8_t listPendingUploads(PendingFile* out, uint8_t maxCount) override {
         uint8_t n = mPendingCount < maxCount ? mPendingCount : maxCount;
         for (uint8_t i = 0; i < n; i++) {
             snprintf(out[i].name, sizeof(out[i].name), "pending%u.ats", i);
@@ -89,32 +82,33 @@ public:
         }
         return n;
     }
-    bool isDateUploaded(uint32_t)  { return false; }
-    void markUploaded(uint32_t)    {}
+    bool isDateUploaded(uint32_t) override { return false; }
+    void markUploaded(uint32_t) override   {}
 
-    bool isReady() const { return mDbReady; }
+    bool isReady() const override { return mDbReady; }
 
-    void pauseRecording()  { mUploadPause = true; }
-    void resumeRecording() { mUploadPause = false; }
+    void pauseRecording() override  { mUploadPause = true; }
+    void resumeRecording() override { mUploadPause = false; }
+    ExFatVolume* exfatVolume() override { return nullptr; }
 
     // Upload read path: production returns an ExFatFilePort on the exFAT volume +
     // the SD mutex. The stub returns a host VfsFilePort (reads /sdcard fixtures)
     // and a no-op mutex, so HttpUploadServiceImpl's read loop is testable on the
     // host without SdFat.
-    arcana::ats::IFilePort* uploadReadPort() { return &mUploadPort; }
-    arcana::ats::IMutex*    sdMutex()        { return &mSdMutex; }
+    arcana::ats::IFilePort* uploadReadPort() override { return &mUploadPort; }
+    arcana::ats::IMutex*    sdMutex() override        { return &mSdMutex; }
 
     bool loadTzConfig(int16_t&, uint8_t&) { return false; }
     bool saveTzConfig(int16_t, uint8_t)   { return false; }
 
-    bool loadCredentials(uint8_t* outBuf, uint16_t bufSize, uint16_t& outLen) {
+    bool loadCredentials(uint8_t* outBuf, uint16_t bufSize, uint16_t& outLen) override {
         if (!mLoadOk) return false;
         uint16_t n = mLoadLen < bufSize ? mLoadLen : bufSize;
         memcpy(outBuf, mLoadData, n);
         outLen = n;
         return true;
     }
-    bool saveCredentials(const uint8_t* data, uint16_t len) {
+    bool saveCredentials(const uint8_t* data, uint16_t len) override {
         if (!mSaveOk) return false;
         uint16_t n = len < sizeof(mLastSaveData) ? len : sizeof(mLastSaveData);
         memcpy(mLastSaveData, data, n);

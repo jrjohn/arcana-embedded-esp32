@@ -65,8 +65,9 @@ void AppContainer::run() {
     if (mStorage) {
         ESP_LOGI(TAG, "SD benchmark: %d ms sequential write...",
                  CONFIG_ATS_SD_BENCHMARK_DURATION_MS);
-        auto bench = SdBench::SdBenchmarkServiceImpl::getInstance()
-                         .runBenchmark(CONFIG_ATS_SD_BENCHMARK_DURATION_MS);
+        auto& benchSvc = SdBench::SdBenchmarkServiceImpl::getInstance();
+        benchSvc.input.Storage = mStorage;
+        auto bench = benchSvc.runBenchmark(CONFIG_ATS_SD_BENCHMARK_DURATION_MS);
         if (!bench.error) {
             ESP_LOGI(TAG, "SD benchmark: %lu.%lu KB/s, %lu KB total, %lu blocks/s",
                      (unsigned long)(bench.speedKBps10 / 10),
@@ -282,6 +283,13 @@ void AppContainer::wireServices() {
     // demo:begin
     // Wire Storage <- Sensor (record sensor data to SD)
     mStorage->input.SensorDataEvents = mSensor->output.DataEvents;
+
+    // Wire service-to-service dependencies through interfaces (AGENTS.md R2)
+    mStorage->input.Io = mIo;
+    mReg->input.Storage = mStorage;
+    mUpload->input.Storage = mStorage;
+    mUpload->input.Registration = mReg;
+    mUpload->input.Io = mIo;
 
     // Wire LED <- Timer (base tick for 1-second cycling)
     mLed->input.TimerEvents = mTimer->output.BaseTimer;

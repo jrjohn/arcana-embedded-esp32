@@ -124,6 +124,8 @@ protected:
     void SetUp() override {
         http_test_reset();
         Arcana::Storage::AtsStorageServiceImpl::getInstance().test_reset();
+        RegistrationServiceImpl::getInstance().input.Storage =
+            &Arcana::Storage::AtsStorageServiceImpl::getInstance();
 
         // RegistrationServiceImpl is a Meyer singleton — credentials persist
         // across tests. refreshToken() unconditionally sets mCreds.valid=false
@@ -437,4 +439,11 @@ TEST_F(RegistrationServiceTest, RefreshTokenSuccessPath) {
 
     EXPECT_TRUE(svc.refreshToken());
     EXPECT_TRUE(svc.isRegistered());
+}
+
+TEST_F(RegistrationServiceTest, UnwiredStorageFailsSafely) {
+    auto& svc = RegistrationServiceImpl::getInstance();
+    svc.input.Storage = nullptr;
+    EXPECT_FALSE(svc.loadCredentials());
+    svc.input.Storage = &Arcana::Storage::AtsStorageServiceImpl::getInstance();
 }

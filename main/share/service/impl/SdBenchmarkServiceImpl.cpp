@@ -1,5 +1,6 @@
 #include "impl/SdBenchmarkServiceImpl.hpp"
-#include "impl/AtsStorageServiceImpl.hpp"
+#include "ExFatFilePort.hpp"
+#include "ats/IMutex.hpp"
 #include "ats/ArcanaTsTypes.hpp"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -24,8 +25,11 @@ SdBenchmarkResult SdBenchmarkServiceImpl::runBenchmark(uint32_t durationMs) {
 
     // Write through SdFat's exFAT on the storage service's shared volume, each
     // SD op serialized by the storage SD mutex (SdFat has no internal locking).
-    auto& storage = static_cast<Storage::AtsStorageServiceImpl&>(
-        Storage::AtsStorageServiceImpl::getInstance());
+    if (!input.Storage) {
+        result.error = true;
+        return result;
+    }
+    auto& storage = *input.Storage;
     arcana::ats::IMutex* sdmtx = storage.sdMutex();
     arcana::ats::ExFatFilePort fp(storage.exfatVolume());
 

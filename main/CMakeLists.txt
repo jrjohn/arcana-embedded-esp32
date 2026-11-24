@@ -38,14 +38,14 @@ idf_component_register(
         "share/transport/ble/BleGap.cpp"
         "share/transport/ble/BleGattServer.cpp"
         "share/transport/ble/BleGattClient.cpp"
-        "share/transport/ble/BleTransportServiceImpl.cpp"
+        "share/transport/ble/impl/BleTransportServiceImpl.cpp"
 
         # demo:end
         # transport/mqtt/
-        "share/transport/mqtt/MqttTransportServiceImpl.cpp"
+        "share/transport/mqtt/impl/MqttTransportServiceImpl.cpp"
 
         # transport/wifi/
-        "share/transport/wifi/WifiServiceImpl.cpp"
+        "share/transport/wifi/impl/WifiServiceImpl.cpp"
 
         # db/arcanats/
         "share/db/arcanats/ats/ArcanaTsDb.cpp"
