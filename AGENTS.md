@@ -128,6 +128,8 @@ layer rules in §2–§3 and scores them. The version is pinned in `tools/arch-q
 `tools/arch-qube-image.sh` pulls `arcana.boo/arcana/arch-qube:<version>` (and warns, then
 uses `:latest`, only if that pull fails). The Jenkinsfile uses the same script.
 
+`tools/arch-qube.version` is bumped automatically by Renovate when arch-qube releases; do not edit the version anywhere else.
+
 | Situation | Run |
 |---|---|
 | Docker available | `tools/arch-check.sh` → report in `arch-qube-reports/arch-qube.{md,json}` |
