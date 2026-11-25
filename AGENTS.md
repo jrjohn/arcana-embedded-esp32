@@ -125,8 +125,11 @@ now reboots instead of printing a warning.
 arch-qube (https://github.com/jrjohn/arcana-arch-qube; usage skill:
 https://github.com/jrjohn/arcana-skills/tree/main/arch-qube-skill) scans the source for the
 layer rules in §2–§3 and scores them. The version is pinned in `tools/arch-qube.version`;
-`tools/arch-qube-image.sh` pulls `arcana.boo/arcana/arch-qube:<version>` (and warns, then
-uses `:latest`, only if that pull fails). The Jenkinsfile uses the same script.
+`tools/arch-qube-image.sh` pulls `ghcr.io/jrjohn/arch-qube:<version>`, then
+`arcana.boo/arcana/arch-qube:<version>`; if neither pulls it exits 2 — never `:latest`, and
+that is NOT a pass. The Jenkinsfile uses the same script.
+
+`tools/arch-qube.version` is bumped automatically by Renovate when arch-qube releases; do not edit the version anywhere else.
 
 | Situation | Run |
 |---|---|
