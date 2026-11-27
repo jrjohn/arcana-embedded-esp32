@@ -1,29 +1,29 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/Architecture-Service_+_MVVM_+_Storage-gold?style=for-the-badge" alt="Architecture">
-  <img src="https://img.shields.io/badge/MCU-ESP32_·_ESP32--S3-E7352C?style=for-the-badge&logo=espressif" alt="ESP32 / ESP32-S3">
-  <img src="https://img.shields.io/badge/RTOS-FreeRTOS-00A86B?style=for-the-badge" alt="FreeRTOS">
-  <img src="https://img.shields.io/badge/Language-C++17-00599C?style=for-the-badge&logo=cplusplus" alt="C++">
-  <img src="https://img.shields.io/badge/IDF-v6.1.1-blue?style=for-the-badge" alt="ESP-IDF">
-  <img src="https://img.shields.io/badge/BLE-Bluedroid_Dual--Role-0082FC?style=for-the-badge&logo=bluetooth" alt="BLE">
-  <img src="https://img.shields.io/badge/Crypto-AES--256--CCM_+_ECDH-8B5CF6?style=for-the-badge" alt="Crypto">
-  <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
+  <img src=".github/badges/architecture-service-mvvm-storage-gold-3b3b028a.svg" alt="Architecture">
+  <img src=".github/badges/mcu-esp32-esp32-s3-e7352c-76b1ccb6.svg" alt="ESP32 / ESP32-S3">
+  <img src=".github/badges/rtos-freertos-00a86b-a0b2fe1f.svg" alt="FreeRTOS">
+  <img src=".github/badges/language-c-17-00599c-53d1fc37.svg" alt="C++">
+  <img src=".github/badges/idf-v6-1-1-blue-846338f5.svg" alt="ESP-IDF">
+  <img src=".github/badges/ble-bluedroid-dual-role-0082fc-0f47393a.svg" alt="BLE">
+  <img src=".github/badges/crypto-aes-256-ccm-ecdh-8b5cf6-d21b7418.svg" alt="Crypto">
+  <img src=".github/badges/license-mit-green-544c7119.svg" alt="License">
   <br>
-  <img src="https://img.shields.io/badge/Tests-28%2F28_passing-brightgreen?style=for-the-badge" alt="Tests">
-  <img src="https://img.shields.io/badge/Coverage-96.3%25_lines-brightgreen?style=for-the-badge" alt="Coverage">
-  <img src="https://img.shields.io/badge/Architecture%20Rating-⭐⭐⭐⭐⭐%209.1%2F10-blue.svg" alt="Architecture Rating">
+  <img src=".github/badges/tests-28-28-passing-brightgreen-6a21eac0.svg" alt="Tests">
+  <img src=".github/badges/coverage-96-3-lines-brightgreen-01636bd1.svg" alt="Coverage">
+  <img src=".github/badges/architecture-rating-9-1-10-blue-svg-394e4083.svg" alt="Architecture Rating">
 </p>
 
 <!-- agent-managed badges START -->
 <p align="center">
-  <a href="https://arcana.boo/sonarqube/dashboard?id=esp32-app"><img src="https://img.shields.io/badge/Quality_Gate-OK-brightgreen?style=for-the-badge" alt="Quality Gate"></a>
-  <a href="https://arcana.boo/jenkins/job/esp32-app-pipeline-mb/job/main/"><img src="https://img.shields.io/badge/Build-passing-brightgreen?style=for-the-badge" alt="Build"></a>
+  <a href="https://arcana.boo/sonarqube/dashboard?id=esp32-app"><img src=".github/badges/quality-gate-ok-brightgreen-7365c32e.svg" alt="Quality Gate"></a>
+  <a href="https://arcana.boo/jenkins/job/esp32-app-pipeline-mb/job/main/"><img src=".github/badges/build-passing-brightgreen-f2a434e1.svg" alt="Build"></a>
 </p>
 <!-- agent-managed badges END -->
 <!-- arch-rank START -->
 <p align="center">
-  <img src="https://img.shields.io/badge/arch--qube-100.0%2F100-blue?style=for-the-badge" alt="arch-qube">
-  <img src="https://img.shields.io/badge/Grade-A%2B-brightgreen?style=for-the-badge" alt="Grade">
-  <img src="https://img.shields.io/badge/Arch_Gate-PASS-brightgreen?style=for-the-badge" alt="Architecture Gate">
+  <img src=".github/badges/arch-qube-100-0-100-blue-61d09e06.svg" alt="arch-qube">
+  <img src=".github/badges/grade-a-brightgreen-1f1e6c73.svg" alt="Grade">
+  <img src=".github/badges/arch-gate-pass-brightgreen-887cab17.svg" alt="Architecture Gate">
 </p>
 <!-- arch-rank END -->
 
